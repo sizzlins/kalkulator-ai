@@ -1,0 +1,27 @@
+# Development dependencies (pinned versions for reproducibility)
+-r requirements.txt
+
+# Testing
+pytest==7.4.4
+pytest-cov==4.1.0
+pytest-xdist==3.5.0
+
+# Code formatting
+black==24.2.0
+isort==5.13.2
+
+# Type checking
+mypy==1.8.0
+
+# Linting
+ruff==0.2.2
+flake8==7.0.0
+pylint==3.0.3
+
+# Pre-commit hooks
+pre-commit==3.6.0
+
+# Documentation (optional)
+# sphinx==7.2.6
+# sphinx-rtd-theme==2.0.0
+
