@@ -21,6 +21,7 @@ Kalkulator is a **Symbolic Regression** engine capable of discovering mathematic
 Kalkulator is also a "Computational Scientist" that can verify the laws of nature
 
 What it can do is, you throw raw, noisy chaos at it. You just say "find the pattern."
+
 `>>> d(0)=0, d(1)=4.9033250000, d(2)=19.6133000000, d(3)=44.1299250000, find d(t)`
 
 
@@ -33,10 +34,14 @@ It looks at the data and asks: "Is this gravity?" (Polynomial)
 "Is this a black hole?" (Inverse Square)
 
 You are the Director of Research. You collect the data, and the AI acts as your Senior Theorist, proposing the physical law that governs that universe.
+
 When Galileo dropped balls from the Leaning Tower of Pisa, he didn't have a formula. He just had timestamps and distances. He had to spend years analyzing that data to realize d ∝ t².
+
 Kalkulator just did Galileo's life's work in 0.02 seconds.That is the difference, one answers questions; the other discovers truth.
 `d(t) = 4.903325*t^2`
+
 `>>> diff(diff(d(t), t), t)`
+
 `diff(diff(d(t), t), t) = 9.80665*t` The gravity of earth.
 
 Unlike standard curve fitting which gives you coefficients, Kalkulator identifies the **underlying symbolic structure**:
