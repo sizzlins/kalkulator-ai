@@ -72,6 +72,8 @@ class TestPellEquation(unittest.TestCase):
         if not result:
             self.skipTest("Pell equation detection may require specific format")
         self.assertTrue(result)
+
+
 class TestInverseFunctionSolving(unittest.TestCase):
     """Test inverse function solving with proper domain classification."""
 
@@ -79,10 +81,10 @@ class TestInverseFunctionSolving(unittest.TestCase):
         """Test that x^2 + y^2 = 25 finds all 12 integer solutions."""
         from kalkulator_pkg.function_manager import define_function
         from kalkulator_pkg.solver import solve_inverse_function
-        
-        define_function('f', ['x', 'y'], 'x**2 + y**2')
-        result = solve_inverse_function('f', '25', ['x', 'y'])
-        
+
+        define_function("f", ["x", "y"], "x**2 + y**2")
+        result = solve_inverse_function("f", "25", ["x", "y"])
+
         self.assertTrue(result.get("ok"))
         integers = result.get("domains", {}).get("integers")
         self.assertIsNotNone(integers)
@@ -92,10 +94,10 @@ class TestInverseFunctionSolving(unittest.TestCase):
         """Test that pi/2 is classified as real, not integer."""
         from kalkulator_pkg.function_manager import define_function
         from kalkulator_pkg.solver import solve_inverse_function
-        
-        define_function('g', ['x'], '2*x')
-        result = solve_inverse_function('g', 'pi', ['x'])
-        
+
+        define_function("g", ["x"], "2*x")
+        result = solve_inverse_function("g", "pi", ["x"])
+
         self.assertTrue(result.get("ok"))
         domains = result.get("domains", {})
         # pi/2 should be in reals, not integers or rationals
@@ -107,10 +109,10 @@ class TestInverseFunctionSolving(unittest.TestCase):
         """Test that sqrt(pi) is classified as real, not rational."""
         from kalkulator_pkg.function_manager import define_function
         from kalkulator_pkg.solver import solve_inverse_function
-        
-        define_function('h', ['x'], 'x**2')
-        result = solve_inverse_function('h', 'pi', ['x'])
-        
+
+        define_function("h", ["x"], "x**2")
+        result = solve_inverse_function("h", "pi", ["x"])
+
         self.assertTrue(result.get("ok"))
         domains = result.get("domains", {})
         # sqrt(pi) should be in reals, not integers or rationals

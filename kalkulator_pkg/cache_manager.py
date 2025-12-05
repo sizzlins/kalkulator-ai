@@ -149,10 +149,10 @@ def get_persistent_cache() -> dict[str, Any]:
 
 
 def update_eval_cache(
-    preprocessed_expr: str, 
-    result_json: str, 
+    preprocessed_expr: str,
+    result_json: str,
     compute_time: float | None = None,
-    context_hash: str | None = None
+    context_hash: str | None = None,
 ) -> None:
     """Update the persistent evaluation cache.
 
@@ -167,11 +167,11 @@ def update_eval_cache(
     cache_entry = {"result": result_json}
     if compute_time is not None:
         cache_entry["time"] = compute_time
-        
+
     cache_key = preprocessed_expr
     if context_hash:
         cache_key = f"{context_hash}:{preprocessed_expr}"
-        
+
     cache["eval_cache"][cache_key] = cache_entry
 
 
@@ -193,7 +193,9 @@ def update_subexpr_cache(
     cache["subexpr_cache"][preprocessed_expr] = cache_entry
 
 
-def get_cached_eval(preprocessed_expr: str, context_hash: str | None = None) -> str | None:
+def get_cached_eval(
+    preprocessed_expr: str, context_hash: str | None = None
+) -> str | None:
     """Get cached evaluation result if available.
 
     Args:
@@ -204,11 +206,11 @@ def get_cached_eval(preprocessed_expr: str, context_hash: str | None = None) -> 
         Cached result JSON string, or None if not found
     """
     cache = get_persistent_cache()
-    
+
     cache_key = preprocessed_expr
     if context_hash:
         cache_key = f"{context_hash}:{preprocessed_expr}"
-        
+
     entry = cache["eval_cache"].get(cache_key)
     if entry is None:
         return None
@@ -224,8 +226,7 @@ def get_cached_eval(preprocessed_expr: str, context_hash: str | None = None) -> 
 
 
 def get_cached_eval_with_time(
-    preprocessed_expr: str,
-    context_hash: str | None = None
+    preprocessed_expr: str, context_hash: str | None = None
 ) -> tuple[str | None, float | None]:
     """Get cached evaluation result with timing information.
 
@@ -237,11 +238,11 @@ def get_cached_eval_with_time(
         Tuple of (cached result JSON string or None, compute time in seconds or None)
     """
     cache = get_persistent_cache()
-    
+
     cache_key = preprocessed_expr
     if context_hash:
         cache_key = f"{context_hash}:{preprocessed_expr}"
-        
+
     entry = cache["eval_cache"].get(cache_key)
     if entry is None:
         return None, None

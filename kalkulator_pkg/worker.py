@@ -145,7 +145,9 @@ def _format_evaluation_result(expr: sp.Basic) -> str:
     return str(expr)
 
 
-def _get_user_friendly_error_message(error: Exception, input_str: str) -> tuple[str, str]:
+def _get_user_friendly_error_message(
+    error: Exception, input_str: str
+) -> tuple[str, str]:
     """Generate user-friendly error messages for common errors.
 
     Returns:
@@ -160,14 +162,14 @@ def _get_user_friendly_error_message(error: Exception, input_str: str) -> tuple[
         return (
             f"'{input_stripped}' is an operator, not a complete expression. "
             f"Use it in an expression like '5{input_stripped}3' or 'x{input_stripped}2'.",
-            "INCOMPLETE_EXPRESSION"
+            "INCOMPLETE_EXPRESSION",
         )
 
     # Check for empty or whitespace-only input
     if not input_stripped or input_stripped.isspace():
         return (
             "Empty input. Please enter a valid expression, equation, or command.",
-            "EMPTY_INPUT"
+            "EMPTY_INPUT",
         )
 
     # Check for backslash at end (line continuation character)
@@ -175,32 +177,43 @@ def _get_user_friendly_error_message(error: Exception, input_str: str) -> tuple[
         return (
             "Expression ends with '\\' (backslash), which is a line continuation character. "
             "Remove the backslash or complete the expression on the next line.",
-            "INCOMPLETE_EXPRESSION"
+            "INCOMPLETE_EXPRESSION",
         )
 
     # Check for unterminated expressions (ends with operator)
-    if len(input_stripped) > 0 and input_stripped[-1] in ["-", "+", "*", "/", "^", "%", "="]:
+    if len(input_stripped) > 0 and input_stripped[-1] in [
+        "-",
+        "+",
+        "*",
+        "/",
+        "^",
+        "%",
+        "=",
+    ]:
         return (
             f"Expression ends with '{input_stripped[-1]}'. "
             f"Complete the expression, for example: '5{input_stripped[-1]}3' or 'x{input_stripped[-1]}2'.",
-            "INCOMPLETE_EXPRESSION"
+            "INCOMPLETE_EXPRESSION",
         )
 
     # Check for TokenError (from tokenize module) - often indicates syntax issues like backslash
     error_type_name = type(error).__name__
     if "TokenError" in error_type_name:
-        if "unexpected EOF" in error_msg.lower() or "multi-line statement" in error_msg.lower():
+        if (
+            "unexpected EOF" in error_msg.lower()
+            or "multi-line statement" in error_msg.lower()
+        ):
             # Check if input ends with backslash
             if len(input_stripped) > 0 and input_stripped[-1] == "\\":
                 return (
                     "Expression ends with '\\' (backslash), which is a line continuation character. "
                     "Remove the backslash or complete the expression on the next line.",
-                    "INCOMPLETE_EXPRESSION"
+                    "INCOMPLETE_EXPRESSION",
                 )
             return (
                 "Incomplete expression: Backslash '\\' at the end indicates line continuation. "
                 "Remove the backslash or complete the expression on the next line.",
-                "INCOMPLETE_EXPRESSION"
+                "INCOMPLETE_EXPRESSION",
             )
 
     # Check for SyntaxError with specific patterns
@@ -211,29 +224,30 @@ def _get_user_friendly_error_message(error: Exception, input_str: str) -> tuple[
                 return (
                     "Incomplete expression: Backslash '\\' at the end indicates line continuation. "
                     "Remove the backslash or complete the expression on the next line.",
-                    "INCOMPLETE_EXPRESSION"
+                    "INCOMPLETE_EXPRESSION",
                 )
             return (
                 "Incomplete expression. Check for missing operands, unmatched parentheses, or unterminated strings.",
-                "SYNTAX_ERROR"
+                "SYNTAX_ERROR",
             )
         if "leading zeros" in error_msg.lower() or "0o prefix" in error_msg.lower():
             # Check if input looks like a hexadecimal number
             input_clean = input_str.strip()
             # Look for patterns like "123edc09f2"
             import re
-            hex_pattern = re.compile(r'[0-9a-fA-F]{4,}')
+
+            hex_pattern = re.compile(r"[0-9a-fA-F]{4,}")
             if hex_pattern.search(input_clean):
                 return (
                     f"Invalid number format: '{input_clean}'. "
                     f"If this is a hexadecimal number, use '0x' prefix: '0x{input_clean}'. "
                     f"Otherwise, check for invalid leading zeros in decimal numbers.",
-                    "SYNTAX_ERROR"
+                    "SYNTAX_ERROR",
                 )
             return (
                 "Invalid number format: Leading zeros are not allowed in decimal integers. "
                 "Use 0x prefix for hexadecimal numbers (e.g., 0x09), or remove leading zeros from decimal numbers.",
-                "SYNTAX_ERROR"
+                "SYNTAX_ERROR",
             )
         if "invalid syntax" in error_msg.lower():
             # Check if error mentions leading zeros (hex number issue)
@@ -241,26 +255,27 @@ def _get_user_friendly_error_message(error: Exception, input_str: str) -> tuple[
                 # Check if input looks like a hexadecimal number
                 input_clean = input_str.strip()
                 import re
-                hex_pattern = re.compile(r'[0-9a-fA-F]{4,}')
+
+                hex_pattern = re.compile(r"[0-9a-fA-F]{4,}")
                 if hex_pattern.search(input_clean):
                     return (
                         f"Invalid number format: '{input_clean}' looks like a hexadecimal number. "
                         f"Use '0x' prefix: '0x{input_clean}'.",
-                        "SYNTAX_ERROR"
+                        "SYNTAX_ERROR",
                     )
             # Try to extract position information
             if hasattr(error, "offset") and error.offset:
                 pos = error.offset
                 if pos <= len(input_str):
-                    char_at_pos = input_str[pos-1:pos] if pos > 0 else ""
+                    char_at_pos = input_str[pos - 1 : pos] if pos > 0 else ""
                     return (
                         f"Invalid syntax at position {pos} (character '{char_at_pos}'). "
                         f"Check for typos, missing operators, or incorrect function syntax.",
-                        "SYNTAX_ERROR"
+                        "SYNTAX_ERROR",
                     )
             return (
                 "Invalid syntax. Check for typos, missing operators, unmatched parentheses, or incorrect function calls.",
-                "SYNTAX_ERROR"
+                "SYNTAX_ERROR",
             )
 
     # Check for ValueError with specific patterns
@@ -269,23 +284,24 @@ def _get_user_friendly_error_message(error: Exception, input_str: str) -> tuple[
             return (
                 "Cannot use '=' for assignment in this context. "
                 "For equations, use '==' (double equals). For variable assignments, use separate statements.",
-                "PARSE_ERROR"
+                "PARSE_ERROR",
             )
         if "invalid" in error_msg.lower() and "name" in error_msg.lower():
             return (
                 f"Invalid variable or function name. "
                 f"Names must start with a letter and contain only letters, numbers, and underscores.",
-                "INVALID_NAME"
+                "INVALID_NAME",
             )
 
     # Check for TokenError (unterminated strings, etc.)
     try:
         import tokenize
+
         if isinstance(error, tokenize.TokenError):
             if "unterminated" in error_msg.lower():
                 return (
                     "Unmatched or unterminated string literal. Check that all quotes are properly closed and matched.",
-                    "SYNTAX_ERROR"
+                    "SYNTAX_ERROR",
                 )
     except (ImportError, AttributeError):
         pass
@@ -293,21 +309,12 @@ def _get_user_friendly_error_message(error: Exception, input_str: str) -> tuple[
     # Check for common parse error patterns
     if "parse" in error_msg.lower() or "PARSE_ERROR" in error_type:
         if "unexpected" in error_msg.lower():
-            return (
-                f"Unexpected token or character. {error_msg}",
-                "PARSE_ERROR"
-            )
+            return (f"Unexpected token or character. {error_msg}", "PARSE_ERROR")
         if "invalid" in error_msg.lower():
-            return (
-                f"Invalid expression format. {error_msg}",
-                "PARSE_ERROR"
-            )
+            return (f"Invalid expression format. {error_msg}", "PARSE_ERROR")
 
     # Default error message
-    return (
-        f"{error_msg}. Please check your input syntax.",
-        "PARSE_ERROR"
-    )
+    return (f"{error_msg}. Please check your input syntax.", "PARSE_ERROR")
 
 
 def worker_evaluate(preprocessed_expr: str) -> dict[str, Any]:
@@ -737,19 +744,20 @@ def _worker_daemon_main(
 
             if kind == "eval":
                 pre = msg.get("preprocessed") or ""
-                
+
                 # Check for registry update
                 registry_dump_json = msg.get("registry_dump_json")
                 if registry_dump_json:
                     try:
                         from .function_manager import update_function_registry_from_dump
+
                         registry_dump = json.loads(registry_dump_json)
                         update_function_registry_from_dump(registry_dump)
                     except Exception as e:
                         # Log error but continue evaluation
                         # We can't easily log to main process logger from here, so just ignore
                         pass
-                
+
                 try:
                     out = worker_evaluate(pre)
                 except Exception as eval_error:
@@ -1047,7 +1055,11 @@ def warmup_workers() -> None:
             pass
 
 
-def _worker_eval_cached(preprocessed_expr: str, context_hash: str | None = None, registry_dump_json: str | None = None) -> str:
+def _worker_eval_cached(
+    preprocessed_expr: str,
+    context_hash: str | None = None,
+    registry_dump_json: str | None = None,
+) -> str:
     """Evaluate expression with persistent cache support."""
     # Check persistent cache first
     try:
@@ -1116,7 +1128,9 @@ def _worker_eval_cached(preprocessed_expr: str, context_hash: str | None = None,
             )
 
             if resp.get("ok"):
-                update_eval_cache(preprocessed_expr, result_json, compute_time, context_hash)
+                update_eval_cache(
+                    preprocessed_expr, result_json, compute_time, context_hash
+                )
                 # Also cache as sub-expression if it's a simple numeric result
                 result_value = resp.get("result", "")
                 approx_value = resp.get("approx", "")
@@ -1157,7 +1171,9 @@ def _worker_eval_cached(preprocessed_expr: str, context_hash: str | None = None,
             try:
                 result_data = json.loads(result_text)
                 if result_data.get("ok"):
-                    update_eval_cache(preprocessed_expr, result_text, compute_time, context_hash)
+                    update_eval_cache(
+                        preprocessed_expr, result_text, compute_time, context_hash
+                    )
                     result_value = result_data.get("result", "")
                     approx_value = result_data.get("approx", "")
                     # Only cache pure numeric expressions
@@ -1235,7 +1251,11 @@ def evaluate_safely(expr: str, timeout: int = WORKER_TIMEOUT) -> dict[str, Any]:
     # Track sub-expression cache hits from preprocessing
     subexpr_cache_hits: list[tuple[str, str]] = []
     try:
-        from .function_manager import get_function_registry_hash, get_function_registry_dump
+        from .function_manager import (
+            get_function_registry_hash,
+            get_function_registry_dump,
+        )
+
         context_hash = get_function_registry_hash()
         registry_dump = get_function_registry_dump()
         registry_dump_json = json.dumps(registry_dump)
@@ -1394,19 +1414,19 @@ class Worker:
 
     def evaluate_ast(self, node):
         """Recursively evaluate the AST."""
-        node_type = node['type']
+        node_type = node["type"]
 
-        if node_type == 'Assignment':
-            var_name = node['name']
-            value_node = node['value']
+        if node_type == "Assignment":
+            var_name = node["name"]
+            value_node = node["value"]
 
             # Helper to check if it's a function definition (simplified)
             # Assuming parser marks function definitions clearly or we detect args
-            is_func_def = 'args' in node and node['args'] is not None
+            is_func_def = "args" in node and node["args"] is not None
 
             if is_func_def:
                 # It's a function definition: f(x) = ...
-                func_args = node['args']
+                func_args = node["args"]
 
                 # We store the raw string expression or the AST for the function body
                 # Assuming function_manager takes (name, args, body_node/str)
@@ -1420,10 +1440,10 @@ class Worker:
                 # --- FIX FOR STALE CACHE ---
                 # Force a hash regeneration/update immediately after definition
                 # This ensures the NEXT command (like f(2)) sees the new hash.
-                if hasattr(self.function_manager, 'update_registry_hash'):
+                if hasattr(self.function_manager, "update_registry_hash"):
                     self.function_manager.update_registry_hash()
-                elif hasattr(self.function_manager, '_registry_hash'):
-                     # forceful invalidation if using cached_property
+                elif hasattr(self.function_manager, "_registry_hash"):
+                    # forceful invalidation if using cached_property
                     self.function_manager._registry_hash = None
 
                 return f"Function '{var_name}' defined."
@@ -1434,46 +1454,45 @@ class Worker:
                 self.variables[var_name] = value
                 return f"{var_name} = {value}"
 
-        elif node_type == 'FunctionCall':
+        elif node_type == "FunctionCall":
             # Existing logic
-            func_name = node['name']
-            args = [self.evaluate_ast(arg) for arg in node['args']]
+            func_name = node["name"]
+            args = [self.evaluate_ast(arg) for arg in node["args"]]
             return self.solver.evaluate_function(func_name, args)
 
-        elif node_type == 'BinOp':
-            left = self.evaluate_ast(node['left'])
-            right = self.evaluate_ast(node['right'])
-            op = node['op']
+        elif node_type == "BinOp":
+            left = self.evaluate_ast(node["left"])
+            right = self.evaluate_ast(node["right"])
+            op = node["op"]
             # This part needs actual SymPy evaluation based on the operator
             # For simplicity, returning a string representation
             return f"({left} {op} {right})"
 
-        elif node_type == 'Number':
-            return float(node['value'])
+        elif node_type == "Number":
+            return float(node["value"])
 
-        elif node_type == 'Variable':
-            var_name = node['name']
+        elif node_type == "Variable":
+            var_name = node["name"]
             if var_name in self.variables:
                 return self.variables[var_name]
             else:
                 return f"Unresolved variable: {var_name}"
 
-        elif node_type == 'FunctionDefinition':
+        elif node_type == "FunctionDefinition":
             # This case might be handled by the 'Assignment' block if it captures function definitions.
             # If your parser creates a distinct 'FunctionDefinition' node, handle it here.
-            func_name = node['name']
-            func_args = node['args']
-            func_body = node['body']
+            func_name = node["name"]
+            func_args = node["args"]
+            func_body = node["body"]
 
             self.function_manager.add_function(func_name, func_args, func_body)
             # --- FIX FOR STALE CACHE ---
-            if hasattr(self.function_manager, 'update_registry_hash'):
+            if hasattr(self.function_manager, "update_registry_hash"):
                 self.function_manager.update_registry_hash()
-            elif hasattr(self.function_manager, '_registry_hash'):
-                 self.function_manager._registry_hash = None
+            elif hasattr(self.function_manager, "_registry_hash"):
+                self.function_manager._registry_hash = None
             return f"Function '{func_name}' defined."
 
         else:
             # Handle other node types or raise an error for unsupported ones
             return f"Unsupported node type: {node_type}"
-

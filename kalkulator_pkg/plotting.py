@@ -7,7 +7,8 @@ import sympy as sp
 try:
     # Set non-GUI backend before importing pyplot to avoid Tkinter issues
     import matplotlib
-    matplotlib.use('Agg')  # Use non-GUI backend (no Tkinter required)
+
+    matplotlib.use("Agg")  # Use non-GUI backend (no Tkinter required)
     import matplotlib.pyplot as plt
 
     HAS_MATPLOTLIB = True
@@ -19,6 +20,7 @@ except Exception:
     # If setting backend fails, try to continue anyway
     try:
         import matplotlib.pyplot as plt
+
         HAS_MATPLOTLIB = True
         HAS_GUI_BACKEND = True
     except ImportError:
@@ -32,10 +34,10 @@ from .worker import evaluate_safely
 
 def _open_file_in_viewer(file_path: str) -> bool:
     """Open a file in the system's default application (cross-platform).
-    
+
     Args:
         file_path: Path to the file to open
-        
+
     Returns:
         True if successful, False otherwise
     """
@@ -43,7 +45,7 @@ def _open_file_in_viewer(file_path: str) -> bool:
         import os
         import sys
         import subprocess
-        
+
         if sys.platform == "win32":
             # Windows
             os.startfile(file_path)
@@ -70,17 +72,17 @@ def plot_function(
     ascii: bool = False,
 ) -> EvalResult:
     """Plot a single-variable function.
-    
+
     This function creates a visual plot of a mathematical expression using matplotlib.
     If matplotlib is not available or GUI backend fails, the plot is automatically
     saved to a temporary file and opened in the default image viewer.
-    
+
     Features:
     - Automatic file saving if GUI display is unavailable
     - Enhanced styling with grid, axes, and legend
     - Support for mathematical expressions in range parameters
     - Cross-platform file opening (Windows, macOS, Linux)
-    
+
     Args:
         expression: Function expression to plot (e.g., "x^2", "sin(x)", "exp(-x^2)")
         variable: Variable name to plot against (default: "x")
@@ -95,12 +97,12 @@ def plot_function(
         - result: Path to saved plot file or "Plot displayed" message
         - ok=False: Plotting failed
         - error: Error message describing the failure
-        
+
     Examples:
         >>> from kalkulator_pkg.plotting import plot_function
         >>> result = plot_function("x^2", x_min=-5, x_max=5)
         >>> print(result.result)  # "Plot saved and opened: /tmp/plot.png"
-        
+
         >>> result = plot_function("sin(x)", x_min=-pi, x_max=pi, ascii=True)
         >>> print(result.result)  # ASCII plot text
     """
@@ -201,18 +203,24 @@ def plot_function(
 
             # Create figure with better styling
             fig, ax = plt.subplots(figsize=(10, 6))
-            ax.plot(x_vals, y_vals, linewidth=2, color='#2E86AB', label=f'f({variable}) = {expression}')
-            ax.set_xlabel(variable, fontsize=12, fontweight='bold')
-            ax.set_ylabel(f'f({variable})', fontsize=12, fontweight='bold')
-            ax.set_title(f'Plot of {expression}', fontsize=14, fontweight='bold')
-            ax.grid(True, alpha=0.3, linestyle='--')
-            ax.axhline(y=0, color='k', linewidth=0.8, linestyle='-', alpha=0.3)
-            ax.axvline(x=0, color='k', linewidth=0.8, linestyle='-', alpha=0.3)
-            ax.legend(loc='best', fontsize=10)
-            
+            ax.plot(
+                x_vals,
+                y_vals,
+                linewidth=2,
+                color="#2E86AB",
+                label=f"f({variable}) = {expression}",
+            )
+            ax.set_xlabel(variable, fontsize=12, fontweight="bold")
+            ax.set_ylabel(f"f({variable})", fontsize=12, fontweight="bold")
+            ax.set_title(f"Plot of {expression}", fontsize=14, fontweight="bold")
+            ax.grid(True, alpha=0.3, linestyle="--")
+            ax.axhline(y=0, color="k", linewidth=0.8, linestyle="-", alpha=0.3)
+            ax.axvline(x=0, color="k", linewidth=0.8, linestyle="-", alpha=0.3)
+            ax.legend(loc="best", fontsize=10)
+
             # Improve layout
             plt.tight_layout()
-            
+
             # Try to show plot, but if GUI backend fails, save to temp file instead
             try:
                 if HAS_GUI_BACKEND:
@@ -222,38 +230,53 @@ def plot_function(
                     # Using non-GUI backend, save to temp file and inform user
                     import tempfile
                     import os
-                    temp_file = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+
+                    temp_file = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
                     temp_path = temp_file.name
                     temp_file.close()
-                    plt.savefig(temp_path, dpi=150, bbox_inches='tight')
+                    plt.savefig(temp_path, dpi=150, bbox_inches="tight")
                     plt.close(fig)
-                    
+
                     # Try to open the file automatically
                     opened = _open_file_in_viewer(temp_path)
                     if opened:
-                        return EvalResult(ok=True, result=f"Plot saved and opened: {temp_path}")
+                        return EvalResult(
+                            ok=True, result=f"Plot saved and opened: {temp_path}"
+                        )
                     else:
-                        return EvalResult(ok=True, result=f"Plot saved to: {temp_path}\n(Note: GUI backend not available. File opened in default viewer.)")
+                        return EvalResult(
+                            ok=True,
+                            result=f"Plot saved to: {temp_path}\n(Note: GUI backend not available. File opened in default viewer.)",
+                        )
             except Exception as e:
                 # If showing fails, try to save instead
                 try:
                     import tempfile
                     import os
-                    temp_file = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+
+                    temp_file = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
                     temp_path = temp_file.name
                     temp_file.close()
-                    plt.savefig(temp_path, dpi=150, bbox_inches='tight')
+                    plt.savefig(temp_path, dpi=150, bbox_inches="tight")
                     plt.close(fig)
-                    
+
                     # Try to open the file automatically
                     opened = _open_file_in_viewer(temp_path)
                     if opened:
-                        return EvalResult(ok=True, result=f"Plot saved and opened: {temp_path}\n(GUI display failed, using file output)")
+                        return EvalResult(
+                            ok=True,
+                            result=f"Plot saved and opened: {temp_path}\n(GUI display failed, using file output)",
+                        )
                     else:
-                        return EvalResult(ok=True, result=f"Plot saved to: {temp_path}\n(GUI display failed: {str(e)})")
+                        return EvalResult(
+                            ok=True,
+                            result=f"Plot saved to: {temp_path}\n(GUI display failed: {str(e)})",
+                        )
                 except Exception as save_error:
                     plt.close(fig)
-                    return EvalResult(ok=False, error=f"Failed to display or save plot: {str(e)}")
+                    return EvalResult(
+                        ok=False, error=f"Failed to display or save plot: {str(e)}"
+                    )
 
     except (ValueError, TypeError, AttributeError) as e:
         return EvalResult(ok=False, error=f"Plotting error: {e}")

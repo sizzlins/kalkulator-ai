@@ -43,38 +43,40 @@ from .types import ValidationError
 BUILTIN_FUNCTION_NAMES = set(ALLOWED_SYMPY_NAMES.keys())
 
 
-def _parse_to_exact_fraction(val: float | str | int | Fraction, max_denominator: int = 10000) -> Fraction:
+def _parse_to_exact_fraction(
+    val: float | str | int | Fraction, max_denominator: int = 10000
+) -> Fraction:
     """Parse input to exact Fraction for exact arithmetic.
-    
+
     Accepts formats: integer, "a/b", decimal string.
     Uses fractions.Fraction for exact arithmetic.
     For decimal strings, tries to detect repeating patterns and suggest rational approximations.
-    
+
     CRITICAL: For function finding, we need to detect when a decimal like "70.833" is actually
     a rounded version of a simpler rational like 425/6. This ensures exact coefficients.
-    
+
     Args:
         val: Input value (int, float, str, or Fraction)
         max_denominator: Maximum denominator for detecting repeating patterns (default 10000)
-        
+
     Returns:
         Fraction object with exact value
     """
     # If already a Fraction, return as is
     if isinstance(val, Fraction):
         return val
-    
+
     # If it's an integer, convert directly
     if isinstance(val, int):
         return Fraction(val)
-    
+
     # If it's a string, parse it
     if isinstance(val, str):
         val = val.strip()
         # Try to parse as fraction (e.g., "425/6")
-        if '/' in val:
+        if "/" in val:
             try:
-                parts = val.split('/')
+                parts = val.split("/")
                 if len(parts) == 2:
                     num = int(parts[0].strip())
                     den = int(parts[1].strip())
@@ -82,14 +84,14 @@ def _parse_to_exact_fraction(val: float | str | int | Fraction, max_denominator:
             except (ValueError, TypeError):
                 # Not a simple a/b fraction - might be symbolic like "pi/2"
                 pass
-        
+
         # Try to parse as decimal string (e.g., "70.833")
         try:
             # First, parse as exact decimal representation
             # For "70.833", this gives 70833/1000
             exact_frac = Fraction(val)
             exact_val = float(exact_frac)
-            
+
             # CRITICAL: For function finding, we need to detect if a decimal is a rounded
             # version of a simpler rational. For example:
             # - "70.833" might be rounded from 425/6 = 70.8333333...
@@ -98,11 +100,11 @@ def _parse_to_exact_fraction(val: float | str | int | Fraction, max_denominator:
             #
             # Strategy: Check if the decimal is very close to a simpler rational with
             # a small denominator. Use a tolerance that accounts for rounding to 3 decimals.
-            
+
             # Determine decimal places in the input string
             decimal_places = 0
-            if '.' in val:
-                decimal_part = val.split('.')[1]
+            if "." in val:
+                decimal_part = val.split(".")[1]
                 decimal_places = len(decimal_part)
                 # Tolerance based on decimal places: for 3 decimals, use 0.0005 (half of 0.001)
                 # This ensures we catch values rounded to 3 decimals
@@ -111,29 +113,31 @@ def _parse_to_exact_fraction(val: float | str | int | Fraction, max_denominator:
                 elif decimal_places <= 6:
                     tolerance = 0.0000005  # For 4-6 decimal places, use 0.0000005
                 else:
-                    tolerance = 10 ** (-decimal_places - 1)  # Half of last decimal place
+                    tolerance = 10 ** (
+                        -decimal_places - 1
+                    )  # Half of last decimal place
             else:
                 tolerance = 1e-6  # Default tolerance for integers
-            
+
             # Try to find a simpler rational by checking progressively larger denominators
             # Start with small denominators (common in fractions)
             # Strategy: Find the fraction with the SMALLEST denominator that's within tolerance
             # This prioritizes simplicity (e.g., 425/6) over closeness (e.g., 35204/497)
             best_frac = exact_frac
             best_denom = exact_frac.denominator
-            
+
             # Check denominators from small to larger
             # Stop as soon as we find a match - we want the smallest denominator
             for max_denom in [6, 8, 12, 16, 20, 24, 30, 50, 100, 200, 500, 1000, 2000]:
                 if max_denom > max_denominator:
                     break
-                    
+
                 limited_frac = exact_frac.limit_denominator(max_denom)
-                
+
                 # Check if the limited fraction is simpler and very close
                 if limited_frac.denominator < exact_frac.denominator:
                     diff = abs(float(exact_frac - limited_frac))
-                    
+
                     # Use simpler rational if within tolerance
                     # This handles cases like:
                     # - 70.833 ≈ 425/6 (difference ~0.000333, within 0.0005)
@@ -147,40 +151,51 @@ def _parse_to_exact_fraction(val: float | str | int | Fraction, max_denominator:
                             best_denom = limited_frac.denominator
                             # Once we find a match with a small denominator, we can stop
                             # (or continue to check if an even smaller denominator exists)
-            
+
             # Return the best (simplest) rational found, or exact if no simpler one found
             return best_frac
         except (ValueError, TypeError):
             # Not a simple decimal - try symbolic evaluation (e.g., "pi", "e", "pi/2")
             try:
                 import sympy as sp_sym
+
                 local_ns = {
-                    'pi': sp_sym.pi, 'e': sp_sym.E, 'E': sp_sym.E, 'I': sp_sym.I,
-                    'sqrt': sp_sym.sqrt, 'sin': sp_sym.sin, 'cos': sp_sym.cos, 'tan': sp_sym.tan,
-                    'log': sp_sym.log, 'ln': sp_sym.log, 'exp': sp_sym.exp
+                    "pi": sp_sym.pi,
+                    "e": sp_sym.E,
+                    "E": sp_sym.E,
+                    "I": sp_sym.I,
+                    "sqrt": sp_sym.sqrt,
+                    "sin": sp_sym.sin,
+                    "cos": sp_sym.cos,
+                    "tan": sp_sym.tan,
+                    "log": sp_sym.log,
+                    "ln": sp_sym.log,
+                    "exp": sp_sym.exp,
                 }
                 expr = sp_sym.sympify(val, locals=local_ns)
                 result = expr.evalf()
-                if hasattr(result, 'free_symbols') and result.free_symbols:
-                    raise ValueError(f"Expression '{val}' contains free symbols: {result.free_symbols}")
+                if hasattr(result, "free_symbols") and result.free_symbols:
+                    raise ValueError(
+                        f"Expression '{val}' contains free symbols: {result.free_symbols}"
+                    )
                 float_val = float(result)
                 # Convert the float result to a Fraction
-                val_str = format(float_val, '.15f').rstrip('0').rstrip('.')
+                val_str = format(float_val, ".15f").rstrip("0").rstrip(".")
                 return Fraction(val_str)
             except Exception:
                 # Try to parse as float first, then convert
                 try:
                     float_val = float(val)
                     # Convert via string to preserve precision
-                    val_str = format(float_val, '.15f').rstrip('0').rstrip('.')
+                    val_str = format(float_val, ".15f").rstrip("0").rstrip(".")
                     return Fraction(val_str)
                 except (ValueError, TypeError):
                     raise ValueError(f"Cannot parse '{val}' as a number")
-    
+
     # If it's a float, convert via string to preserve precision
     if isinstance(val, float):
         # Convert to string to avoid float rounding issues
-        val_str = format(val, '.15f').rstrip('0').rstrip('.')
+        val_str = format(val, ".15f").rstrip("0").rstrip(".")
         try:
             exact_frac = Fraction(val_str)
             # Try to find simpler rational for floats too
@@ -201,19 +216,19 @@ def _parse_to_exact_fraction(val: float | str | int | Fraction, max_denominator:
             return best_frac
         except (ValueError, TypeError):
             return Fraction(val)
-    
+
     raise ValueError(f"Cannot convert {val} to Fraction")
 
 
 def _float_to_exact_rational(val: float | str) -> sp.Basic:
     """Convert a float or string to an exact SymPy Rational, preserving decimal precision.
-    
+
     For floats or strings representing finite decimals (like 70.833), this preserves
     exact precision by using Fraction then converting to SymPy Rational.
-    
+
     Args:
         val: Float value or string representation to convert
-        
+
     Returns:
         SymPy Rational or Float expression with exact or high precision
     """
@@ -231,22 +246,23 @@ def _float_to_exact_rational(val: float | str) -> sp.Basic:
                     val = float(val)
                 except (ValueError, TypeError):
                     return sp.Float(val, 15)
-        
+
         if isinstance(val, int):
             return sp.Rational(val)
         if isinstance(val, float) and val == int(val):
             return sp.Rational(int(val))
-        
+
         # Try to use Decimal for exact decimal representation
         try:
             from decimal import Decimal
-            dec_str = format(val, '.15f').rstrip('0').rstrip('.')
+
+            dec_str = format(val, ".15f").rstrip("0").rstrip(".")
             dec_val = Decimal(dec_str)
             return sp.Rational(str(dec_val))
         except (ImportError, ValueError, TypeError):
             try:
-                val_str = format(val, '.15f').rstrip('0').rstrip('.')
-                if 'e' not in val_str.lower() and '.' in val_str:
+                val_str = format(val, ".15f").rstrip("0").rstrip(".")
+                if "e" not in val_str.lower() and "." in val_str:
                     return sp.Rational(val_str)
                 else:
                     return sp.Float(val, 15)
@@ -266,7 +282,7 @@ def clear_functions() -> None:
 
 def list_functions() -> dict[str, tuple[list[str], str]]:
     """List all defined functions.
-    
+
     Returns:
         Dictionary mapping function names to (parameters, body_string) tuples
     """
@@ -278,30 +294,31 @@ def list_functions() -> dict[str, tuple[list[str], str]]:
 
 def get_function_registry_hash() -> str:
     """Get a hash of the current function registry state.
-    
+
     Returns:
         MD5 hash string of the registry content
     """
     import hashlib
+
     # Sort keys to ensure consistent order
     # Convert values to string representation for hashing
     items = []
     for name in sorted(_function_registry.keys()):
         params, body = _function_registry[name]
         items.append((name, tuple(params), str(body)))
-    
+
     registry_str = str(items)
     return hashlib.md5(registry_str.encode()).hexdigest()
 
 
 def define_function(name: str, params: list[str], body_expr: str) -> None:
     """Define a function.
-    
+
     Args:
         name: Function name (e.g., "f", "g")
         params: List of parameter names (e.g., ["x", "y"])
         body_expr: Function body as string (e.g., "2*x", "x+y+z")
-        
+
     Raises:
         ValidationError: If function name or parameters are invalid
     """
@@ -311,7 +328,7 @@ def define_function(name: str, params: list[str], body_expr: str) -> None:
             f"Invalid function name: {name}. Must start with a letter and contain only letters and numbers.",
             "INVALID_FUNCTION_NAME",
         )
-    
+
     # Validate parameters
     for param in params:
         if not param or not param.isalnum() or not param[0].isalpha():
@@ -319,14 +336,14 @@ def define_function(name: str, params: list[str], body_expr: str) -> None:
                 f"Invalid parameter name: {param}. Must start with a letter and contain only letters and numbers.",
                 "INVALID_PARAMETER_NAME",
             )
-    
+
     # Parse body expression
     try:
         # Create a local dict with parameter symbols
         local_dict = {**ALLOWED_SYMPY_NAMES}
         for param in params:
             local_dict[param] = sp.Symbol(param)
-        
+
         body = parse_expr(
             body_expr,
             local_dict=local_dict,
@@ -338,21 +355,21 @@ def define_function(name: str, params: list[str], body_expr: str) -> None:
             f"Failed to parse function body '{body_expr}': {str(e)}",
             "FUNCTION_BODY_PARSE_ERROR",
         )
-    
+
     # Store function definition
     _function_registry[name] = (params, body)
 
 
 def evaluate_function(name: str, args: list[Any]) -> sp.Basic:
     """Evaluate a function with given arguments.
-    
+
     Args:
         name: Function name
         args: List of argument values (can be numbers or SymPy expressions)
-        
+
     Returns:
         SymPy expression result
-        
+
     Raises:
         ValidationError: If function not found or wrong number of arguments
     """
@@ -361,16 +378,16 @@ def evaluate_function(name: str, args: list[Any]) -> sp.Basic:
             f"Function '{name}' is not defined. Define it first with {name}(params)=body.",
             "FUNCTION_NOT_FOUND",
         )
-    
+
     params, body = _function_registry[name]
-    
+
     if len(args) != len(params):
         raise ValidationError(
             f"Function '{name}' expects {len(params)} argument(s) ({', '.join(params)}), "
             f"but got {len(args)} argument(s).",
             "WRONG_ARGUMENT_COUNT",
         )
-    
+
     # Create substitution dictionary
     subs_dict = {}
     for param, arg in zip(params, args):
@@ -380,9 +397,9 @@ def evaluate_function(name: str, args: list[Any]) -> sp.Basic:
                 arg = sp.sympify(arg)
             except Exception:
                 arg = sp.Symbol(str(arg))  # Fallback to symbol
-        
+
         subs_dict[sp.Symbol(param)] = arg
-    
+
     # Substitute and return
     try:
         result = body.subs(subs_dict)
@@ -396,10 +413,10 @@ def evaluate_function(name: str, args: list[Any]) -> sp.Basic:
 
 def parse_function_definition(expr: str) -> tuple[str, list[str], str] | None:
     """Parse a function definition like 'f(x)=2x' or 'f(x,y,z)=x+y+z'.
-    
+
     Args:
         expr: Expression string (e.g., "f(x)=2x", "g(x,y)=x+y")
-        
+
     Returns:
         Tuple of (function_name, parameter_list, body_string) if valid, None otherwise
     """
@@ -408,40 +425,40 @@ def parse_function_definition(expr: str) -> tuple[str, list[str], str] | None:
     # Must match the ENTIRE string (no trailing content after the body)
     # The body should not contain another function definition pattern
     expr_stripped = expr.strip()
-    
+
     # First, check if there's a comma followed by another function pattern
     # This would indicate incomplete or malformed input like "f(x)=2x, f(x)="
     if "," in expr_stripped:
         # Check if there's another function definition pattern after comma
         comma_idx = expr_stripped.find(",")
-        after_comma = expr_stripped[comma_idx + 1:].strip()
+        after_comma = expr_stripped[comma_idx + 1 :].strip()
         if re.match(r"^[a-zA-Z][a-zA-Z0-9]*\s*\([^)]*\)\s*=", after_comma):
             # Looks like incomplete definition, reject
             return None
-    
+
     pattern = r"^([a-zA-Z][a-zA-Z0-9]*)\s*\(([^)]*)\)\s*=\s*(.+?)$"
     match = re.match(pattern, expr_stripped)
     if not match:
         return None
-    
+
     func_name = match.group(1)
     params_str = match.group(2).strip()
     body = match.group(3).strip()
-    
+
     # Validate: function name must not be a built-in function (e.g., sin, cos, log, etc.)
     # This prevents "sin(x)=cos(x)" from being treated as a function definition
     if func_name in BUILTIN_FUNCTION_NAMES:
         return None
-    
+
     # Validate: body must not be empty
     if not body:
         return None
-    
+
     # Validate: body should not contain another function definition pattern
     # (e.g., "f(x)=2x, f(x)=" should not match)
     if re.search(r"[a-zA-Z][a-zA-Z0-9]*\s*\([^)]*\)\s*=", body):
         return None
-    
+
     # Parse parameters - must be valid identifiers (start with letter)
     if not params_str:
         params = []
@@ -450,68 +467,72 @@ def parse_function_definition(expr: str) -> tuple[str, list[str], str] | None:
         params = [p.strip() for p in params_str.split(",") if p.strip()]
         # Validate all parameters are valid identifiers
         for param in params:
-            if not param or not param[0].isalpha() or not param.replace('_', '').isalnum():
+            if (
+                not param
+                or not param[0].isalpha()
+                or not param.replace("_", "").isalnum()
+            ):
                 return None  # Invalid parameter name
-            
+
             # CRITICAL FIX: Prevent using reserved names (like pi, e, sin) as parameters
             # This prevents "f(pi)=0" from being interpreted as a function definition
             if param in BUILTIN_FUNCTION_NAMES:
                 return None
-    
+
     return (func_name, params, body)
 
 
 def parse_function_call(expr: str) -> tuple[str, list[str]] | None:
     """Parse a function call like 'f(2)' or 'f(1,2,3)'.
-    
+
     Args:
         expr: Expression string (e.g., "f(2)", "g(1,2,3)", "f((pi)/(2))")
-        
+
     Returns:
         Tuple of (function_name, argument_strings) if valid, None otherwise
     """
     expr = expr.strip()
-    
+
     # Find function name at start: letters followed by alphanumerics
     if not expr or not expr[0].isalpha():
         return None
-    
+
     i = 0
-    while i < len(expr) and (expr[i].isalnum() or expr[i] == '_'):
+    while i < len(expr) and (expr[i].isalnum() or expr[i] == "_"):
         i += 1
     func_name = expr[:i]
-    
+
     # Skip optional whitespace
     while i < len(expr) and expr[i].isspace():
         i += 1
-    
+
     # Must have opening parenthesis
-    if i >= len(expr) or expr[i] != '(':
+    if i >= len(expr) or expr[i] != "(":
         return None
     i += 1  # Skip opening paren
-    
+
     # Find matching closing parenthesis (handle nested parens)
     args_start = i
     depth = 1
     while i < len(expr) and depth > 0:
-        if expr[i] == '(':
+        if expr[i] == "(":
             depth += 1
-        elif expr[i] == ')':
+        elif expr[i] == ")":
             depth -= 1
         i += 1
-    
+
     if depth != 0:
         return None  # Unbalanced parentheses
-    
+
     # i now points just past the closing paren
-    args_str = expr[args_start:i-1].strip()  # -1 to exclude closing paren
-    
+    args_str = expr[args_start : i - 1].strip()  # -1 to exclude closing paren
+
     # Check no trailing content (after optional whitespace)
     while i < len(expr) and expr[i].isspace():
         i += 1
     if i != len(expr):
         return None  # Unexpected trailing content
-    
+
     # Parse arguments by splitting at top-level commas
     if not args_str:
         args = []
@@ -533,29 +554,31 @@ def parse_function_call(expr: str) -> tuple[str, list[str]] | None:
                 current.append(char)
         if current:
             args.append("".join(current).strip())
-    
+
     return (func_name, args)
 
 
-def _monomial_exponents(n: int, degree: int = 2, include_inverse: bool = False) -> list[tuple[int, ...]]:
+def _monomial_exponents(
+    n: int, degree: int = 2, include_inverse: bool = False
+) -> list[tuple[int, ...]]:
     """Generate all monomial exponents up to total degree for n variables.
-    
+
     Returns list of exponent-tuples with sum(|exps|) <= degree, sorted for stable order.
     For 4 variables and degree 2: [(0,0,0,0), (1,0,0,0), (0,1,0,0), ..., (2,0,0,0), (1,1,0,0), ...]
-    
+
     If include_inverse=True, also includes negative exponents (inverse terms like 1/z, 1/z^2).
     For 3 variables with inverse: includes terms like (1,1,-2) for x*y/z^2.
-    
+
     Args:
         n: Number of variables
         degree: Maximum total degree (sum of absolute values of exponents)
         include_inverse: If True, include negative exponents for inverse terms
-        
+
     Returns:
         List of exponent tuples, ordered deterministically
     """
     exps = []
-    
+
     def gen(prefix: list[int], vars_left: int, deg_left: int) -> None:
         if vars_left == 0:
             exps.append(tuple(prefix))
@@ -567,26 +590,28 @@ def _monomial_exponents(n: int, degree: int = 2, include_inverse: bool = False) 
             for e in range(-deg_left, deg_left + 1):
                 # Remaining degree after using |e| for this variable
                 new_deg_left = deg_left - abs(e)
-                if new_deg_left >= 0:  # Only continue if we haven't exceeded the degree limit
+                if (
+                    new_deg_left >= 0
+                ):  # Only continue if we haven't exceeded the degree limit
                     gen(prefix + [e], vars_left - 1, new_deg_left)
         else:
             # Only non-negative exponents
             for e in range(deg_left + 1):
                 gen(prefix + [e], vars_left - 1, deg_left - e)
-    
+
     gen([], n, degree)
     return exps
 
 
 def _eval_monomial(sample: list[Fraction], exps: tuple[int, ...]) -> Fraction:
     """Evaluate a monomial with given exponents on a sample.
-    
+
     Supports both positive and negative exponents (for inverse terms).
-    
+
     Args:
         sample: List of Fraction values for each variable
         exps: Tuple of exponents for each variable (can be negative)
-        
+
     Returns:
         Fraction value of the monomial
     """
@@ -604,27 +629,29 @@ def _eval_monomial(sample: list[Fraction], exps: tuple[int, ...]) -> Fraction:
     return val
 
 
-def _build_polynomial_matrix(samples: list[tuple[list[Any], Any]], degree: int = 2, include_inverse: bool = False) -> tuple[list[list[Fraction]], list[Fraction], list[tuple[int, ...]]]:
+def _build_polynomial_matrix(
+    samples: list[tuple[list[Any], Any]], degree: int = 2, include_inverse: bool = False
+) -> tuple[list[list[Fraction]], list[Fraction], list[tuple[int, ...]]]:
     """Build matrix and RHS for polynomial/rational basis expansion.
-    
+
     Args:
         samples: List of (input_values, output_value) tuples
         degree: Maximum total degree of monomials (sum of absolute values)
         include_inverse: If True, include negative exponents for inverse terms
-        
+
     Returns:
         Tuple of (matrix_rows, rhs_vector, exponent_list)
         All values are Fraction for exact arithmetic
     """
     if not samples:
         return [], [], []
-    
+
     nvars = len(samples[0][0])
     exps_list = _monomial_exponents(nvars, degree, include_inverse=include_inverse)
-    
+
     rows = []
     rhs = []
-    
+
     for vars_tuple, out in samples:
         # Convert input values to Fractions
         sample_fracs = []
@@ -641,11 +668,11 @@ def _build_polynomial_matrix(samples: list[tuple[list[Any], Any]], degree: int =
                     sample_fracs.append(Fraction(str(val)))
                 except (ValueError, TypeError):
                     sample_fracs.append(Fraction(float(val)))
-        
+
         # Build row by evaluating each monomial
         row = [_eval_monomial(sample_fracs, exps) for exps in exps_list]
         rows.append(row)
-        
+
         # Convert output to Fraction
         if isinstance(out, Fraction):
             rhs.append(out)
@@ -658,17 +685,19 @@ def _build_polynomial_matrix(samples: list[tuple[list[Any], Any]], degree: int =
                 rhs.append(Fraction(str(out)))
             except (ValueError, TypeError):
                 rhs.append(Fraction(float(out)))
-    
+
     return rows, rhs, exps_list
 
 
-def _gaussian_elim_rational(A: list[list[Fraction]], b: list[Fraction]) -> list[Fraction] | None:
+def _gaussian_elim_rational(
+    A: list[list[Fraction]], b: list[Fraction]
+) -> list[Fraction] | None:
     """Solve Ax = b using exact rational Gaussian elimination.
-    
+
     Args:
         A: Matrix as list of rows (each row is list of Fractions), m x n
         b: Right-hand side vector (list of Fractions), length m
-        
+
     Returns:
         Solution vector (list of Fractions) if consistent solution exists, None otherwise
         For underdetermined systems (m > n), checks if solution is consistent with all equations
@@ -676,19 +705,19 @@ def _gaussian_elim_rational(A: list[list[Fraction]], b: list[Fraction]) -> list[
     """
     if not A or not b:
         return None
-    
+
     m = len(A)
     n = len(A[0]) if A else 0
-    
+
     if m < n:
         return None  # Overdetermined in unknowns - use least squares
-    
+
     # Work on augmented matrix copy
     M = [row[:] + [bval] for row, bval in zip(A, b)]
-    
+
     r = 0
     piv_cols = []
-    
+
     for c in range(n):
         # Find pivot in rows r..m-1
         piv = None
@@ -698,14 +727,14 @@ def _gaussian_elim_rational(A: list[list[Fraction]], b: list[Fraction]) -> list[
                 break
         if piv is None:
             continue  # Column is all zeros
-        
+
         # Swap rows
         M[r], M[piv] = M[piv], M[r]
         piv_val = M[r][c]
-        
+
         # Normalize row r
         M[r] = [val / piv_val for val in M[r]]
-        
+
         # Eliminate other rows
         for i in range(m):
             if i == r:
@@ -713,34 +742,36 @@ def _gaussian_elim_rational(A: list[list[Fraction]], b: list[Fraction]) -> list[
             factor = M[i][c]
             if factor != 0:
                 M[i] = [vi - factor * vr for vi, vr in zip(M[i], M[r])]
-        
+
         piv_cols.append(c)
         r += 1
         if r == m:
             break
-    
+
     # Extract solution for determined or consistent underdetermined systems
     if len(piv_cols) == n:  # Full rank in columns (all variables determined)
         sol = [Fraction(0)] * n
         for i, c in enumerate(piv_cols):
             if i < len(M):
                 sol[c] = M[i][-1]
-        
+
         # For underdetermined systems (m > n), verify all equations are satisfied
         if m > n:
             for i in range(m):
                 computed = sum(A[i][j] * sol[j] for j in range(n))
                 if computed != b[i]:
                     return None  # Not consistent
-        
+
         return sol
-    
+
     return None  # Singular or inconsistent
 
 
-def _find_sparse_polynomial_solution(samples: list[tuple[list[Any], Any]], degree: int = 2, include_inverse: bool = False) -> tuple[list[Fraction] | None, list[tuple[int, ...]]]:
+def _find_sparse_polynomial_solution(
+    samples: list[tuple[list[Any], Any]], degree: int = 2, include_inverse: bool = False
+) -> tuple[list[Fraction] | None, list[tuple[int, ...]]]:
     """Find sparse polynomial/rational solution using exact rational arithmetic.
-    
+
     Implements polynomial/rational basis expansion (degree 2) with exact Fraction arithmetic.
     Algorithm:
     1. Generate all monomials up to total degree 2 (optionally including inverse terms)
@@ -750,25 +781,27 @@ def _find_sparse_polynomial_solution(samples: list[tuple[list[Any], Any]], degre
        - Try all subsets of monomials of size m (or smaller for sparser solutions)
        - Verify exact match with all samples
        - Prioritize product terms, inverse terms, and simpler forms
-    
+
     Args:
         samples: List of (input_values, output_value) tuples
         degree: Maximum total degree of monomials (default: 2)
         include_inverse: If True, include negative exponents for inverse terms
-        
+
     Returns:
         Tuple of (solution_coefficients, exponent_list)
         solution_coefficients is None if no exact solution found
         All arithmetic uses Fraction for exact results
     """
-    A, b, exps_list = _build_polynomial_matrix(samples, degree, include_inverse=include_inverse)
-    
+    A, b, exps_list = _build_polynomial_matrix(
+        samples, degree, include_inverse=include_inverse
+    )
+
     if not A:
         return None, exps_list
-    
+
     m = len(A)  # Number of samples
     n = len(exps_list)  # Number of monomials
-    
+
     # Case 1: Square system (m == n) - try direct solve
     if m == n:
         sol = _gaussian_elim_rational(A, b)
@@ -781,7 +814,7 @@ def _find_sparse_polynomial_solution(samples: list[tuple[list[Any], Any]], degre
                     break
             if sol is not None:
                 return sol, exps_list
-    
+
     # Case 2: Overdetermined (m > n) - system has more equations than unknowns
     # For exact solution, we need the system to be consistent
     # Special case: if n == 1 (single term), check if all samples give the same coefficient
@@ -797,7 +830,7 @@ def _find_sparse_polynomial_solution(samples: list[tuple[list[Any], Any]], degre
                     return None, exps_list
                 coeff = bb / monomial_val
                 coeffs.append(coeff)
-            
+
             # Check if all coefficients are equal (exact match)
             if len(coeffs) > 0:
                 first_coeff = coeffs[0]
@@ -805,29 +838,31 @@ def _find_sparse_polynomial_solution(samples: list[tuple[list[Any], Any]], degre
                     # All samples give the same coefficient - exact solution!
                     sol = [first_coeff]
                     return sol, exps_list
-        
+
         # For other overdetermined cases, could implement rational least squares
         # For now, reject (system would need to be consistent for exact solution)
         return None, exps_list
-    
+
     # m < n: underdetermined - search for sparse solutions
     # Try smaller subsets first (sparsest solutions) up to size m
     indices = list(range(n))
-    
+
     # Limit search size to avoid combinatorial explosion
     # For large basis (e.g., 129 monomials), be more aggressive with limits
     if n > 50:
-        max_subset_size = min(m, 3)  # Very sparse solutions only for large basis (1-3 terms)
+        max_subset_size = min(
+            m, 3
+        )  # Very sparse solutions only for large basis (1-3 terms)
     elif n > 20:
         max_subset_size = min(m, 5)  # Moderate limit for medium basis
     else:
         max_subset_size = min(m, 10)  # Limit to 10 monomials max for performance
-    
+
     if max_subset_size > 0:
         # For large basis, prioritize sparse solutions and early termination
         # Try smallest subsets first, and stop early if we find a good solution
         from itertools import combinations
-        
+
         # Score function for subsets: prefer solutions with product terms, inverse terms, and fewer terms
         # Also prefer solutions that use variables present in the data (especially x)
         def subset_score(subset_indices):
@@ -838,49 +873,53 @@ def _find_sparse_polynomial_solution(samples: list[tuple[list[Any], Any]], degre
             has_inverse = False
             has_rational = False  # e.g., x*y/z^2 (product with inverse)
             uses_variables = set()
-            
+
             # Check which variables are actually used in the data (non-zero inputs)
             data_vars = set()
             for vars_tuple, _ in samples:
                 for i, val in enumerate(vars_tuple):
                     # Convert to Fraction to check if non-zero
                     try:
-                        val_frac = _parse_to_exact_fraction(val) if not isinstance(val, Fraction) else val
+                        val_frac = (
+                            _parse_to_exact_fraction(val)
+                            if not isinstance(val, Fraction)
+                            else val
+                        )
                         if val_frac != 0:
                             data_vars.add(i)
                     except:
                         pass
-            
+
             for idx in subset_indices:
                 exps = exps_list[idx]
                 abs_degree = sum(abs(e) for e in exps)
                 total_degree += abs_degree
-                
+
                 # Track which variables are used
                 for i, e in enumerate(exps):
                     if e != 0:
                         uses_variables.add(i)
                     if e < 0:
                         has_inverse = True
-                
+
                 # Check if it's a rational term like x*y/z^2 (product with inverse)
                 pos_count = sum(1 for e in exps if e > 0)
                 neg_count = sum(1 for e in exps if e < 0)
                 if pos_count >= 2 and neg_count >= 1:
                     # Has product of positive terms and at least one inverse
                     has_rational = True
-                
+
                 # Check if it's a product term (exactly two exponents are 1, rest are 0)
                 non_zero_count = sum(1 for e in exps if e != 0)
                 if non_zero_count == 2 and all(e in (0, 1) for e in exps):
                     has_product = True
                 elif any(e > 1 for e in exps):
                     has_quadratic = True
-            
+
             # Count how many data variables are used
             vars_used_count = len(uses_variables & data_vars)
             vars_not_used = len(data_vars - uses_variables)
-            
+
             # Prefer subsets that:
             # 1. Have rational terms (x*y/z^2) - highest priority
             # 2. Use variables present in data
@@ -888,21 +927,28 @@ def _find_sparse_polynomial_solution(samples: list[tuple[list[Any], Any]], degre
             # 4. Have lower total degree
             # Score: (not has_rational, vars_not_used, has_quadratic, not has_product, total_degree)
             # Lower score = better
-            return (not has_rational, vars_not_used, has_quadratic, not has_product, total_degree)
-        
+            return (
+                not has_rational,
+                vars_not_used,
+                has_quadratic,
+                not has_product,
+                total_degree,
+            )
+
         # Try subsets of increasing size, starting from the smallest
         # This finds the sparsest solution first
         for subset_size in range(1, max_subset_size + 1):
             # Generate all subsets of this size
             all_subsets = list(combinations(indices, subset_size))
-            
+
             # For size 2, prioritize product term pairs (like x*y and z*w)
             if subset_size == 2:
                 product_pairs = []
+
                 def is_product_term(exps):
                     non_zero = sum(1 for e in exps if e > 0)
                     return non_zero == 2 and all(e in (0, 1) for e in exps)
-                
+
                 # Find all product term pairs
                 for i, exps_i in enumerate(exps_list):
                     for j, exps_j in enumerate(exps_list):
@@ -911,15 +957,15 @@ def _find_sparse_polynomial_solution(samples: list[tuple[list[Any], Any]], degre
                                 pair_tuple = (i, j)
                                 if pair_tuple in all_subsets:
                                     product_pairs.append(pair_tuple)
-                
+
                 # Remove duplicates
                 product_pairs = list(set(product_pairs))
-                
+
                 # Further prioritize product pairs that use variables from data
                 # Especially prioritize pairs where both are pure product terms (like x*y and z*w)
                 product_pairs_pure = []
                 product_pairs_mixed = []
-                
+
                 for pair in product_pairs:
                     i, j = pair
                     exps_i = exps_list[i]
@@ -935,15 +981,15 @@ def _find_sparse_polynomial_solution(samples: list[tuple[list[Any], Any]], degre
                             product_pairs_mixed.append(pair)
                     else:
                         product_pairs_mixed.append(pair)
-                
+
                 # Sort each group by score
                 product_pairs_pure.sort(key=subset_score)
                 product_pairs_mixed.sort(key=subset_score)
-                
+
                 # Sort remaining subsets by score
                 remaining = [s for s in all_subsets if s not in product_pairs]
                 remaining.sort(key=subset_score)
-                
+
                 # Try pure product pairs first (like x*y and z*w), then mixed, then others
                 search_order = product_pairs_pure + product_pairs_mixed + remaining
             elif subset_size == 1:
@@ -951,13 +997,13 @@ def _find_sparse_polynomial_solution(samples: list[tuple[list[Any], Any]], degre
                 rational_terms = []
                 product_terms = []
                 other_terms = []
-                
+
                 for idx in indices:
                     exps = exps_list[idx]
                     pos_count = sum(1 for e in exps if e > 0)
                     neg_count = sum(1 for e in exps if e < 0)
                     non_zero_count = sum(1 for e in exps if e != 0)
-                    
+
                     # Rational term: product with inverse (e.g., x*y/z^2)
                     if pos_count >= 2 and neg_count >= 1:
                         rational_terms.append(idx)
@@ -966,93 +1012,97 @@ def _find_sparse_polynomial_solution(samples: list[tuple[list[Any], Any]], degre
                         product_terms.append(idx)
                     else:
                         other_terms.append(idx)
-                
+
                 # Sort each group by score
                 rational_terms.sort(key=lambda idx: subset_score([idx]))
                 product_terms.sort(key=lambda idx: subset_score([idx]))
                 other_terms.sort(key=lambda idx: subset_score([idx]))
-                
+
                 # Try rational terms first (most likely for physics laws), then products, then others
-                search_order = [(idx,) for idx in rational_terms + product_terms + other_terms]
+                search_order = [
+                    (idx,) for idx in rational_terms + product_terms + other_terms
+                ]
             else:
                 # Sort by score (better solutions first)
                 all_subsets.sort(key=subset_score)
                 search_order = all_subsets
-            
+
             # Limit the number of subsets to try for performance (especially for large basis)
             if len(search_order) > 1000:
                 # For very large search space, only try top-scored subsets
                 search_order = search_order[:1000]
-            
+
             for subset in search_order:
-                    A_sub = [[row[j] for j in subset] for row in A]
-                    
-                    # Handle overdetermined case (m > subset_size) for single terms
-                    if len(subset) == 1 and m > 1:
-                        # Single term with multiple samples: check if all give same coefficient
-                        coeffs = []
-                        for row_sub, bb in zip(A_sub, b):
-                            monomial_val = row_sub[0]
-                            if monomial_val == 0:
-                                # Can't divide by zero
-                                continue
-                            coeff = bb / monomial_val
-                            coeffs.append(coeff)
-                        
-                        # Check if all coefficients are equal (exact match)
-                        if len(coeffs) == m and len(coeffs) > 0:
-                            first_coeff = coeffs[0]
-                            if all(c == first_coeff for c in coeffs):
-                                # All samples give the same coefficient - exact solution!
-                                sol_sub = [first_coeff]
-                                # Lift solution to full length
-                                sol_full = [Fraction(0)] * n
-                                sol_full[subset[0]] = sol_sub[0]
-                                return sol_full, exps_list
-                        continue
-                    
-                    # For determined or underdetermined cases, use Gaussian elimination
-                    sol_sub = _gaussian_elim_rational(A_sub, b)
-                    
-                    if sol_sub is None:
-                        continue
-                    
-                    # Lift solution to full length
-                    sol_full = [Fraction(0)] * n
-                    for idx, val in zip(subset, sol_sub):
-                        sol_full[idx] = val
-                    
-                    # Verify exact match
-                    ok = True
-                    for row, bb in zip(A, b):
-                        s = sum(coef * val for coef, val in zip(row, sol_full))
-                        if s != bb:
-                            ok = False
-                            break
-                    
-                    if ok:
-                        return sol_full, exps_list
-    
+                A_sub = [[row[j] for j in subset] for row in A]
+
+                # Handle overdetermined case (m > subset_size) for single terms
+                if len(subset) == 1 and m > 1:
+                    # Single term with multiple samples: check if all give same coefficient
+                    coeffs = []
+                    for row_sub, bb in zip(A_sub, b):
+                        monomial_val = row_sub[0]
+                        if monomial_val == 0:
+                            # Can't divide by zero
+                            continue
+                        coeff = bb / monomial_val
+                        coeffs.append(coeff)
+
+                    # Check if all coefficients are equal (exact match)
+                    if len(coeffs) == m and len(coeffs) > 0:
+                        first_coeff = coeffs[0]
+                        if all(c == first_coeff for c in coeffs):
+                            # All samples give the same coefficient - exact solution!
+                            sol_sub = [first_coeff]
+                            # Lift solution to full length
+                            sol_full = [Fraction(0)] * n
+                            sol_full[subset[0]] = sol_sub[0]
+                            return sol_full, exps_list
+                    continue
+
+                # For determined or underdetermined cases, use Gaussian elimination
+                sol_sub = _gaussian_elim_rational(A_sub, b)
+
+                if sol_sub is None:
+                    continue
+
+                # Lift solution to full length
+                sol_full = [Fraction(0)] * n
+                for idx, val in zip(subset, sol_sub):
+                    sol_full[idx] = val
+
+                # Verify exact match
+                ok = True
+                for row, bb in zip(A, b):
+                    s = sum(coef * val for coef, val in zip(row, sol_full))
+                    if s != bb:
+                        ok = False
+                        break
+
+                if ok:
+                    return sol_full, exps_list
+
     return None, exps_list
 
 
-def _polynomial_solution_to_string(coeffs: list[Fraction], exps_list: list[tuple[int, ...]], param_names: list[str]) -> str:
+def _polynomial_solution_to_string(
+    coeffs: list[Fraction], exps_list: list[tuple[int, ...]], param_names: list[str]
+) -> str:
     """Convert polynomial solution (coefficients and exponents) to readable function string.
-    
+
     Args:
         coeffs: List of Fraction coefficients for each monomial
         exps_list: List of exponent tuples corresponding to each monomial
         param_names: List of parameter names (e.g., ["x", "y", "z", "w"])
-        
+
     Returns:
         Human-readable function string (e.g., "x*y - z*w")
     """
     terms = []
-    
+
     for coeff, exps in zip(coeffs, exps_list):
         if coeff == 0:
             continue
-        
+
         # Build monomial string for this term
         monomial_parts = []
         denominator_parts = []
@@ -1068,7 +1118,7 @@ def _polynomial_solution_to_string(coeffs: list[Fraction], exps_list: list[tuple
                 denominator_parts.append(param)
             else:  # exp < -1
                 denominator_parts.append(f"{param}**{abs(exp)}")
-        
+
         # Build the full term string (numerator/denominator)
         if not monomial_parts and not denominator_parts:
             # Constant term (all exponents are 0)
@@ -1088,7 +1138,7 @@ def _polynomial_solution_to_string(coeffs: list[Fraction], exps_list: list[tuple
                 numerator_str = "1"
             else:
                 numerator_str = "*".join(monomial_parts)
-            
+
             # Format coefficient
             if coeff == 1:
                 if denominator_parts:
@@ -1108,65 +1158,77 @@ def _polynomial_solution_to_string(coeffs: list[Fraction], exps_list: list[tuple
                     coeff_str = str(coeff.numerator)
                 else:
                     coeff_str = f"({coeff.numerator}/{coeff.denominator})"
-                
+
                 if denominator_parts:
-                    term_str = f"{coeff_str}*{numerator_str}/{'*'.join(denominator_parts)}"
+                    term_str = (
+                        f"{coeff_str}*{numerator_str}/{'*'.join(denominator_parts)}"
+                    )
                 else:
                     term_str = f"{coeff_str}*{numerator_str}"
                 terms.append((term_str, coeff))
-    
+
     if not terms:
         return "0"
-    
+
     # Sort terms: constants last, then by monomial order
     def term_key(term):
         expr_str, coeff = term
         # Extract monomial complexity (number of multiplications)
         mult_count = expr_str.count("*")
         # Constants go last
-        if mult_count == 0 and (expr_str == "1" or expr_str == "-1" or expr_str.lstrip("-").isdigit()):
+        if mult_count == 0 and (
+            expr_str == "1" or expr_str == "-1" or expr_str.lstrip("-").isdigit()
+        ):
             return (2, expr_str)
         return (0, mult_count, expr_str)
-    
+
     terms.sort(key=term_key)
-    
+
     # Build final string - prefer positive terms first for readability
     # Sort terms again: positive coefficients first, then negative
     # Constants go last
     positive_terms = []
     negative_terms = []
     constants = []
-    
+
     for expr_str, coeff in terms:
         # Check if it's a constant (no variables, just a number)
-        is_constant = (expr_str.lstrip("-").replace("(", "").replace(")", "").replace("/", "").replace("*", "").replace(" ", "").isdigit() or 
-                      expr_str in ["1", "-1"] or
-                      (expr_str.startswith("(") and expr_str.endswith(")") and "/" in expr_str))
-        
+        is_constant = (
+            expr_str.lstrip("-")
+            .replace("(", "")
+            .replace(")", "")
+            .replace("/", "")
+            .replace("*", "")
+            .replace(" ", "")
+            .isdigit()
+            or expr_str in ["1", "-1"]
+            or (expr_str.startswith("(") and expr_str.endswith(")") and "/" in expr_str)
+        )
+
         if is_constant:
             constants.append(expr_str)
         elif expr_str.startswith("-") or (isinstance(coeff, Fraction) and coeff < 0):
             negative_terms.append(expr_str.lstrip("-"))
         else:
             positive_terms.append(expr_str)
-    
+
     # Build result: positive terms first, then negative terms, then constants
     result_parts = []
-    
+
     # Add positive terms
     for term in positive_terms:
         if result_parts:
             result_parts.append(f"+ {term}")
         else:
             result_parts.append(term)
-    
+
     # Add negative terms with minus signs
     for term in negative_terms:
         if result_parts:
             result_parts.append(f"- {term}")
         else:
             result_parts.append(f"-{term}")
-    
+
     # Add constants last
     for const in constants:
         if result_parts:
@@ -1176,9 +1238,9 @@ def _polynomial_solution_to_string(coeffs: list[Fraction], exps_list: list[tuple
                 result_parts.append(f"+ {const}")
         else:
             result_parts.append(const)
-    
+
     func_str = " ".join(result_parts).replace("+ -", "- ").replace("- -", "+ ")
-    
+
     return func_str
 
 
@@ -1186,7 +1248,7 @@ def find_function_from_data(
     data_points: list[tuple[list[float], float]], param_names: list[str]
 ) -> tuple[bool, str | None, str | None, str | None]:
     """Find a function from data points using interpolation/regression.
-    
+
     For single-parameter functions:
     - Uses polynomial interpolation for exact fits:
       * Method 1: Lagrange interpolation (P(x) = Σᵢ yᵢ * Lᵢ(x) where Lᵢ(x) = Πⱼ≠ᵢ (x-xⱼ)/(xᵢ-xⱼ))
@@ -1194,7 +1256,7 @@ def find_function_from_data(
       * Method 2: Newton divided differences (more numerically stable for high-degree polynomials)
       * Method 3: Vandermonde matrix (fallback if other methods fail)
     - For overdetermined systems, uses least squares regression
-    
+
     For multi-parameter functions:
     - **PRIORITY 1**: Extended polynomial/rational basis with inverse terms (x*y, 1/z, 1/z^2, x*y/z^2, etc.)
       - Generates all monomials up to degree 2 including negative exponents (for inverse terms)
@@ -1205,23 +1267,23 @@ def find_function_from_data(
     - **PRIORITY 2**: Polynomial basis expansion (degree 2, no inverse terms) - finds non-linear relationships
       like x*y - z*w, x^2 + y^2, etc. Uses exact rational arithmetic throughout.
     - **PRIORITY 3**: Linear regression (fallback) - finds f(x₁, x₂, ..., xₙ) = a₁x₁ + a₂x₂ + ... + aₙxₙ
-    
+
     Args:
         data_points: List of (input_values, output_value) tuples
                     e.g., [([5, 7.1], 6.43182), ([0, 7.1], 4.84091), ([10, 10], 10.0)]
         param_names: List of parameter names (e.g., ["x", "y"])
-        
+
     Returns:
         Tuple of (success, function_string, factored_form, error_message)
         e.g., (True, "(7/22)*x + (15/22)*y", None, None)
     """
     import numpy as np
-    
+
     # Helper function to convert symbolic expressions to floats
     def eval_to_float(val):
         """Convert a value (string or number) to float, evaluating symbolic expressions."""
         import sympy as sp
-        
+
         if isinstance(val, (int, float)):
             return float(val)
         if isinstance(val, str):
@@ -1233,16 +1295,26 @@ def find_function_from_data(
             # Try evaluating as a symbolic expression
             try:
                 local_ns = {
-                    'pi': sp.pi, 'e': sp.E, 'E': sp.E, 'I': sp.I,
-                    'sqrt': sp.sqrt, 'sin': sp.sin, 'cos': sp.cos, 'tan': sp.tan,
-                    'log': sp.log, 'ln': sp.log, 'exp': sp.exp
+                    "pi": sp.pi,
+                    "e": sp.E,
+                    "E": sp.E,
+                    "I": sp.I,
+                    "sqrt": sp.sqrt,
+                    "sin": sp.sin,
+                    "cos": sp.cos,
+                    "tan": sp.tan,
+                    "log": sp.log,
+                    "ln": sp.log,
+                    "exp": sp.exp,
                 }
                 expr = sp.sympify(val, locals=local_ns)
                 # Force numeric evaluation
                 result = expr.evalf()
                 # Check if result is still symbolic (contains free symbols)
-                if hasattr(result, 'free_symbols') and result.free_symbols:
-                    raise ValueError(f"Expression '{val}' contains free symbols: {result.free_symbols}")
+                if hasattr(result, "free_symbols") and result.free_symbols:
+                    raise ValueError(
+                        f"Expression '{val}' contains free symbols: {result.free_symbols}"
+                    )
                 return float(result)
             except (TypeError, ValueError) as e:
                 raise ValueError(f"Could not convert '{val}' to a numeric value: {e}")
@@ -1251,8 +1323,10 @@ def find_function_from_data(
         # For SymPy expressions
         try:
             result = val.evalf()
-            if hasattr(result, 'free_symbols') and result.free_symbols:
-                raise ValueError(f"Expression contains free symbols: {result.free_symbols}")
+            if hasattr(result, "free_symbols") and result.free_symbols:
+                raise ValueError(
+                    f"Expression contains free symbols: {result.free_symbols}"
+                )
             return float(result)
         except Exception:
             raise ValueError(f"Could not convert '{val}' to a numeric value")
@@ -1263,23 +1337,28 @@ def find_function_from_data(
         # Create a hashable key for the input
         # Round floats to avoid tiny precision differences causing false mismatches
         x_key = tuple(round(eval_to_float(x), 9) for x in x_tuple)
-        
+
         y_float = eval_to_float(y_val)
         if x_key in input_map:
             prev_y = input_map[x_key]
             if not np.isclose(prev_y, y_float, atol=1e-7):
-                 return (False, None, None, f"Error: Conflicting data points found for input {x_tuple}. Got both {prev_y} and {y_val}.")
+                return (
+                    False,
+                    None,
+                    None,
+                    f"Error: Conflicting data points found for input {x_tuple}. Got both {prev_y} and {y_val}.",
+                )
         else:
             input_map[x_key] = y_float
 
     if not data_points:
         return (False, None, None, "No data points provided")
-    
+
     if len(param_names) == 0:
         return (False, None, None, "No parameters specified")
-    
+
     n_params = len(param_names)
-    
+
     # Special case: if we have 1 data point and 1 parameter, we can find a constant function
     if len(data_points) == 1 and n_params == 1:
         value = data_points[0][1]
@@ -1290,26 +1369,40 @@ def find_function_from_data(
     if n_params == 1:
         try:
             from .function_finder_advanced import check_log_linear_transformations
-            
+
             # Extract X and y data - evaluate symbolic constants
             # p[0] is a tuple/list of x values for this data point
-            X_data = [eval_to_float(p[0][0]) if isinstance(p[0], (list, tuple)) else eval_to_float(p[0]) for p in data_points]
+            X_data = [
+                (
+                    eval_to_float(p[0][0])
+                    if isinstance(p[0], (list, tuple))
+                    else eval_to_float(p[0])
+                )
+                for p in data_points
+            ]
             y_data = [eval_to_float(p[1]) for p in data_points]
-            
-            success, func_str = check_log_linear_transformations(X_data, y_data, param_names)
+
+            success, func_str = check_log_linear_transformations(
+                X_data, y_data, param_names
+            )
             if success and func_str:
                 return (True, func_str, None, None)
         except (ImportError, Exception) as e:
             import sys
+
             sys.stderr.write(f"CRITICAL ERROR in advanced path: {e}\n")
             import traceback
+
             traceback.print_exc()
             pass  # Fall back to other methods
 
     # Uses OMP to find combinations of sin, cos, exp, log, 1/x, etc.
     try:
-        from .function_finder_advanced import generate_candidate_features, lasso_regression
-        
+        from .function_finder_advanced import (
+            generate_candidate_features,
+            lasso_regression,
+        )
+
         # Extract X and y data - evaluate symbolic constants
         # p[0] is a tuple/list of x values for this data point
         X_data = []
@@ -1318,37 +1411,40 @@ def find_function_from_data(
                 X_data.append([eval_to_float(x) for x in p[0]])
             else:
                 X_data.append([eval_to_float(p[0])])
-        
+
         # Ensure y_data contains floats, not strings
         y_data = [eval_to_float(p[1]) for p in data_points]
-        
+
         # Generate feature matrix (including transcendental terms)
         X_matrix, feature_names = generate_candidate_features(X_data, param_names)
-        
+
         # Normalize features for Lasso (critical)
         # Use StandardScaler to handle "Giants vs Ants" (scale imbalance)
         # This ensures features like exp(x) (huge) don't dominate sin(x) (small)
         from sklearn.preprocessing import StandardScaler
+
         scaler = StandardScaler()
         X_norm = scaler.fit_transform(X_matrix)
-        
+
         # Solve using Lasso (L1 Regularization)
         # Use fixed alpha=0.05 (stronger regularization) with StandardScaler
         # This combination favors the linear solution (x + sin(x)) over exponential
         # Center y data (mean) because StandardScaler centers X
         import numpy as np
+
         y_mean = np.mean(y_data)
         y_centered = np.array(y_data) - y_mean
-        
+
         # Feature Weighting: Hybrid approach (Name + Magnitude)
         # 1. Penalize complexity (exp, high freq) by default (2x, 3x)
         # 2. Penalize Giants (magnitude mismatch) heavily (5x)
-        
+
         y_max = np.max(np.abs(y_data))
-        if y_max < 1e-6: y_max = 1.0
-        
+        if y_max < 1e-6:
+            y_max = 1.0
+
         penalty_factors = np.ones(X_norm.shape[1])
-        
+
         for i in range(X_norm.shape[1]):
             # Base penalty based on name (Complexity)
             name = feature_names[i]
@@ -1363,68 +1459,78 @@ def find_function_from_data(
                 else:
                     # Raw exp(x) - grows explosively, high penalty
                     penalty_factors[i] = 2.5
-            
+
             # Refined Frequency Regularization:
             # Only penalize 2* inside sin/cos to avoid penalizing x^2*y (power interactions)
             if "sin(2*" in name or "cos(2*" in name:
                 penalty_factors[i] = max(penalty_factors[i], 2.0)
             elif "sin(pi*" in name or "cos(pi*" in name:
                 penalty_factors[i] = max(penalty_factors[i], 3.0)
-            
+
             # Boost penalty for Giants (Magnitude)
             col_max = np.max(np.abs(X_matrix[:, i]))
             if col_max > 20 * y_max:
                 penalty_factors[i] = max(penalty_factors[i], 5.0)
-                
+
         X_weighted = X_norm / penalty_factors
-        
+
         # Scale-Invariant Regularization
         # Set alpha proportional to y_std so it works for both large (Giant) and small (Damped) signals.
         y_std = np.std(y_data)
-        if y_std < 1e-6: y_std = 1.0
-        
+        if y_std < 1e-6:
+            y_std = 1.0
+
         adaptive_alpha = 0.01 * y_std
         adaptive_threshold = 1e-3 * y_std
-        
+
         coeffs = lasso_regression(
-            X_weighted.tolist(), y_centered.tolist(), lambda_reg=adaptive_alpha, max_iterations=50000
+            X_weighted.tolist(),
+            y_centered.tolist(),
+            lambda_reg=adaptive_alpha,
+            max_iterations=50000,
         )
-        
+
         # Unscale coefficients (multiply by penalty factor)
         coeffs = [c * p for c, p in zip(coeffs, penalty_factors)]
-        
+
         # Select features with non-zero coefficients
         # Use adaptive threshold to filter out numerical noise relative to signal scale
-        selected_indices = [i for i, c in enumerate(coeffs) if abs(c) > adaptive_threshold]
-        
+        selected_indices = [
+            i for i, c in enumerate(coeffs) if abs(c) > adaptive_threshold
+        ]
+
         # If too many features selected, pick top 5 by magnitude
         if len(selected_indices) > 5:
             # Sort by absolute coefficient value (descending)
             selected_indices.sort(key=lambda i: abs(coeffs[i]), reverse=True)
             selected_indices = selected_indices[:5]
-        
+
         if 0 < len(selected_indices) <= 5:  # Allow up to 5 terms
             # REFIT: Run OLS on selected features to ensure best fit
             from sklearn.linear_model import LinearRegression
-            
+
             # Iterative OLS Cleanup: Remove tiny coefficients that are likely noise
             # This handles "Ghost Noise" (e.g. tiny sinh(t) term)
             for _ in range(3):  # Max 3 cleanup iterations
                 X_selected = X_matrix[:, selected_indices]
                 ols = LinearRegression(fit_intercept=True)
                 ols.fit(X_selected, y_data)
-                
+
                 refined_coeffs = ols.coef_
                 intercept = ols.intercept_
-                
+
                 # Check for tiny coefficients relative to the max coefficient
-                max_coeff_abs = max(abs(c) for c in refined_coeffs) if len(refined_coeffs) > 0 else 0
+                max_coeff_abs = (
+                    max(abs(c) for c in refined_coeffs)
+                    if len(refined_coeffs) > 0
+                    else 0
+                )
                 if max_coeff_abs < 1e-12:
                     break
-                    
+
                 new_indices = []
                 new_refined_coeffs = []
-                
+
                 # Filter out noise (coefficients < 1e-9 * max or absolute < 1e-10)
                 # This ensures we don't keep terms like 2.5e-15*sinh(t)
                 param_changed = False
@@ -1434,29 +1540,29 @@ def find_function_from_data(
                         new_refined_coeffs.append(c)
                     else:
                         param_changed = True
-                
+
                 if not param_changed:
                     break
-                    
+
                 selected_indices = new_indices
                 if not selected_indices:
                     break
-            
+
             # Calculate final coefficients after cleanup
             refined_coeffs = ols.coef_
             intercept = ols.intercept_
-            
+
             # Reconstruct equation with refined coefficients
             equation_parts = []
-            
+
             # Use higher precision (.10g) to avoid "Shrinkage" (4.903 vs 4.903325)
             if abs(intercept) > 1e-6:
                 equation_parts.append(f"{intercept:.10g}")
-            
+
             for i, idx in enumerate(selected_indices):
                 coeff = refined_coeffs[i]
                 name = feature_names[idx]
-                
+
                 # Format coefficient nicely with high precision
                 if abs(coeff - 1.0) < 1e-9:
                     term = name
@@ -1465,56 +1571,67 @@ def find_function_from_data(
                 else:
                     term = f"{coeff:.10g}*{name}"
                 equation_parts.append(term)
-            
+
             if not equation_parts:
                 func_str = "0"
             else:
                 func_str = " + ".join(equation_parts).replace("+ -", "- ")
 
-            
             # Verify the fit
             import sympy as sp_module
+
             try:
                 # Create local symbol dict
                 local_dict = {name: sp_module.Symbol(name) for name in param_names}
                 # Add functions to local dict
-                local_dict.update({
-                    'sin': sp_module.sin, 'cos': sp_module.cos, 
-                    'exp': sp_module.exp, 'log': sp_module.log
-                })
-                
+                local_dict.update(
+                    {
+                        "sin": sp_module.sin,
+                        "cos": sp_module.cos,
+                        "exp": sp_module.exp,
+                        "log": sp_module.log,
+                    }
+                )
+
                 func_expr = sp_module.sympify(func_str, locals=local_dict)
-                
+
                 # Check MSE
                 total_error = 0
                 for point in data_points:
                     input_vals = point[0]
                     expected_output = point[1]
-                    
+
                     # Evaluate symbolic constants in input values
-                    input_floats = [eval_to_float(v) if isinstance(v, str) else float(v) for v in input_vals]
-                    subs_dict = {local_dict[name]: val for name, val in zip(param_names, input_floats)}
+                    input_floats = [
+                        eval_to_float(v) if isinstance(v, str) else float(v)
+                        for v in input_vals
+                    ]
+                    subs_dict = {
+                        local_dict[name]: val
+                        for name, val in zip(param_names, input_floats)
+                    }
                     computed = float(func_expr.subs(subs_dict))
                     expected = eval_to_float(expected_output)
                     total_error += (computed - expected) ** 2
-                
+
                 mse = total_error / len(data_points)
 
-                
                 # If fit is good, return it!
                 if mse < 1e-5:
                     return (True, func_str, None, None)
             except Exception as e:
 
                 pass  # Verification failed, fall back
-                
+
     except (ImportError, Exception) as e:
         import sys
+
         sys.stderr.write(f"CRITICAL ERROR in advanced path: {e}\n")
         import traceback
+
         traceback.print_exc()
         pass  # Fall back to polynomial interpolation
-    
+
     # For single-parameter functions, try polynomial basis expansion (degree 2) first
     # This can find patterns like π*x², x², etc. with exact rational or symbolic coefficients
     if n_params == 1:
@@ -1522,51 +1639,79 @@ def find_function_from_data(
             # Try polynomial basis expansion with degree 2 for single-parameter functions
             # This will find quadratic, linear, and constant terms
             sol, exps_list = _find_sparse_polynomial_solution(data_points, degree=2)
-            
+
             if sol is not None:
                 # Convert solution to readable function string
                 func_str = _polynomial_solution_to_string(sol, exps_list, param_names)
-                
+
                 # Try to detect if coefficient is close to π and replace with symbolic π
                 try:
                     # Ensure sp is available (imported at module level)
                     import sympy as sp_module
-                    
+
                     # Parse the function string to check for π-like coefficients
                     param_name = param_names[0]
-                    local_dict = {param_name: sp_module.Symbol(param_name), 'pi': sp_module.pi, 'Pi': sp_module.pi}
+                    local_dict = {
+                        param_name: sp_module.Symbol(param_name),
+                        "pi": sp_module.pi,
+                        "Pi": sp_module.pi,
+                    }
                     func_expr = sp_module.sympify(func_str, locals=local_dict)
-                    
+
                     # Check if it's a simple polynomial and try to detect π
                     # For f(x) = π*x², we'd have a coefficient close to π
                     # Expand any fractions first
                     expanded = sp_module.expand(func_expr)
-                    
+
                     param_symbol = sp_module.Symbol(param_names[0])
                     pi_val = float(sp_module.N(sp_module.pi))
                     pi_approx = 3.14159
                     pi_detected_early = False
-                    
+
                     # First, check if it's essentially π*x² (dominant x² term with coefficient ≈ π)
                     if isinstance(expanded, sp_module.Add):
                         # Check coefficient of x² term
-                        x2_coeff = expanded.coeff(param_symbol**2) if hasattr(expanded, 'coeff') else None
+                        x2_coeff = (
+                            expanded.coeff(param_symbol**2)
+                            if hasattr(expanded, "coeff")
+                            else None
+                        )
                         if x2_coeff is not None and x2_coeff != 0:
                             x2_coeff_val = float(sp_module.N(x2_coeff))
                             # Check if x² coefficient is close to π
-                            if abs(x2_coeff_val - pi_val) / pi_val < 0.0001 or abs(x2_coeff_val - pi_approx) / pi_approx < 0.0001:
+                            if (
+                                abs(x2_coeff_val - pi_val) / pi_val < 0.0001
+                                or abs(x2_coeff_val - pi_approx) / pi_approx < 0.0001
+                            ):
                                 # Check if other terms are negligible
-                                x_coeff = expanded.coeff(param_symbol) if hasattr(expanded, 'coeff') else 0
+                                x_coeff = (
+                                    expanded.coeff(param_symbol)
+                                    if hasattr(expanded, "coeff")
+                                    else 0
+                                )
                                 const_coeff = expanded.subs(param_symbol, 0)
-                                x_coeff_val = abs(float(sp_module.N(x_coeff))) if x_coeff != 0 else 0
-                                const_coeff_val = abs(float(sp_module.N(const_coeff))) if const_coeff != 0 else 0
-                                
+                                x_coeff_val = (
+                                    abs(float(sp_module.N(x_coeff)))
+                                    if x_coeff != 0
+                                    else 0
+                                )
+                                const_coeff_val = (
+                                    abs(float(sp_module.N(const_coeff)))
+                                    if const_coeff != 0
+                                    else 0
+                                )
+
                                 # If other terms are very small (< 0.1% of x² term at largest x), simplify to π*x²
                                 # Use largest x value from data points
-                                max_x = max(abs(float(_parse_to_exact_fraction(p[0][0]))) for p in data_points)
+                                max_x = max(
+                                    abs(float(_parse_to_exact_fraction(p[0][0])))
+                                    for p in data_points
+                                )
                                 x2_term_magnitude = abs(x2_coeff_val) * max_x * max_x
-                                if (x_coeff_val * max_x < 0.001 * x2_term_magnitude and 
-                                    const_coeff_val < 0.001 * x2_term_magnitude):
+                                if (
+                                    x_coeff_val * max_x < 0.001 * x2_term_magnitude
+                                    and const_coeff_val < 0.001 * x2_term_magnitude
+                                ):
                                     func_expr = sp_module.pi * param_symbol**2
                                     func_str = str(func_expr)
                                     func_str = func_str.replace("pi", "pi")
@@ -1577,11 +1722,25 @@ def find_function_from_data(
                                     for point in data_points:
                                         input_vals = point[0]
                                         expected_output = point[1]
-                                        
-                                        subs_dict = {param_symbol: _parse_to_exact_fraction(input_vals[0]) if isinstance(input_vals[0], (int, float, str)) else Fraction(input_vals[0])}
+
+                                        subs_dict = {
+                                            param_symbol: (
+                                                _parse_to_exact_fraction(input_vals[0])
+                                                if isinstance(
+                                                    input_vals[0], (int, float, str)
+                                                )
+                                                else Fraction(input_vals[0])
+                                            )
+                                        }
                                         computed = func_expr.subs(subs_dict)
-                                        expected_frac = _parse_to_exact_fraction(expected_output) if isinstance(expected_output, (int, float, str)) else Fraction(expected_output)
-                                        
+                                        expected_frac = (
+                                            _parse_to_exact_fraction(expected_output)
+                                            if isinstance(
+                                                expected_output, (int, float, str)
+                                            )
+                                            else Fraction(expected_output)
+                                        )
+
                                         # For π*x², allow tolerance for floating point approximations
                                         # Convert both to float for comparison
                                         computed_val = float(sp_module.N(computed))
@@ -1593,15 +1752,17 @@ def find_function_from_data(
                                         if diff > tolerance:
                                             all_match = False
                                             break
-                                    
+
                                     if all_match:
                                         factored_form = None
                                         return (True, func_str, factored_form, None)
                                     # If verification fails, continue with polynomial solution
-                        
+
                         # Check each term for π-like coefficient (for more complex cases)
                         # Only if we haven't already detected π*x²
-                        if not pi_detected_early and isinstance(expanded, sp_module.Add):
+                        if not pi_detected_early and isinstance(
+                            expanded, sp_module.Add
+                        ):
                             new_terms = []
                             pi_detected = False
                             for term in expanded.args:
@@ -1610,61 +1771,110 @@ def find_function_from_data(
                                     coeff_part = sp_module.Integer(1)
                                     var_part = sp_module.Integer(1)
                                     for factor in term.args:
-                                        if isinstance(factor, (sp_module.Number, sp_module.Rational, sp_module.Float)):
+                                        if isinstance(
+                                            factor,
+                                            (
+                                                sp_module.Number,
+                                                sp_module.Rational,
+                                                sp_module.Float,
+                                            ),
+                                        ):
                                             coeff_part = coeff_part * factor
                                         else:
                                             var_part = var_part * factor
-                                    
+
                                     # Check if coefficient is close to π (works for Rational, Float, etc.)
-                                    if isinstance(coeff_part, (sp_module.Float, sp_module.Rational, sp_module.Integer)):
+                                    if isinstance(
+                                        coeff_part,
+                                        (
+                                            sp_module.Float,
+                                            sp_module.Rational,
+                                            sp_module.Integer,
+                                        ),
+                                    ):
                                         coeff_val = float(sp_module.N(coeff_part))
                                         # Check if coefficient is very close to π (within 0.01%)
-                                        if abs(coeff_val - pi_val) / pi_val < 0.0001 or abs(coeff_val - pi_approx) / pi_approx < 0.0001:
+                                        if (
+                                            abs(coeff_val - pi_val) / pi_val < 0.0001
+                                            or abs(coeff_val - pi_approx) / pi_approx
+                                            < 0.0001
+                                        ):
                                             # Replace with π
                                             new_terms.append(sp_module.pi * var_part)
                                             pi_detected = True
                                             continue
-                                
+
                                 new_terms.append(term)
-                            
-                            if pi_detected and not hasattr(func_expr, 'has_pi'):  # Avoid double detection
+
+                            if pi_detected and not hasattr(
+                                func_expr, "has_pi"
+                            ):  # Avoid double detection
                                 func_expr = sp_module.Add(*new_terms)
                                 func_str = str(func_expr)
                                 # Replace pi with π for display if possible, or keep as "pi"
                                 func_str = func_str.replace("pi", "pi")
-                        elif not pi_detected_early and isinstance(expanded, sp_module.Mul):
+                        elif not pi_detected_early and isinstance(
+                            expanded, sp_module.Mul
+                        ):
                             # Check if it's a simple multiplication like π*x²
                             coeff_part = sp_module.Integer(1)
                             var_part = sp_module.Integer(1)
                             for factor in expanded.args:
-                                if isinstance(factor, (sp_module.Number, sp_module.Rational, sp_module.Float)):
+                                if isinstance(
+                                    factor,
+                                    (
+                                        sp_module.Number,
+                                        sp_module.Rational,
+                                        sp_module.Float,
+                                    ),
+                                ):
                                     coeff_part = coeff_part * factor
                                 else:
                                     var_part = var_part * factor
-                            
+
                             # Check if coefficient is close to π
-                            if isinstance(coeff_part, (sp_module.Float, sp_module.Rational, sp_module.Integer)):
+                            if isinstance(
+                                coeff_part,
+                                (
+                                    sp_module.Float,
+                                    sp_module.Rational,
+                                    sp_module.Integer,
+                                ),
+                            ):
                                 coeff_val = float(sp_module.N(coeff_part))
                                 pi_val = float(sp_module.N(sp_module.pi))
                                 pi_approx = 3.14159
                                 # Check if coefficient is very close to π (within 0.01%)
-                                if abs(coeff_val - pi_val) / pi_val < 0.0001 or abs(coeff_val - pi_approx) / pi_approx < 0.0001:
+                                if (
+                                    abs(coeff_val - pi_val) / pi_val < 0.0001
+                                    or abs(coeff_val - pi_approx) / pi_approx < 0.0001
+                                ):
                                     func_expr = sp_module.pi * var_part
                                     func_str = str(func_expr)
                                     func_str = func_str.replace("pi", "pi")
-                    
+
                     # Verify the solution matches all data points
                     all_match = True
                     for point in data_points:
                         input_vals = point[0]
                         expected_output = point[1]
-                        
+
                         # Convert to Fractions for exact comparison
-                        subs_dict = {sp_module.Symbol(param_names[0]): _parse_to_exact_fraction(input_vals[0]) if isinstance(input_vals[0], (int, float, str)) else Fraction(input_vals[0])}
-                        
+                        subs_dict = {
+                            sp_module.Symbol(param_names[0]): (
+                                _parse_to_exact_fraction(input_vals[0])
+                                if isinstance(input_vals[0], (int, float, str))
+                                else Fraction(input_vals[0])
+                            )
+                        }
+
                         computed = func_expr.subs(subs_dict)
-                        expected_frac = _parse_to_exact_fraction(expected_output) if isinstance(expected_output, (int, float, str)) else Fraction(expected_output)
-                        
+                        expected_frac = (
+                            _parse_to_exact_fraction(expected_output)
+                            if isinstance(expected_output, (int, float, str))
+                            else Fraction(expected_output)
+                        )
+
                         # Check exact or close match (for π cases, we need tolerance)
                         if isinstance(computed, sp_module.Number):
                             computed_val = float(sp_module.N(computed))
@@ -1680,7 +1890,7 @@ def find_function_from_data(
                             if diff > 1e-6:
                                 all_match = False
                                 break
-                    
+
                     if all_match:
                         factored_form = None
                         return (True, func_str, factored_form, None)
@@ -1689,23 +1899,36 @@ def find_function_from_data(
                     # Verify it matches
                     try:
                         import sympy as sp_module
+
                         param_name = param_names[0]
                         local_dict = {param_name: sp_module.Symbol(param_name)}
                         func_expr = sp_module.sympify(func_str, locals=local_dict)
-                        
+
                         all_match = True
                         for point in data_points:
                             input_vals = point[0]
                             expected_output = point[1]
-                            
-                            subs_dict = {sp_module.Symbol(param_name): _parse_to_exact_fraction(input_vals[0]) if isinstance(input_vals[0], (int, float, str)) else Fraction(input_vals[0])}
+
+                            subs_dict = {
+                                sp_module.Symbol(param_name): (
+                                    _parse_to_exact_fraction(input_vals[0])
+                                    if isinstance(input_vals[0], (int, float, str))
+                                    else Fraction(input_vals[0])
+                                )
+                            }
                             computed = func_expr.subs(subs_dict)
-                            expected_frac = _parse_to_exact_fraction(expected_output) if isinstance(expected_output, (int, float, str)) else Fraction(expected_output)
-                            
+                            expected_frac = (
+                                _parse_to_exact_fraction(expected_output)
+                                if isinstance(expected_output, (int, float, str))
+                                else Fraction(expected_output)
+                            )
+
                             if isinstance(computed, sp_module.Number):
                                 computed_val = float(sp_module.N(computed))
                                 expected_val = float(expected_frac)
-                                if abs(computed_val - expected_val) > max(1e-6, abs(expected_val) * 1e-6):
+                                if abs(computed_val - expected_val) > max(
+                                    1e-6, abs(expected_val) * 1e-6
+                                ):
                                     all_match = False
                                     break
                             else:
@@ -1713,7 +1936,7 @@ def find_function_from_data(
                                 if diff > 1e-6:
                                     all_match = False
                                     break
-                        
+
                         if all_match:
                             return (True, func_str, None, None)
                     except Exception:
@@ -1721,50 +1944,66 @@ def find_function_from_data(
         except Exception as e:
             # If polynomial basis expansion fails, fall through to polynomial interpolation
             pass
-    
+
     # For multi-parameter functions, try extended basis expansion first (with inverse terms)
     # This can find rational functions like x*y/z^2 (Newton's law), x*y/z, etc.
     if n_params > 1:
         try:
             # First try with inverse terms included (for rational functions like x*y/z^2)
             # Use higher degree (4) to allow terms like x*y/z^2 (sum of abs values = 4)
-            sol, exps_list = _find_sparse_polynomial_solution(data_points, degree=4, include_inverse=True)
-            
+            sol, exps_list = _find_sparse_polynomial_solution(
+                data_points, degree=4, include_inverse=True
+            )
+
             if sol is None:
                 # Fallback: try without inverse terms (standard polynomial basis)
-                sol, exps_list = _find_sparse_polynomial_solution(data_points, degree=2, include_inverse=False)
-            
+                sol, exps_list = _find_sparse_polynomial_solution(
+                    data_points, degree=2, include_inverse=False
+                )
+
             if sol is not None:
                 # Convert solution to readable function string
                 func_str = _polynomial_solution_to_string(sol, exps_list, param_names)
-                
+
                 # Verify the solution matches all data points exactly
                 # (This should already be verified in _find_sparse_polynomial_solution, but double-check)
                 try:
                     # Use module-level sp (imported at top of file)
                     local_dict = {param: sp.Symbol(param) for param in param_names}
                     func_expr = sp.sympify(func_str, locals=local_dict)
-                    
+
                     all_match = True
                     for point in data_points:
                         input_vals = point[0]
                         expected_output = point[1]
-                        
+
                         # Convert to Fractions for exact comparison
                         subs_dict = {}
                         for param, val in zip(param_names, input_vals):
                             if isinstance(val, (int, float, str)):
                                 val_frac = _parse_to_exact_fraction(val)
                             else:
-                                val_frac = Fraction(val) if isinstance(val, Fraction) else Fraction(float(val))
+                                val_frac = (
+                                    Fraction(val)
+                                    if isinstance(val, Fraction)
+                                    else Fraction(float(val))
+                                )
                             subs_dict[sp.Symbol(param)] = val_frac
-                        
+
                         computed = func_expr.subs(subs_dict)
-                        expected_frac = _parse_to_exact_fraction(expected_output) if isinstance(expected_output, (int, float, str)) else Fraction(expected_output)
-                        
+                        expected_frac = (
+                            _parse_to_exact_fraction(expected_output)
+                            if isinstance(expected_output, (int, float, str))
+                            else Fraction(expected_output)
+                        )
+
                         # Check exact match
                         if isinstance(computed, sp.Number):
-                            computed_frac = Fraction(computed.numerator, computed.denominator) if hasattr(computed, 'numerator') else Fraction(float(computed))
+                            computed_frac = (
+                                Fraction(computed.numerator, computed.denominator)
+                                if hasattr(computed, "numerator")
+                                else Fraction(float(computed))
+                            )
                             if computed_frac != expected_frac:
                                 all_match = False
                                 break
@@ -1774,12 +2013,12 @@ def find_function_from_data(
                             if diff > 1e-10:
                                 all_match = False
                                 break
-                    
+
                     if all_match:
                         # Generate factored form (for now, just use the same string)
                         # Could enhance this later to factor common terms
                         factored_form = None
-                        
+
                         return (True, func_str, factored_form, None)
                 except Exception:
                     # If verification fails, fall through to linear regression
@@ -1787,7 +2026,7 @@ def find_function_from_data(
         except Exception:
             # If polynomial basis expansion fails, fall through to linear regression
             pass
-    
+
     # Fall back to linear regression (original algorithm)
     # For linear regression:
     # - Single-parameter: need at least 1 point (f(x) = a*x, or constant if 1 point)
@@ -1796,23 +2035,23 @@ def find_function_from_data(
         n_coeffs = n_params + 1
     else:
         n_coeffs = n_params
-    
+
     is_underdetermined = len(data_points) < n_coeffs
-    
+
     if is_underdetermined:
         # For underdetermined systems, we'll use least squares to find the best-fit solution
         # Note: This will be a best-fit, not an exact fit
         pass  # Continue to solve using least squares below
-    
+
     try:
         # Build system of linear equations: Ax = b
         # Each data point gives: coeff1*x1 + coeff2*x2 + ... = output
         # For f(x,y) = a*x + b*y, we need to find a and b
-        
+
         # Extract inputs and outputs
         inputs = [point[0] for point in data_points]
         outputs = [point[1] for point in data_points]
-        
+
         # Verify all inputs have same length
         for inp in inputs:
             if len(inp) != n_params:
@@ -1821,7 +2060,7 @@ def find_function_from_data(
                     None,
                     f"All inputs must have {n_params} values, but got input with {len(inp)} values",
                 )
-        
+
         # Convert inputs and outputs to SymPy expressions if they're not already
         # This handles both numeric values and symbolic expressions like pi
         # For decimal values, convert to exact Rationals to preserve precision
@@ -1842,9 +2081,14 @@ def find_function_from_data(
                     try:
                         sympy_row.append(sp.sympify(val))
                     except (ValueError, TypeError):
-                        return (False, None, None, f"Could not convert input value {val} to SymPy expression")
+                        return (
+                            False,
+                            None,
+                            None,
+                            f"Could not convert input value {val} to SymPy expression",
+                        )
             sympy_inputs.append(sympy_row)
-        
+
         sympy_outputs = []
         for out in outputs:
             if isinstance(out, str):
@@ -1860,8 +2104,13 @@ def find_function_from_data(
                 try:
                     sympy_outputs.append(sp.sympify(out))
                 except (ValueError, TypeError):
-                    return (False, None, None, f"Could not convert output value {out} to SymPy expression")
-        
+                    return (
+                        False,
+                        None,
+                        None,
+                        f"Could not convert output value {out} to SymPy expression",
+                    )
+
         # Build coefficient matrix A and output vector b
         # For linear function: f(x1, x2, ..., xn) = a1*x1 + a2*x2 + ... + an*xn + C
         # Each row: [x1, x2, ..., xn, 1] -> output (the 1 accounts for the constant term C)
@@ -1875,7 +2124,7 @@ def find_function_from_data(
             # For single-parameter, use original inputs (no constant term by default)
             A = sp.Matrix(sympy_inputs)
         b = sp.Matrix(sympy_outputs)
-        
+
         # Solve Ax = b for coefficients
         try:
             # For single-parameter functions, try polynomial fitting if we have enough points
@@ -1884,7 +2133,7 @@ def find_function_from_data(
                 # f(x) = a₀ + a₁x + a₂x² + ... + aₙ₋₁xⁿ⁻¹
                 n_points = len(data_points)
                 degree = n_points - 1
-                
+
                 # Check if we should try polynomial fitting (when we have more points than needed for linear)
                 if n_points > 1:
                     # Method 1: Try Lagrange interpolation (closed-form, explicit formula)
@@ -1892,39 +2141,45 @@ def find_function_from_data(
                     # This gives a direct closed-form expression
                     try:
                         # Sort points by x-value for numerical stability
-                        sorted_points = sorted(zip(sympy_inputs, sympy_outputs), 
-                                             key=lambda p: float(sp.N(p[0][0])) if isinstance(p[0][0], (sp.Basic, int, float)) else p[0][0])
+                        sorted_points = sorted(
+                            zip(sympy_inputs, sympy_outputs),
+                            key=lambda p: (
+                                float(sp.N(p[0][0]))
+                                if isinstance(p[0][0], (sp.Basic, int, float))
+                                else p[0][0]
+                            ),
+                        )
                         sorted_inputs = [p[0] for p in sorted_points]
                         sorted_outputs = [p[1] for p in sorted_points]
-                        
+
                         # Extract x and y values
                         x_vals = [inp[0] for inp in sorted_inputs]
                         y_vals = sorted_outputs
                         n = len(x_vals)
-                        
+
                         param_name = param_names[0]
                         param_symbol = sp.Symbol(param_name)
-                        
+
                         # Build Lagrange polynomial: P(x) = Σᵢ yᵢ * Lᵢ(x)
                         lagrange_poly = sp.Integer(0)
-                        
+
                         for i in range(n):
                             # Build Lagrange basis polynomial Lᵢ(x) = Πⱼ≠ᵢ (x - xⱼ)/(xᵢ - xⱼ)
                             L_i = sp.Integer(1)
                             x_i = x_vals[i]
-                            
+
                             for j in range(n):
                                 if i != j:
                                     x_j = x_vals[j]
                                     # Add term (x - x_j) / (x_i - x_j)
                                     L_i = L_i * (param_symbol - x_j) / (x_i - x_j)
-                            
+
                             # Add y_i * L_i(x) to the polynomial
                             lagrange_poly = lagrange_poly + y_vals[i] * L_i
-                        
+
                         # Simplify and expand
                         lagrange_poly = sp.simplify(sp.expand(lagrange_poly))
-                        
+
                         # Verify the polynomial fits all points (sanity check)
                         all_match = True
                         for inp, out in zip(sorted_inputs, sorted_outputs):
@@ -1939,11 +2194,11 @@ def find_function_from_data(
                             except (ValueError, TypeError):
                                 all_match = False
                                 break
-                        
+
                         if all_match:
                             # Convert to string format
                             func_str = str(lagrange_poly)
-                            
+
                             # Try to factor out common denominator
                             try:
                                 parsed_func = lagrange_poly
@@ -1952,80 +2207,123 @@ def find_function_from_data(
                                     for term in parsed_func.args:
                                         if isinstance(term, sp.Mul):
                                             for factor in term.args:
-                                                if isinstance(factor, sp.Rational) and factor.denominator != 1:
-                                                    denominators.append(factor.denominator)
-                                        elif isinstance(term, sp.Rational) and term.denominator != 1:
+                                                if (
+                                                    isinstance(factor, sp.Rational)
+                                                    and factor.denominator != 1
+                                                ):
+                                                    denominators.append(
+                                                        factor.denominator
+                                                    )
+                                        elif (
+                                            isinstance(term, sp.Rational)
+                                            and term.denominator != 1
+                                        ):
                                             denominators.append(term.denominator)
-                                    
+
                                     if denominators:
                                         from math import gcd
+
                                         def lcm(a, b):
-                                            return abs(a * b) // gcd(a, b) if a and b else 0
-                                        
+                                            return (
+                                                abs(a * b) // gcd(a, b)
+                                                if a and b
+                                                else 0
+                                            )
+
                                         common_denom = denominators[0]
                                         for d in denominators[1:]:
                                             common_denom = lcm(common_denom, d)
-                                        
+
                                         multiplied = parsed_func * common_denom
                                         expanded = sp.expand(multiplied)
-                                        
+
                                         if isinstance(expanded, sp.Add):
                                             all_integers = True
                                             for term in expanded.args:
                                                 if isinstance(term, sp.Mul):
                                                     for factor in term.args:
-                                                        if isinstance(factor, sp.Rational) and factor.denominator != 1:
+                                                        if (
+                                                            isinstance(
+                                                                factor, sp.Rational
+                                                            )
+                                                            and factor.denominator != 1
+                                                        ):
                                                             all_integers = False
                                                             break
-                                                elif isinstance(term, sp.Rational) and term.denominator != 1:
+                                                elif (
+                                                    isinstance(term, sp.Rational)
+                                                    and term.denominator != 1
+                                                ):
                                                     all_integers = False
-                                            
+
                                             if all_integers:
                                                 numerator_str = str(expanded)
-                                                numerator_str = numerator_str.replace(" + -", " - ")
-                                                func_str = f"({numerator_str})/{common_denom}"
+                                                numerator_str = numerator_str.replace(
+                                                    " + -", " - "
+                                                )
+                                                func_str = (
+                                                    f"({numerator_str})/{common_denom}"
+                                                )
                             except (ValueError, TypeError, AttributeError):
                                 pass
-                            
+
                             # Clean up the string representation
-                            func_str = func_str.replace("**", "^") if "^" not in func_str else func_str
+                            func_str = (
+                                func_str.replace("**", "^")
+                                if "^" not in func_str
+                                else func_str
+                            )
                             func_str = func_str.replace(" + -", " - ")
-                            
+
                             return (True, func_str, None, None)
-                    except (ValueError, TypeError, ZeroDivisionError, AttributeError, NotImplementedError):
+                    except (
+                        ValueError,
+                        TypeError,
+                        ZeroDivisionError,
+                        AttributeError,
+                        NotImplementedError,
+                    ):
                         # If Lagrange method fails, try Newton method
                         pass
-                    
+
                     # Method 2: Try Newton divided differences (more numerically stable)
                     # This is better for high-degree polynomials and avoids Vandermonde conditioning issues
                     try:
                         # Sort points by x-value for numerical stability
-                        sorted_points = sorted(zip(sympy_inputs, sympy_outputs), 
-                                             key=lambda p: float(sp.N(p[0][0])) if isinstance(p[0][0], (sp.Basic, int, float)) else p[0][0])
+                        sorted_points = sorted(
+                            zip(sympy_inputs, sympy_outputs),
+                            key=lambda p: (
+                                float(sp.N(p[0][0]))
+                                if isinstance(p[0][0], (sp.Basic, int, float))
+                                else p[0][0]
+                            ),
+                        )
                         sorted_inputs = [p[0] for p in sorted_points]
                         sorted_outputs = [p[1] for p in sorted_points]
-                        
+
                         # Build Newton divided differences table
                         x_vals = [inp[0] for inp in sorted_inputs]
                         y_vals = sorted_outputs
-                        
+
                         # Compute divided differences
                         n = len(x_vals)
                         dd_table = [[None] * n for _ in range(n)]
-                        
+
                         # First column: y values
                         for i in range(n):
                             dd_table[i][0] = y_vals[i]
-                        
+
                         # Fill in divided differences
                         for j in range(1, n):
                             for i in range(n - j):
-                                dd_table[i][j] = (dd_table[i+1][j-1] - dd_table[i][j-1]) / (x_vals[i+j] - x_vals[i])
-                        
+                                dd_table[i][j] = (
+                                    dd_table[i + 1][j - 1] - dd_table[i][j - 1]
+                                ) / (x_vals[i + j] - x_vals[i])
+
                         # Build Newton polynomial: P(x) = f[x₀] + f[x₀,x₁](x-x₀) + f[x₀,x₁,x₂](x-x₀)(x-x₁) + ...
                         param_name = param_names[0]
                         param_symbol = sp.Symbol(param_name)
-                        
+
                         # Build polynomial terms
                         poly_terms = [dd_table[0][0]]  # Constant term
                         for j in range(1, n):
@@ -2036,14 +2334,14 @@ def find_function_from_data(
                             for k in range(j):
                                 product = product * (param_symbol - x_vals[k])
                             poly_terms.append(dd_table[0][j] * product)
-                        
+
                         # Sum all terms to get the polynomial
                         newton_poly = sum(poly_terms)
                         newton_poly = sp.simplify(sp.expand(newton_poly))
-                        
+
                         # Convert to string format
                         func_str = str(newton_poly)
-                        
+
                         # Verify the polynomial fits all points (sanity check)
                         all_match = True
                         for inp, out in zip(sorted_inputs, sorted_outputs):
@@ -2058,7 +2356,7 @@ def find_function_from_data(
                             except (ValueError, TypeError):
                                 all_match = False
                                 break
-                        
+
                         if all_match:
                             # Try to factor out common denominator
                             try:
@@ -2068,50 +2366,85 @@ def find_function_from_data(
                                     for term in parsed_func.args:
                                         if isinstance(term, sp.Mul):
                                             for factor in term.args:
-                                                if isinstance(factor, sp.Rational) and factor.denominator != 1:
-                                                    denominators.append(factor.denominator)
-                                        elif isinstance(term, sp.Rational) and term.denominator != 1:
+                                                if (
+                                                    isinstance(factor, sp.Rational)
+                                                    and factor.denominator != 1
+                                                ):
+                                                    denominators.append(
+                                                        factor.denominator
+                                                    )
+                                        elif (
+                                            isinstance(term, sp.Rational)
+                                            and term.denominator != 1
+                                        ):
                                             denominators.append(term.denominator)
-                                    
+
                                     if denominators:
                                         from math import gcd
+
                                         def lcm(a, b):
-                                            return abs(a * b) // gcd(a, b) if a and b else 0
-                                        
+                                            return (
+                                                abs(a * b) // gcd(a, b)
+                                                if a and b
+                                                else 0
+                                            )
+
                                         common_denom = denominators[0]
                                         for d in denominators[1:]:
                                             common_denom = lcm(common_denom, d)
-                                        
+
                                         multiplied = parsed_func * common_denom
                                         expanded = sp.expand(multiplied)
-                                        
+
                                         if isinstance(expanded, sp.Add):
                                             all_integers = True
                                             for term in expanded.args:
                                                 if isinstance(term, sp.Mul):
                                                     for factor in term.args:
-                                                        if isinstance(factor, sp.Rational) and factor.denominator != 1:
+                                                        if (
+                                                            isinstance(
+                                                                factor, sp.Rational
+                                                            )
+                                                            and factor.denominator != 1
+                                                        ):
                                                             all_integers = False
                                                             break
-                                                elif isinstance(term, sp.Rational) and term.denominator != 1:
+                                                elif (
+                                                    isinstance(term, sp.Rational)
+                                                    and term.denominator != 1
+                                                ):
                                                     all_integers = False
-                                            
+
                                             if all_integers:
                                                 numerator_str = str(expanded)
-                                                numerator_str = numerator_str.replace(" + -", " - ")
-                                                func_str = f"({numerator_str})/{common_denom}"
+                                                numerator_str = numerator_str.replace(
+                                                    " + -", " - "
+                                                )
+                                                func_str = (
+                                                    f"({numerator_str})/{common_denom}"
+                                                )
                             except (ValueError, TypeError, AttributeError):
                                 pass
-                            
+
                             # Clean up the string representation
-                            func_str = func_str.replace("**", "^") if "^" not in func_str else func_str
+                            func_str = (
+                                func_str.replace("**", "^")
+                                if "^" not in func_str
+                                else func_str
+                            )
                             func_str = func_str.replace(" + -", " - ")
-                            
+
                             return (True, func_str, None, None)
-                    except (ValueError, TypeError, ZeroDivisionError, AttributeError, NotImplementedError):
+                    except (
+                        ValueError,
+                        TypeError,
+                        ZeroDivisionError,
+                        AttributeError,
+                        NotImplementedError,
+                    ):
                         # If Newton method fails, fall back to Vandermonde
                         pass
-                    
+
                     # Method 2: Vandermonde matrix (fallback, but check condition number)
                     # Build Vandermonde matrix for polynomial fitting
                     # Each row: [1, x, x², x³, ..., xⁿ⁻¹]
@@ -2120,10 +2453,10 @@ def find_function_from_data(
                         x_val = inp[0]
                         row = [x_val**i for i in range(n_points)]
                         vandermonde_rows.append(row)
-                    
+
                     A_poly = sp.Matrix(vandermonde_rows)
                     b_poly = sp.Matrix(sympy_outputs)
-                    
+
                     # Check if the Vandermonde matrix is invertible
                     try:
                         det = A_poly.det()
@@ -2141,36 +2474,43 @@ def find_function_from_data(
                                     pass
                             except (ValueError, TypeError):
                                 pass
-                            
+
                             # Solve for polynomial coefficients using Vandermonde matrix
                             coeffs_poly = A_poly.inv() * b_poly
-                            
+
                             # Build polynomial function string
                             # Order terms from highest degree to lowest (x^n, x^(n-1), ..., x, constant)
                             param_name = param_names[0]
                             terms = []
-                            
+
                             # Process terms in reverse order (highest degree first)
                             for i in range(len(coeffs_poly) - 1, -1, -1):
                                 coeff = coeffs_poly[i]
-                                
+
                                 # Skip zero coefficients
                                 try:
-                                    if coeff == 0 or (hasattr(coeff, 'is_zero') and coeff.is_zero):
+                                    if coeff == 0 or (
+                                        hasattr(coeff, "is_zero") and coeff.is_zero
+                                    ):
                                         continue
                                     # Check numerically
                                     if abs(float(sp.N(coeff))) < 1e-10:
                                         continue
                                 except (ValueError, TypeError):
                                     pass
-                                
+
                                 if i == 0:
                                     # Constant term
                                     if isinstance(coeff, (sp.Rational, sp.Integer)):
-                                        if hasattr(coeff, 'denominator') and coeff.denominator == 1:
+                                        if (
+                                            hasattr(coeff, "denominator")
+                                            and coeff.denominator == 1
+                                        ):
                                             terms.append(str(coeff.numerator))
                                         else:
-                                            terms.append(f"({coeff.numerator}/{coeff.denominator})")
+                                            terms.append(
+                                                f"({coeff.numerator}/{coeff.denominator})"
+                                            )
                                     else:
                                         # Symbolic coefficient
                                         coeff_str = str(sp.simplify(coeff))
@@ -2178,7 +2518,10 @@ def find_function_from_data(
                                 else:
                                     # x^i terms
                                     if isinstance(coeff, (sp.Rational, sp.Integer)):
-                                        if hasattr(coeff, 'denominator') and coeff.denominator == 1:
+                                        if (
+                                            hasattr(coeff, "denominator")
+                                            and coeff.denominator == 1
+                                        ):
                                             if coeff.numerator == 1:
                                                 if i == 1:
                                                     terms.append(param_name)
@@ -2191,33 +2534,61 @@ def find_function_from_data(
                                                     terms.append(f"-{param_name}**{i}")
                                             else:
                                                 if i == 1:
-                                                    terms.append(f"{coeff.numerator}*{param_name}")
+                                                    terms.append(
+                                                        f"{coeff.numerator}*{param_name}"
+                                                    )
                                                 else:
-                                                    terms.append(f"{coeff.numerator}*{param_name}**{i}")
+                                                    terms.append(
+                                                        f"{coeff.numerator}*{param_name}**{i}"
+                                                    )
                                         else:
                                             if i == 1:
-                                                terms.append(f"({coeff.numerator}/{coeff.denominator})*{param_name}")
+                                                terms.append(
+                                                    f"({coeff.numerator}/{coeff.denominator})*{param_name}"
+                                                )
                                             else:
-                                                terms.append(f"({coeff.numerator}/{coeff.denominator})*{param_name}**{i}")
+                                                terms.append(
+                                                    f"({coeff.numerator}/{coeff.denominator})*{param_name}**{i}"
+                                                )
                                     else:
                                         # Symbolic coefficient
                                         coeff_str = str(sp.simplify(coeff))
                                         if i == 1:
-                                            if any(op in coeff_str for op in ['+', '-', '*', '/']) and not (coeff_str.startswith('(') and coeff_str.endswith(')')):
-                                                terms.append(f"({coeff_str})*{param_name}")
+                                            if any(
+                                                op in coeff_str
+                                                for op in ["+", "-", "*", "/"]
+                                            ) and not (
+                                                coeff_str.startswith("(")
+                                                and coeff_str.endswith(")")
+                                            ):
+                                                terms.append(
+                                                    f"({coeff_str})*{param_name}"
+                                                )
                                             else:
-                                                terms.append(f"{coeff_str}*{param_name}")
+                                                terms.append(
+                                                    f"{coeff_str}*{param_name}"
+                                                )
                                         else:
-                                            if any(op in coeff_str for op in ['+', '-', '*', '/']) and not (coeff_str.startswith('(') and coeff_str.endswith(')')):
-                                                terms.append(f"({coeff_str})*{param_name}**{i}")
+                                            if any(
+                                                op in coeff_str
+                                                for op in ["+", "-", "*", "/"]
+                                            ) and not (
+                                                coeff_str.startswith("(")
+                                                and coeff_str.endswith(")")
+                                            ):
+                                                terms.append(
+                                                    f"({coeff_str})*{param_name}**{i}"
+                                                )
                                             else:
-                                                terms.append(f"{coeff_str}*{param_name}**{i}")
-                            
+                                                terms.append(
+                                                    f"{coeff_str}*{param_name}**{i}"
+                                                )
+
                             if not terms:
                                 func_str = "0"
                             else:
                                 func_str = " + ".join(terms).replace(" + -", " - ")
-                            
+
                             # Try to factor out common denominator for cleaner output
                             try:
                                 # Parse the function string and check if we can factor out a denominator
@@ -2229,21 +2600,34 @@ def find_function_from_data(
                                     for term in parsed_func.args:
                                         if isinstance(term, sp.Mul):
                                             for factor in term.args:
-                                                if isinstance(factor, sp.Rational) and factor.denominator != 1:
-                                                    denominators.append(factor.denominator)
-                                        elif isinstance(term, sp.Rational) and term.denominator != 1:
+                                                if (
+                                                    isinstance(factor, sp.Rational)
+                                                    and factor.denominator != 1
+                                                ):
+                                                    denominators.append(
+                                                        factor.denominator
+                                                    )
+                                        elif (
+                                            isinstance(term, sp.Rational)
+                                            and term.denominator != 1
+                                        ):
                                             denominators.append(term.denominator)
-                                    
+
                                     if denominators:
                                         # Find LCM of all denominators
                                         from math import gcd
+
                                         def lcm(a, b):
-                                            return abs(a * b) // gcd(a, b) if a and b else 0
-                                        
+                                            return (
+                                                abs(a * b) // gcd(a, b)
+                                                if a and b
+                                                else 0
+                                            )
+
                                         common_denom = denominators[0]
                                         for d in denominators[1:]:
                                             common_denom = lcm(common_denom, d)
-                                        
+
                                         # Multiply the polynomial by common_denom and factor it out
                                         multiplied = parsed_func * common_denom
                                         # Check if the multiplied polynomial has integer coefficients
@@ -2256,29 +2640,42 @@ def find_function_from_data(
                                                 for term in expanded.args:
                                                     if isinstance(term, sp.Mul):
                                                         for factor in term.args:
-                                                            if isinstance(factor, sp.Rational) and factor.denominator != 1:
+                                                            if (
+                                                                isinstance(
+                                                                    factor, sp.Rational
+                                                                )
+                                                                and factor.denominator
+                                                                != 1
+                                                            ):
                                                                 all_integers = False
                                                                 break
-                                                    elif isinstance(term, sp.Rational) and term.denominator != 1:
+                                                    elif (
+                                                        isinstance(term, sp.Rational)
+                                                        and term.denominator != 1
+                                                    ):
                                                         all_integers = False
-                                                
+
                                                 if all_integers:
                                                     # Format as (polynomial)/denominator
                                                     numerator_str = str(expanded)
                                                     # Clean up the numerator string
-                                                    numerator_str = numerator_str.replace(" + -", " - ")
+                                                    numerator_str = (
+                                                        numerator_str.replace(
+                                                            " + -", " - "
+                                                        )
+                                                    )
                                                     func_str = f"({numerator_str})/{common_denom}"
                                         except (ValueError, TypeError, AttributeError):
                                             pass
                             except (ValueError, TypeError, AttributeError, SyntaxError):
                                 # If simplification fails, use original format
                                 pass
-                            
+
                             return (True, func_str, None, None)
                     except (ValueError, TypeError, ZeroDivisionError, AttributeError):
                         # If polynomial fitting fails, fall through to linear fit
                         pass
-                
+
                 # For single-parameter linear functions f(x) = a*x, check if all ratios are consistent
                 # Check if all data points satisfy f(x) = a*x for the same a
                 # Calculate ratio f(x)/x for each point
@@ -2296,7 +2693,7 @@ def find_function_from_data(
                         ratios.append(ratio)
                     except (ZeroDivisionError, TypeError):
                         continue
-                
+
                 # Check if all ratios are equal (within tolerance for numeric values)
                 if len(ratios) >= 2:
                     all_equal = True
@@ -2313,7 +2710,7 @@ def find_function_from_data(
                             if not sp.simplify(first_ratio - ratio).equals(0):
                                 all_equal = False
                                 break
-                    
+
                     if all_equal:
                         # All points fit f(x) = a*x with the same a
                         coeffs = sp.Matrix([first_ratio])
@@ -2329,7 +2726,7 @@ def find_function_from_data(
                                 "System is singular. The data points may not be linearly independent.",
                             )
                         coeffs = ATA.inv() * A.T * b
-                        
+
                         # Verify the fit - check if the solution actually satisfies the data points
                         # For single parameter, check if f(x) = a*x matches the data
                         try:
@@ -2342,7 +2739,7 @@ def find_function_from_data(
                                 predicted = a_val * x_val
                                 error = abs(expected - predicted)
                                 max_error = max(max_error, error)
-                            
+
                             # If error is significant, the data points don't fit a linear function
                             if max_error > 1e-6:
                                 # Return error message indicating data doesn't fit
@@ -2373,7 +2770,7 @@ def find_function_from_data(
                 n_coeffs = n_params + 1
             else:
                 n_coeffs = n_params
-            
+
             if len(data_points) > n_coeffs:
                 # Overdetermined system, use least squares
                 # Check if A.T * A is invertible
@@ -2396,25 +2793,34 @@ def find_function_from_data(
                         A_aug = A.col_insert(A.shape[1], b)
                         rank_A = A.rank()
                         rank_aug = A_aug.rank()
-                        
+
                         if rank_A == rank_aug:
                             # System is consistent - find a particular solution using Gauss-Jordan
                             try:
                                 # Use gauss_jordan_solve to get a particular solution
                                 # This returns (particular_solution, free_vars_matrix)
                                 sol_result = A.gauss_jordan_solve(b)
-                                if isinstance(sol_result, tuple) and len(sol_result) >= 1:
+                                if (
+                                    isinstance(sol_result, tuple)
+                                    and len(sol_result) >= 1
+                                ):
                                     coeffs_param = sol_result[0]
-                                    free_vars = sol_result[1] if len(sol_result) > 1 else sp.Matrix([])
-                                    
+                                    free_vars = (
+                                        sol_result[1]
+                                        if len(sol_result) > 1
+                                        else sp.Matrix([])
+                                    )
+
                                     # Extract a particular solution by setting free variables to 0
                                     # Replace free variables (like tau0, tau1, etc.) with 0
-                                    coeffs = coeffs_param.subs({var: 0 for var in coeffs_param.free_symbols})
-                                    
+                                    coeffs = coeffs_param.subs(
+                                        {var: 0 for var in coeffs_param.free_symbols}
+                                    )
+
                                     # Convert to Matrix if needed
                                     if isinstance(coeffs, list):
                                         coeffs = sp.Matrix(coeffs)
-                                    
+
                                     # Verify the solution
                                     if A * coeffs == b:
                                         # Solution is valid, proceed
@@ -2424,7 +2830,12 @@ def find_function_from_data(
                                         raise ValueError("Solution verification failed")
                                 else:
                                     raise ValueError("Unexpected solution format")
-                            except (ValueError, TypeError, AttributeError, NotImplementedError):
+                            except (
+                                ValueError,
+                                TypeError,
+                                AttributeError,
+                                NotImplementedError,
+                            ):
                                 # If gauss_jordan_solve fails, try to find a particular solution manually
                                 # Use SVD-like approach or find any solution
                                 # For now, try using the null space to find a particular solution
@@ -2437,14 +2848,22 @@ def find_function_from_data(
                                     # Extract solution from RREF
                                     if len(pivots) > 0:
                                         # There's a solution, extract it
-                                        sol_col = A_reduced.shape[1] - 1  # Last column is b
+                                        sol_col = (
+                                            A_reduced.shape[1] - 1
+                                        )  # Last column is b
                                         coeffs_list = []
                                         for i in range(A.shape[1]):
                                             if i in pivots:
                                                 # Find row with pivot in this column
-                                                pivot_row = pivots.index(i) if i in pivots else None
+                                                pivot_row = (
+                                                    pivots.index(i)
+                                                    if i in pivots
+                                                    else None
+                                                )
                                                 if pivot_row is not None:
-                                                    coeffs_list.append(rref[pivot_row, sol_col])
+                                                    coeffs_list.append(
+                                                        rref[pivot_row, sol_col]
+                                                    )
                                                 else:
                                                     coeffs_list.append(sp.Integer(0))
                                             else:
@@ -2455,7 +2874,9 @@ def find_function_from_data(
                                         if A * coeffs == b:
                                             pass  # Valid solution
                                         else:
-                                            raise ValueError("RREF solution verification failed")
+                                            raise ValueError(
+                                                "RREF solution verification failed"
+                                            )
                                     else:
                                         raise ValueError("No solution found")
                                 except Exception:
@@ -2512,12 +2933,19 @@ def find_function_from_data(
                                 # The solution may not be unique, but we'll use this one
                                 coeffs_temp = sol_result[0]
                                 # Replace free variables with 0 to get a particular solution
-                                coeffs = coeffs_temp.subs({var: 0 for var in coeffs_temp.free_symbols})
+                                coeffs = coeffs_temp.subs(
+                                    {var: 0 for var in coeffs_temp.free_symbols}
+                                )
                                 if isinstance(coeffs, list):
                                     coeffs = sp.Matrix(coeffs)
                             else:
                                 raise ValueError("Unexpected solution format")
-                        except (ValueError, TypeError, AttributeError, NotImplementedError):
+                        except (
+                            ValueError,
+                            TypeError,
+                            AttributeError,
+                            NotImplementedError,
+                        ):
                             # Fallback: try to solve using least squares with Moore-Penrose pseudo-inverse
                             # For underdetermined: x = A^T * (A * A^T)^(-1) * b
                             # But if A * A^T is singular, we can't use this
@@ -2534,7 +2962,12 @@ def find_function_from_data(
                     else:
                         # Use least squares: x = A^T * (A * A^T)^(-1) * b
                         coeffs = A.T * AAT.inv() * b
-                except (ValueError, TypeError, AttributeError, NotImplementedError) as e:
+                except (
+                    ValueError,
+                    TypeError,
+                    AttributeError,
+                    NotImplementedError,
+                ) as e:
                     # If least squares fails, return helpful error
                     return (
                         False,
@@ -2544,7 +2977,7 @@ def find_function_from_data(
                         f"Got {len(data_points)} data point(s). "
                         f"Could not find a best-fit solution: {str(e)}",
                     )
-            
+
             # Convert coefficients to rational form or keep as symbolic
             # Handle both numeric and symbolic coefficients
             # IMPORTANT: Preserve exact Rationals from solve() - do not round them
@@ -2586,114 +3019,173 @@ def find_function_from_data(
                     except (ValueError, TypeError, OverflowError):
                         # Coefficient contains symbolic parts (e.g., pi), keep as is but simplify
                         coeff_list.append(sp.simplify(coeff))
-            
+
             # Try to simplify coefficients by finding common factors
             # This helps convert fractions like (7/3, -1/3) to simpler forms when possible
             # Only do this for purely numeric coefficients
             try:
                 # Check if all coefficients are numeric (Rational or Float)
-                all_numeric = all(isinstance(c, (sp.Rational, sp.Float, sp.Integer)) for c in coeff_list)
-                
+                all_numeric = all(
+                    isinstance(c, (sp.Rational, sp.Float, sp.Integer))
+                    for c in coeff_list
+                )
+
                 if all_numeric:
                     from math import gcd
-                    
+
                     # Get all denominators
-                    denominators = [c.denominator for c in coeff_list if c != 0 and hasattr(c, 'denominator')]
+                    denominators = [
+                        c.denominator
+                        for c in coeff_list
+                        if c != 0 and hasattr(c, "denominator")
+                    ]
                     if denominators:
                         # Find LCM of all denominators
                         def lcm(a, b):
                             return abs(a * b) // gcd(a, b) if a and b else 0
-                        
+
                         common_denom = denominators[0]
                         for d in denominators[1:]:
                             common_denom = lcm(common_denom, d)
-                        
+
                         # Multiply all coefficients by common denominator to get integers
                         scaled_coeffs = [int(c * common_denom) for c in coeff_list]
-                        
+
                         # Find GCD of all non-zero coefficients (absolute values)
                         non_zero = [abs(c) for c in scaled_coeffs if c != 0]
                         if non_zero:
                             common_factor = non_zero[0]
                             for c in non_zero[1:]:
                                 common_factor = gcd(common_factor, c)
-                            
+
                             # Also include common_denom in GCD calculation
                             # This helps simplify when all coefficients share a factor with the denominator
                             if common_denom > 1:
                                 common_factor = gcd(common_factor, common_denom)
-                            
+
                             # Divide by common factor to simplify (if it divides all)
                             if common_factor > 1:
                                 # Check if common_factor divides all coefficients and denominator
-                                if all(c % common_factor == 0 for c in scaled_coeffs) and common_denom % common_factor == 0:
-                                    scaled_coeffs = [c // common_factor for c in scaled_coeffs]
+                                if (
+                                    all(c % common_factor == 0 for c in scaled_coeffs)
+                                    and common_denom % common_factor == 0
+                                ):
+                                    scaled_coeffs = [
+                                        c // common_factor for c in scaled_coeffs
+                                    ]
                                     common_denom = common_denom // common_factor
-                            
+
                             # Convert back to rational coefficients
                             if common_denom > 0:
-                                coeff_list = [sp.Rational(c, common_denom) for c in scaled_coeffs]
-                    
+                                coeff_list = [
+                                    sp.Rational(c, common_denom) for c in scaled_coeffs
+                                ]
+
                     # Additional simplification: Try to detect if coefficients are close to simpler rationals
                     # This handles cases where decimal inputs are approximations of simpler fractions
                     # Use limit_denominator to see if coefficients simplify to nicer forms
                     try:
                         from math import gcd
+
                         simplified_coeffs = []
                         for coeff in coeff_list:
                             if isinstance(coeff, sp.Rational):
                                 # Try to simplify using limit_denominator
                                 # Check if the coefficient is close to a simpler rational
-                                frac = Fraction(int(coeff.numerator), int(coeff.denominator))
+                                frac = Fraction(
+                                    int(coeff.numerator), int(coeff.denominator)
+                                )
                                 # Try with different max denominators to find a simpler form
                                 # Use a higher limit to catch more cases (e.g., 12, 100, etc.)
                                 simplified_frac = frac.limit_denominator(1000)
                                 # Only use simplified form if it's very close (within 1e-10)
                                 if abs(float(frac - simplified_frac)) < 1e-10:
-                                    simplified_coeffs.append(sp.Rational(simplified_frac.numerator, simplified_frac.denominator))
+                                    simplified_coeffs.append(
+                                        sp.Rational(
+                                            simplified_frac.numerator,
+                                            simplified_frac.denominator,
+                                        )
+                                    )
                                 else:
                                     simplified_coeffs.append(coeff)
                             else:
                                 simplified_coeffs.append(coeff)
-                        
+
                         # If we simplified any coefficients, try to find a common denominator again
                         if simplified_coeffs != coeff_list:
                             # Re-check if all are still numeric
-                            all_numeric_simplified = all(isinstance(c, (sp.Rational, sp.Float, sp.Integer)) for c in simplified_coeffs)
+                            all_numeric_simplified = all(
+                                isinstance(c, (sp.Rational, sp.Float, sp.Integer))
+                                for c in simplified_coeffs
+                            )
                             if all_numeric_simplified:
                                 # Find common denominator again
-                                denominators_simplified = [c.denominator for c in simplified_coeffs if c != 0 and hasattr(c, 'denominator')]
+                                denominators_simplified = [
+                                    c.denominator
+                                    for c in simplified_coeffs
+                                    if c != 0 and hasattr(c, "denominator")
+                                ]
                                 if denominators_simplified:
+
                                     def lcm(a, b):
                                         return abs(a * b) // gcd(a, b) if a and b else 0
+
                                     common_denom_simplified = denominators_simplified[0]
                                     for d in denominators_simplified[1:]:
-                                        common_denom_simplified = lcm(common_denom_simplified, d)
-                                    
+                                        common_denom_simplified = lcm(
+                                            common_denom_simplified, d
+                                        )
+
                                     # Scale to integers
-                                    scaled_simplified = [int(c * common_denom_simplified) for c in simplified_coeffs]
+                                    scaled_simplified = [
+                                        int(c * common_denom_simplified)
+                                        for c in simplified_coeffs
+                                    ]
                                     # Find GCD
-                                    non_zero_simplified = [abs(c) for c in scaled_simplified if c != 0]
+                                    non_zero_simplified = [
+                                        abs(c) for c in scaled_simplified if c != 0
+                                    ]
                                     if non_zero_simplified:
-                                        common_factor_simplified = non_zero_simplified[0]
+                                        common_factor_simplified = non_zero_simplified[
+                                            0
+                                        ]
                                         for c in non_zero_simplified[1:]:
-                                            common_factor_simplified = gcd(common_factor_simplified, c)
-                                        
-                                        if common_factor_simplified > 1 and common_denom_simplified % common_factor_simplified == 0:
-                                            if all(c % common_factor_simplified == 0 for c in scaled_simplified):
-                                                scaled_simplified = [c // common_factor_simplified for c in scaled_simplified]
-                                                common_denom_simplified = common_denom_simplified // common_factor_simplified
-                                        
+                                            common_factor_simplified = gcd(
+                                                common_factor_simplified, c
+                                            )
+
+                                        if (
+                                            common_factor_simplified > 1
+                                            and common_denom_simplified
+                                            % common_factor_simplified
+                                            == 0
+                                        ):
+                                            if all(
+                                                c % common_factor_simplified == 0
+                                                for c in scaled_simplified
+                                            ):
+                                                scaled_simplified = [
+                                                    c // common_factor_simplified
+                                                    for c in scaled_simplified
+                                                ]
+                                                common_denom_simplified = (
+                                                    common_denom_simplified
+                                                    // common_factor_simplified
+                                                )
+
                                         # Convert back
                                         if common_denom_simplified > 0:
-                                            coeff_list = [sp.Rational(c, common_denom_simplified) for c in scaled_simplified]
+                                            coeff_list = [
+                                                sp.Rational(c, common_denom_simplified)
+                                                for c in scaled_simplified
+                                            ]
                     except Exception:
                         # If simplification fails, use original coefficients
                         pass
             except Exception:
                 # If simplification fails, use original coefficients
                 pass
-            
+
             # Build function string
             # For multi-parameter functions, the last coefficient is the constant term
             # Separate parameter coefficients from constant term
@@ -2703,17 +3195,17 @@ def find_function_from_data(
             else:
                 param_coeffs = coeff_list
                 const_coeff = None
-            
+
             # Check if we have an underdetermined system (fewer data points than coefficients)
             # If so, we should show all parameters explicitly, even if some have zero coefficients
             is_underdetermined_local = len(data_points) < n_coeffs
-            
+
             terms = []
             for i, (coeff, param) in enumerate(zip(param_coeffs, param_names)):
                 # Check if coefficient is zero
                 is_zero = False
                 try:
-                    if coeff == 0 or (hasattr(coeff, 'is_zero') and coeff.is_zero):
+                    if coeff == 0 or (hasattr(coeff, "is_zero") and coeff.is_zero):
                         is_zero = True
                 except (TypeError, AttributeError):
                     # For symbolic expressions, check numerically
@@ -2722,7 +3214,7 @@ def find_function_from_data(
                             is_zero = True
                     except (ValueError, TypeError):
                         pass  # Keep the term if we can't evaluate
-                
+
                 # For underdetermined systems, show zero coefficients explicitly
                 if is_zero:
                     if is_underdetermined_local:
@@ -2730,30 +3222,32 @@ def find_function_from_data(
                         terms.append(f"0*{param}")
                     # Otherwise skip zero coefficients (normal behavior)
                     continue
-                
+
                 # Check for coefficient of 1 or -1
                 try:
-                    if coeff == 1 or (hasattr(coeff, 'is_one') and coeff.is_one):
+                    if coeff == 1 or (hasattr(coeff, "is_one") and coeff.is_one):
                         terms.append(param)
                         continue
                     elif coeff == -1:
                         terms.append(f"-{param}")
                         continue
-                    elif hasattr(coeff, '__neg__'):
+                    elif hasattr(coeff, "__neg__"):
                         # Check if it's -1 symbolically
                         try:
-                            if str(coeff) == '-1' or (hasattr(sp, 'Integer') and coeff == sp.Integer(-1)):
+                            if str(coeff) == "-1" or (
+                                hasattr(sp, "Integer") and coeff == sp.Integer(-1)
+                            ):
                                 terms.append(f"-{param}")
                                 continue
                         except (TypeError, AttributeError):
                             pass
                 except (TypeError, AttributeError):
                     pass
-                
+
                 # Format coefficient
                 if isinstance(coeff, (sp.Rational, sp.Integer)):
                     # Numeric rational coefficient
-                    if hasattr(coeff, 'denominator') and coeff.denominator == 1:
+                    if hasattr(coeff, "denominator") and coeff.denominator == 1:
                         terms.append(f"{coeff.numerator}*{param}")
                     else:
                         terms.append(f"({coeff.numerator}/{coeff.denominator})*{param}")
@@ -2761,18 +3255,22 @@ def find_function_from_data(
                     # Symbolic coefficient (e.g., containing pi)
                     coeff_str = str(sp.simplify(coeff))
                     # Wrap in parentheses if it contains operators
-                    if any(op in coeff_str for op in ['+', '-', '*', '/']) and not (coeff_str.startswith('(') and coeff_str.endswith(')')):
+                    if any(op in coeff_str for op in ["+", "-", "*", "/"]) and not (
+                        coeff_str.startswith("(") and coeff_str.endswith(")")
+                    ):
                         terms.append(f"({coeff_str})*{param}")
                     else:
                         terms.append(f"{coeff_str}*{param}")
-            
+
                         # Add constant term if present (for multi-parameter functions)
             if const_coeff is not None:
                 try:
                     # Check if constant is zero
                     is_zero = False
                     try:
-                        if const_coeff == 0 or (hasattr(const_coeff, 'is_zero') and const_coeff.is_zero):
+                        if const_coeff == 0 or (
+                            hasattr(const_coeff, "is_zero") and const_coeff.is_zero
+                        ):
                             is_zero = True
                     except (TypeError, AttributeError):
                         try:
@@ -2780,58 +3278,76 @@ def find_function_from_data(
                                 is_zero = True
                         except (ValueError, TypeError):
                             pass
-                    
+
                     # For underdetermined systems, show zero constant term explicitly
                     if is_zero and is_underdetermined_local:
                         terms.append("0")
                     elif not is_zero:
                         # Format constant term
                         if isinstance(const_coeff, (sp.Rational, sp.Integer)):
-                            if hasattr(const_coeff, 'denominator') and const_coeff.denominator == 1:
+                            if (
+                                hasattr(const_coeff, "denominator")
+                                and const_coeff.denominator == 1
+                            ):
                                 terms.append(str(const_coeff.numerator))
                             else:
-                                terms.append(f"({const_coeff.numerator}/{const_coeff.denominator})")
+                                terms.append(
+                                    f"({const_coeff.numerator}/{const_coeff.denominator})"
+                                )
                         else:
                             # Symbolic constant
                             const_str = str(sp.simplify(const_coeff))
-                            if any(op in const_str for op in ['+', '-', '*', '/']) and not (const_str.startswith('(') and const_str.endswith(')')):
+                            if any(
+                                op in const_str for op in ["+", "-", "*", "/"]
+                            ) and not (
+                                const_str.startswith("(") and const_str.endswith(")")
+                            ):
                                 terms.append(f"({const_str})")
                             else:
                                 terms.append(const_str)
                 except (ValueError, TypeError, AttributeError):
                     pass  # Skip constant if formatting fails
-            
+
             if not terms:
                 # All coefficients are zero, function is constant 0
                 func_str = "0"
             else:
                 func_str = " + ".join(terms).replace(" + -", " - ")
-            
+
             # Try to generate factored integer form if all coefficients are rational
             # Format: (A*x + B*y + C) / D
             factored_form = None
             try:
                 if n_params > 1 and const_coeff is not None:
                     # Check if all coefficients are rational
-                    all_rational = all(isinstance(c, (sp.Rational, sp.Integer)) for c in coeff_list)
+                    all_rational = all(
+                        isinstance(c, (sp.Rational, sp.Integer)) for c in coeff_list
+                    )
                     if all_rational:
                         # Find LCM of all denominators
                         from math import gcd
+
                         def lcm(a, b):
                             return abs(a * b) // gcd(a, b) if a and b else 0
-                        
-                        denominators = [c.denominator for c in coeff_list if c != 0 and hasattr(c, 'denominator')]
+
+                        denominators = [
+                            c.denominator
+                            for c in coeff_list
+                            if c != 0 and hasattr(c, "denominator")
+                        ]
                         if denominators:
                             common_denom = denominators[0]
                             for d in denominators[1:]:
                                 common_denom = lcm(common_denom, d)
-                            
+
                             # Scale all coefficients to integers
                             scaled_ints = [int(c * common_denom) for c in coeff_list]
-                            
+
                             # Build factored form: (A*x + B*y + C) / D
                             factored_terms = []
-                            for i, (coeff_int, param) in enumerate(zip(scaled_ints[:-1], param_names)):
+                            for i, (coeff_int, param) in enumerate(
+                                zip(scaled_ints[:-1], param_names)
+                            ):
                                 if coeff_int != 0:
                                     if coeff_int == 1:
                                         factored_terms.append(param)
@@ -2842,35 +3358,45 @@ def find_function_from_data(
                                 elif is_underdetermined_local:
                                     # For underdetermined systems, show zero coefficients explicitly
                                     factored_terms.append(f"0*{param}")
-                            
+
                             # Add constant term
                             const_int = scaled_ints[-1]
                             if const_int != 0:
                                 if const_int > 0:
                                     factored_terms.append(str(const_int))
                                 else:
-                                    factored_terms.append(str(const_int))  # Already has minus sign
+                                    factored_terms.append(
+                                        str(const_int)
+                                    )  # Already has minus sign
                             elif is_underdetermined_local:
                                 # For underdetermined systems, show zero constant term explicitly
                                 factored_terms.append("0")
-                            
+
                             if factored_terms:
                                 # Join terms, handling signs
-                                factored_expr = " + ".join(factored_terms).replace(" + -", " - ")
+                                factored_expr = " + ".join(factored_terms).replace(
+                                    " + -", " - "
+                                )
                                 # Only include denominator if it's not 1
                                 if common_denom == 1:
                                     factored_form = factored_expr
                                 else:
-                                    factored_form = f"({factored_expr}) / {common_denom}"
+                                    factored_form = (
+                                        f"({factored_expr}) / {common_denom}"
+                                    )
             except Exception:
                 pass  # If factored form generation fails, just use regular form
 
             return (True, func_str, factored_form, None)
-            
+
         except (ValueError, TypeError, AttributeError) as e:
             # Matrix might be singular or not invertible
             error_msg = str(e).lower()
-            if 'singular' in error_msg or 'determinant' in error_msg or 'invert' in error_msg:
+            if (
+                "singular" in error_msg
+                or "determinant" in error_msg
+                or "invert" in error_msg
+            ):
                 return (
                     False,
                     None,
@@ -2883,7 +3409,7 @@ def find_function_from_data(
                 None,
                 f"Cannot solve linear system. The data points may not be linearly independent. Error: {str(e)}",
             )
-            
+
     except Exception as e:
         return (False, None, None, f"Error finding function: {str(e)}")
 
@@ -2896,15 +3422,15 @@ def fit_linear_from_two_points(
     param_name: str = "x",
 ) -> tuple[Fraction, Fraction, tuple[int, int, int], str, str, str]:
     """Find and simplify a linear function f(x) = a*x + b from two points using exact rational arithmetic.
-    
+
     Uses exact Fraction arithmetic throughout to ensure precise results.
     Returns multiple equivalent forms of the function.
-    
+
     Args:
         x1, y1: First point (x1, y1)
         x2, y2: Second point (x2, y2)
         param_name: Name of the parameter (default: "x")
-        
+
     Returns:
         Tuple of:
         - a: Slope as Fraction
@@ -2913,39 +3439,39 @@ def fit_linear_from_two_points(
         - standard_form: String like "f(x) = a*x + b"
         - integer_form: String like "f(x) = (A*x + B) / L" or "f(x) = (B - |A|*x) / L"
         - alternative_form: String like "f(x) = b - |a|*x" (if a < 0)
-        
+
     Raises:
         ValueError: If x1 == x2 (points must be distinct)
     """
     from math import gcd
-    
+
     # Convert all inputs to exact Fractions
     x1_frac = _parse_to_exact_fraction(x1)
     y1_frac = _parse_to_exact_fraction(y1)
     x2_frac = _parse_to_exact_fraction(x2)
     y2_frac = _parse_to_exact_fraction(y2)
-    
+
     # Check that points are distinct
     if x1_frac == x2_frac:
         raise ValueError("x1 must differ from x2")
-    
+
     # Compute slope a exactly: a = (y2 - y1) / (x2 - x1)
     a = (y2_frac - y1_frac) / (x2_frac - x1_frac)
-    
+
     # Compute intercept b exactly: b = y1 - a * x1
     b = y1_frac - a * x1_frac
-    
+
     # Both a and b are now reduced Fractions (Fraction automatically reduces)
-    
+
     # Compute integer form: find LCM of denominators
     a_denom = a.denominator
     b_denom = b.denominator
     L = abs(a_denom * b_denom) // gcd(a_denom, b_denom) if a_denom and b_denom else 1
-    
+
     # Compute integer coefficients
     A = int(a * L)
     B = int(b * L)
-    
+
     # Generate standard form: f(x) = a*x + b
     if a == 0:
         standard_form = f"f({param_name}) = {b}"
@@ -2964,7 +3490,7 @@ def fit_linear_from_two_points(
             standard_form = f"f({param_name}) = {a_str}*{param_name} + {b}"
         else:
             standard_form = f"f({param_name}) = {a_str}*{param_name} - {abs(b)}"
-    
+
     # Generate integer form: f(x) = (A*x + B) / L or f(x) = (B - |A|*x) / L
     if L == 1:
         if A == 0:
@@ -2989,7 +3515,7 @@ def fit_linear_from_two_points(
             integer_form = f"f({param_name}) = ({B} - {abs(A)}*{param_name}) / {L}"
         else:
             integer_form = f"f({param_name}) = ({A}*{param_name} + {B}) / {L}"
-    
+
     # Generate alternative form: f(x) = b - |a|*x (when a < 0)
     if a < 0:
         a_abs_str = str(-a) if (-a).denominator != 1 else str(-a.numerator)
@@ -3001,27 +3527,31 @@ def fit_linear_from_two_points(
             alternative_form = f"f({param_name}) = -{abs(b)} - {a_abs_str}*{param_name}"
     else:
         alternative_form = standard_form
-    
+
     # Verify the solution by substituting both points
     # Check point 1: f(x1) should equal y1
     computed_y1 = a * x1_frac + b
     if computed_y1 != y1_frac:
-        raise ValueError(f"Verification failed: f({x1_frac}) = {computed_y1} != {y1_frac}")
-    
+        raise ValueError(
+            f"Verification failed: f({x1_frac}) = {computed_y1} != {y1_frac}"
+        )
+
     # Check point 2: f(x2) should equal y2
     computed_y2 = a * x2_frac + b
     if computed_y2 != y2_frac:
-        raise ValueError(f"Verification failed: f({x2_frac}) = {computed_y2} != {y2_frac}")
-    
+        raise ValueError(
+            f"Verification failed: f({x2_frac}) = {computed_y2} != {y2_frac}"
+        )
+
     return (a, b, (A, B, L), standard_form, integer_form, alternative_form)
 
 
 def parse_find_function_command(expr: str) -> tuple[str, list[str]] | None:
     """Parse a 'find function' command like 'find f(x,y)'.
-    
+
     Args:
         expr: Expression string (e.g., "find f(x,y)", "f(2,1)=15, find f(x,y)")
-        
+
     Returns:
         Tuple of (function_name, parameter_list) if valid, None otherwise
     """
@@ -3031,22 +3561,22 @@ def parse_find_function_command(expr: str) -> tuple[str, list[str]] | None:
     match = re.search(pattern, expr.strip(), re.IGNORECASE)
     if not match:
         return None
-    
+
     func_name = match.group(1)
     params_str = match.group(2).strip()
-    
+
     # Parse parameters
     if not params_str:
         params = []
     else:
         params = [p.strip() for p in params_str.split(",") if p.strip()]
-    
+
     return (func_name, params)
 
 
 def get_function_registry_dump() -> dict[str, tuple[list[str], str]]:
     """Get a serializable dump of the function registry.
-    
+
     Returns:
         Dict mapping function name to (params, body_str)
     """
@@ -3058,15 +3588,15 @@ def get_function_registry_dump() -> dict[str, tuple[list[str], str]]:
 
 def update_function_registry_from_dump(dump: dict[str, tuple[list[str], str]]) -> None:
     """Update the function registry from a dump.
-    
+
     Args:
         dump: Dict mapping function name to (params, body_str)
     """
     global _function_registry
-    
+
     # Clear existing registry to ensure we match the dump exactly
     _function_registry.clear()
-    
+
     for name, (params, body_str) in dump.items():
         try:
             # Parse body string back to SymPy expression
@@ -3074,7 +3604,7 @@ def update_function_registry_from_dump(dump: dict[str, tuple[list[str], str]]) -
             local_dict = {**ALLOWED_SYMPY_NAMES}
             for param in params:
                 local_dict[param] = sp.Symbol(param)
-            
+
             body = parse_expr(
                 body_str,
                 local_dict=local_dict,
@@ -3089,24 +3619,24 @@ def update_function_registry_from_dump(dump: dict[str, tuple[list[str], str]]) -
 
 def export_function_to_file(func_name: str, filename: str) -> tuple[bool, str]:
     """Export a function from the registry to a Python file.
-    
+
     Converts the mathematical formula to valid Python code and creates
     a standalone .py file that can be imported in other projects.
-    
+
     Args:
         func_name: Name of the function to export (must be in registry)
         filename: Destination filename (e.g., "volume_lib.py")
-        
+
     Returns:
         Tuple of (success, message)
-        
+
     Example:
         >>> V(1,1)=3.14159, V(2,1)=12.56637, find V(r,h)
         >>> export V to volume_lib.py
         Creates:
             import math
             from math import sin, cos, exp, log, sqrt, pi
-            
+
             def V(r, h):
                 '''Auto-generated by Kalkulator AI
                 Equation: 3.1416*r^2*h
@@ -3116,26 +3646,26 @@ def export_function_to_file(func_name: str, filename: str) -> tuple[bool, str]:
     # Check if function exists
     if func_name not in _function_registry:
         return (False, f"Error: Function '{func_name}' is not defined")
-    
+
     params, body = _function_registry[func_name]
-    
+
     # Convert SymPy expression to string
     body_str = str(body)
-    
+
     # Convert mathematical syntax to Python syntax
     python_expr = _convert_to_python_syntax(body_str)
-    
+
     # Determine which math imports are needed
     imports_needed = _detect_required_imports(python_expr)
-    
+
     # Generate the Python code
     params_str = ", ".join(params) if params else ""
-    
+
     # Build the import section
     import_lines = ["import math"]
     if imports_needed:
         import_lines.append(f"from math import {', '.join(sorted(imports_needed))}")
-    
+
     # Build the function code
     code_lines = [
         "# Auto-generated by Kalkulator",
@@ -3152,16 +3682,16 @@ def export_function_to_file(func_name: str, filename: str) -> tuple[bool, str]:
         f"    return {python_expr}",
         "",
     ]
-    
+
     code = "\n".join(code_lines)
-    
+
     # Ensure filename has .py extension
-    if not filename.endswith('.py'):
-        filename += '.py'
-    
+    if not filename.endswith(".py"):
+        filename += ".py"
+
     # Write to file
     try:
-        with open(filename, 'w', encoding='utf-8') as f:
+        with open(filename, "w", encoding="utf-8") as f:
             f.write(code)
         return (True, f"Function '{func_name}' exported to {filename}")
     except Exception as e:
@@ -3170,73 +3700,73 @@ def export_function_to_file(func_name: str, filename: str) -> tuple[bool, str]:
 
 def _convert_to_python_syntax(expr_str: str) -> str:
     """Convert mathematical expression to valid Python syntax.
-    
+
     Handles:
     - Power operator: x^2 -> x**2
     - Scientific notation: 1e-5 (already valid)
     - SymPy functions to math functions
     """
     import re
-    
+
     result = expr_str
-    
+
     # Replace ^ with ** for power (but not in strings)
-    result = re.sub(r'\^', '**', result)
-    
+    result = re.sub(r"\^", "**", result)
+
     # Replace SymPy exp with math.exp (if standalone, not already prefixed)
     # exp(-x^2) -> math.exp(-x**2)
-    result = re.sub(r'\bexp\(', 'math.exp(', result)
-    
+    result = re.sub(r"\bexp\(", "math.exp(", result)
+
     # Replace SymPy sin, cos, tan with math versions
-    result = re.sub(r'\bsin\(', 'math.sin(', result)
-    result = re.sub(r'\bcos\(', 'math.cos(', result)
-    result = re.sub(r'\btan\(', 'math.tan(', result)
-    
+    result = re.sub(r"\bsin\(", "math.sin(", result)
+    result = re.sub(r"\bcos\(", "math.cos(", result)
+    result = re.sub(r"\btan\(", "math.tan(", result)
+
     # Replace log with math.log
-    result = re.sub(r'\blog\(', 'math.log(', result)
-    
+    result = re.sub(r"\blog\(", "math.log(", result)
+
     # Replace sqrt with math.sqrt
-    result = re.sub(r'\bsqrt\(', 'math.sqrt(', result)
-    
+    result = re.sub(r"\bsqrt\(", "math.sqrt(", result)
+
     # Replace sinh, cosh, tanh with math versions
-    result = re.sub(r'\bsinh\(', 'math.sinh(', result)
-    result = re.sub(r'\bcosh\(', 'math.cosh(', result)
-    result = re.sub(r'\btanh\(', 'math.tanh(', result)
-    
+    result = re.sub(r"\bsinh\(", "math.sinh(", result)
+    result = re.sub(r"\bcosh\(", "math.cosh(", result)
+    result = re.sub(r"\btanh\(", "math.tanh(", result)
+
     # Replace pi with math.pi
-    result = re.sub(r'\bpi\b', 'math.pi', result)
-    
+    result = re.sub(r"\bpi\b", "math.pi", result)
+
     # Replace E (Euler's number) with math.e
-    result = re.sub(r'\bE\b', 'math.e', result)
-    
+    result = re.sub(r"\bE\b", "math.e", result)
+
     return result
 
 
 def _detect_required_imports(python_expr: str) -> set[str]:
     """Detect which math functions are used in the expression."""
     imports = set()
-    
-    if 'math.sin(' in python_expr:
-        imports.add('sin')
-    if 'math.cos(' in python_expr:
-        imports.add('cos')
-    if 'math.tan(' in python_expr:
-        imports.add('tan')
-    if 'math.exp(' in python_expr:
-        imports.add('exp')
-    if 'math.log(' in python_expr:
-        imports.add('log')
-    if 'math.sqrt(' in python_expr:
-        imports.add('sqrt')
-    if 'math.sinh(' in python_expr:
-        imports.add('sinh')
-    if 'math.cosh(' in python_expr:
-        imports.add('cosh')
-    if 'math.tanh(' in python_expr:
-        imports.add('tanh')
-    if 'math.pi' in python_expr:
-        imports.add('pi')
-    if 'math.e' in python_expr:
-        imports.add('e')
-    
+
+    if "math.sin(" in python_expr:
+        imports.add("sin")
+    if "math.cos(" in python_expr:
+        imports.add("cos")
+    if "math.tan(" in python_expr:
+        imports.add("tan")
+    if "math.exp(" in python_expr:
+        imports.add("exp")
+    if "math.log(" in python_expr:
+        imports.add("log")
+    if "math.sqrt(" in python_expr:
+        imports.add("sqrt")
+    if "math.sinh(" in python_expr:
+        imports.add("sinh")
+    if "math.cosh(" in python_expr:
+        imports.add("cosh")
+    if "math.tanh(" in python_expr:
+        imports.add("tanh")
+    if "math.pi" in python_expr:
+        imports.add("pi")
+    if "math.e" in python_expr:
+        imports.add("e")
+
     return imports

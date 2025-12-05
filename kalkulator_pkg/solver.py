@@ -256,7 +256,7 @@ def _solve_modulo_equation(equation: sp.Eq, variable: sp.Symbol) -> list[sp.Basi
         # Check if equation is of the form Mod(x, n) = k or x % n = k
         lhs = equation.lhs
         rhs = equation.rhs
-        
+
         # Check if LHS is Mod(variable, n)
         if isinstance(lhs, sp.Mod):
             # Mod(x, n) = k
@@ -267,7 +267,7 @@ def _solve_modulo_equation(equation: sp.Eq, variable: sp.Symbol) -> list[sp.Basi
                 t = sp.symbols("t", integer=True)
                 solution = k + n * t
                 return [solution]
-        
+
         # Try SymPy's solve for modulo equations
         try:
             solutions = sp.solve(equation, variable, domain=sp.Integers)
@@ -282,7 +282,7 @@ def _solve_modulo_equation(equation: sp.Eq, variable: sp.Symbol) -> list[sp.Basi
                     return [solutions]
         except (NotImplementedError, ValueError, TypeError):
             pass
-        
+
         # If no symbolic solution, try numeric approach
         # For Mod(x, n) = k, solutions are x = k + n*t for integer t
         # Return parametric solution
@@ -299,33 +299,35 @@ def _solve_modulo_equation(equation: sp.Eq, variable: sp.Symbol) -> list[sp.Basi
                     return [solution]
             except (ValueError, TypeError):
                 pass
-        
+
         return []
     except (NotImplementedError, ValueError, TypeError, AttributeError):
         return []
 
 
-def solve_system_of_congruences(congruences: list[tuple[int, int]]) -> tuple[int, int] | None:
+def solve_system_of_congruences(
+    congruences: list[tuple[int, int]]
+) -> tuple[int, int] | None:
     """Solve a system of congruences using the Chinese Remainder Theorem.
-    
+
     Solves the system:
         x ≡ a₁ (mod n₁)
         x ≡ a₂ (mod n₂)
         ...
         x ≡ aₖ (mod nₖ)
-    
+
     Args:
         congruences: List of (a, n) tuples representing x ≡ a (mod n)
-        
+
     Returns:
         Tuple (k, m) representing the solution x ≡ k (mod m), or None if no solution exists
     """
     if not congruences:
         return None
-    
+
     try:
         # Use SymPy's crt function if available
-        if hasattr(sp, 'crt'):
+        if hasattr(sp, "crt"):
             remainders = [a for a, n in congruences]
             moduli = [n for a, n in congruences]
             try:
@@ -334,47 +336,49 @@ def solve_system_of_congruences(congruences: list[tuple[int, int]]) -> tuple[int
                     return None
                 # Calculate the modulus (LCM of all moduli)
                 from math import lcm
+
                 m = lcm(*moduli)
                 # Normalize the remainder to be in [0, m)
                 k = result % m
                 return (k, m)
             except (ValueError, TypeError, NotImplementedError):
                 pass
-        
+
         # Manual implementation of CRT for two congruences at a time
         # Start with first congruence
         k, m = congruences[0]
         k = k % m  # Normalize
-        
+
         # Combine with each subsequent congruence
         for a, n in congruences[1:]:
             a = a % n  # Normalize
-            
+
             # Check if moduli are coprime (required for CRT)
             # If not coprime, we need to check consistency
             from math import gcd, lcm
+
             g = gcd(m, n)
-            
+
             # Check consistency: k ≡ a (mod g)
             if (k % g) != (a % g):
                 # System is inconsistent
                 return None
-            
+
             # Combine congruences x ≡ k (mod m) and x ≡ a (mod n)
             # We need to find x such that:
             #   x = k + m*t₁  (for some integer t₁)
             #   x = a + n*t₂  (for some integer t₂)
             # This means: k + m*t₁ ≡ a (mod n)
             # Rearranging: m*t₁ ≡ a - k (mod n)
-            
+
             # Solve m*t ≡ (a - k) (mod n)
             # This requires gcd(m, n) to divide (a - k), which we already checked
-            
+
             # Use extended Euclidean algorithm to find t
             # m*t ≡ (a - k) (mod n)
             m_mod = m % n
             target = (a - k) % n
-            
+
             if g == 1:
                 # Moduli are coprime - use multiplicative inverse
                 # Find t such that m_mod * t ≡ target (mod n)
@@ -383,7 +387,7 @@ def solve_system_of_congruences(congruences: list[tuple[int, int]]) -> tuple[int
                     t = (target * m_inv) % n
                 except ValueError:
                     # Fallback: try SymPy
-                    t_sym = sp.symbols('t', integer=True)
+                    t_sym = sp.symbols("t", integer=True)
                     eq = sp.Eq(m_mod * t_sym, target)
                     try:
                         sol = sp.solve(eq, t_sym, domain=sp.Integers)
@@ -404,13 +408,13 @@ def solve_system_of_congruences(congruences: list[tuple[int, int]]) -> tuple[int
                 m_div = m_mod // g
                 n_div = n // g
                 target_div = target // g
-                
+
                 try:
                     m_inv = pow(int(m_div), -1, int(n_div))
                     t = (target_div * m_inv) % n_div
                 except ValueError:
                     # Fallback
-                    t_sym = sp.symbols('t', integer=True)
+                    t_sym = sp.symbols("t", integer=True)
                     eq = sp.Eq(m_div * t_sym, target_div)
                     try:
                         sol = sp.solve(eq, t_sym, domain=sp.Integers)
@@ -425,14 +429,14 @@ def solve_system_of_congruences(congruences: list[tuple[int, int]]) -> tuple[int
                             return None
                     except (ValueError, TypeError, NotImplementedError):
                         return None
-            
+
             # Update solution: x = k + m*t
             k = k + m * t
             m = lcm(m, n)
             k = k % m  # Normalize
-        
+
         return (k, m)
-        
+
     except (ValueError, TypeError, AttributeError, ZeroDivisionError) as e:
         logger.debug(f"Error solving system of congruences: {e}")
         return None
@@ -727,7 +731,10 @@ def solve_single_equation(eq_str: str, find_var: str | None = None) -> dict[str,
         else:
             # Don't add duplicate "Please check your input syntax" if error message already contains it
             # or if it already ends with a period (user-friendly messages are usually complete)
-            if "Please check your input syntax" not in error_msg and not error_msg.endswith("."):
+            if (
+                "Please check your input syntax" not in error_msg
+                and not error_msg.endswith(".")
+            ):
                 error_msg += ". Please check your input syntax."
 
         return {
@@ -801,19 +808,21 @@ def solve_single_equation(eq_str: str, find_var: str | None = None) -> dict[str,
             except Exception:
                 # equals() might fail for some expressions, continue to numeric check
                 pass
-            
+
             # Numeric comparison with relative tolerance
             # Use higher precision for evaluation
             diff = sp.N(left_expr - right_expr, 60)
             re_diff = sp.re(diff)
             im_diff = sp.im(diff)
-            
+
             # Calculate relative tolerance based on the magnitude of the expressions
             # This handles both small and large numbers better
             try:
                 left_val = abs(float(sp.N(left_expr, 30)))
                 right_val = abs(float(sp.N(right_expr, 30)))
-                max_magnitude = max(left_val, right_val, 1.0)  # At least 1.0 to avoid division by very small numbers
+                max_magnitude = max(
+                    left_val, right_val, 1.0
+                )  # At least 1.0 to avoid division by very small numbers
                 # Use relative tolerance: 1e-10 relative to the magnitude
                 rel_tol = max_magnitude * 1e-10
                 # Also use absolute tolerance for very small numbers
@@ -822,7 +831,7 @@ def solve_single_equation(eq_str: str, find_var: str | None = None) -> dict[str,
             except (TypeError, ValueError, OverflowError):
                 # Fallback to absolute tolerance if relative calculation fails
                 tol = 1e-12
-            
+
             if abs(re_diff) < tol and abs(im_diff) < tol:
                 return {
                     "ok": True,
@@ -1165,7 +1174,10 @@ def solve_single_equation(eq_str: str, find_var: str | None = None) -> dict[str,
                                 for t_val in range(-3, 4):
                                     x_val = k + n * t_val
                                     example_sols.append(x_val)
-                                approx_sols_list = [str(int(x)) if x == int(x) else str(x) for x in example_sols]
+                                approx_sols_list = [
+                                    str(int(x)) if x == int(x) else str(x)
+                                    for x in example_sols
+                                ]
                         except (ValueError, TypeError, AttributeError):
                             pass
                         # Continue to format and return results
@@ -1177,7 +1189,7 @@ def solve_single_equation(eq_str: str, find_var: str | None = None) -> dict[str,
                                 "approx": approx_sols_list,
                                 "cache_hits": cache_hits,
                             }
-                
+
                 # Detect equation type and route to appropriate handler
                 poly = sp.Poly(equation.lhs - equation.rhs, sym)
                 if poly is not None and poly.degree() > 0:
@@ -1628,6 +1640,7 @@ def solve_system(raw_no_find: str, find_token: str | None) -> dict[str, Any]:
     """
     # Use split_top_level_commas to properly handle commas inside parentheses
     from .parser import split_top_level_commas
+
     parts = [p.strip() for p in split_top_level_commas(raw_no_find) if p.strip()]
     eqs_serialized = []
     assignments = {}
@@ -1820,48 +1833,54 @@ def solve_system(raw_no_find: str, find_token: str | None) -> dict[str, Any]:
     }
 
 
-def solve_inverse_function(func_name: str, target_value: str, param_names: list[str]) -> dict[str, Any]:
+def solve_inverse_function(
+    func_name: str, target_value: str, param_names: list[str]
+) -> dict[str, Any]:
     """Solve f(x, y, ...) = value for integer, rational, real, and complex solutions.
-    
+
     Args:
         func_name: Name of the function (must be defined)
         target_value: Target value as string
         param_names: List of parameter names
-        
+
     Returns:
         Dictionary with solutions for different domains, properly classified
     """
     try:
         from .function_manager import _function_registry
-        
+
         if func_name not in _function_registry:
             return {
                 "ok": False,
                 "error": f"Function '{func_name}' is not defined",
-                "error_code": "FUNC_NOT_DEFINED"
+                "error_code": "FUNC_NOT_DEFINED",
             }
-            
+
         stored_params, body = _function_registry[func_name]
-        
+
         # Parse target value
         try:
             target = parse_preprocessed(target_value)
         except Exception as e:
-            return {"ok": False, "error": f"Invalid target value: {e}", "error_code": "INVALID_TARGET"}
-            
+            return {
+                "ok": False,
+                "error": f"Invalid target value: {e}",
+                "error_code": "INVALID_TARGET",
+            }
+
         # Create equation: body = target
         eq = sp.Eq(body, target)
         syms = list(body.free_symbols)
         sorted_syms = sorted(syms, key=lambda s: s.name)
-        
+
         results = {
             "ok": True,
             "type": "inverse_function",
             "func_name": func_name,
             "target": str(target),
-            "domains": {}
+            "domains": {},
         }
-        
+
         def is_truly_integer(val):
             """Check if a value is truly an integer (not symbolic like pi/2)."""
             try:
@@ -1872,7 +1891,9 @@ def solve_inverse_function(func_name: str, target_value: str, param_names: list[
                     return False
                 # Check for sqrt of non-perfect squares
                 for atom in val.atoms(sp.Pow):
-                    if atom.exp == sp.Rational(1, 2) or (hasattr(atom.exp, 'q') and atom.exp.q == 2):
+                    if atom.exp == sp.Rational(1, 2) or (
+                        hasattr(atom.exp, "q") and atom.exp.q == 2
+                    ):
                         base = atom.base
                         if not (base.is_Integer and sp.sqrt(base).is_Integer):
                             return False
@@ -1880,7 +1901,7 @@ def solve_inverse_function(func_name: str, target_value: str, param_names: list[
                 return simplified.is_Integer
             except Exception:
                 return False
-        
+
         def is_truly_rational(val):
             """Check if a value is truly rational (not containing pi, e, sqrt of non-squares)."""
             try:
@@ -1891,7 +1912,9 @@ def solve_inverse_function(func_name: str, target_value: str, param_names: list[
                     return False
                 # Check for square roots of non-perfect squares
                 for atom in val.atoms(sp.Pow):
-                    if hasattr(atom.exp, 'q') and atom.exp.q == 2:  # Fractional exponent like 1/2
+                    if (
+                        hasattr(atom.exp, "q") and atom.exp.q == 2
+                    ):  # Fractional exponent like 1/2
                         base = atom.base
                         if base.is_Integer:
                             sqrt_val = sp.sqrt(base)
@@ -1903,50 +1926,53 @@ def solve_inverse_function(func_name: str, target_value: str, param_names: list[
                 return simplified.is_Rational
             except Exception:
                 return False
-        
+
         def classify_solution(sol):
             """Classify a solution: 'integer', 'rational', 'real', or 'complex'."""
             try:
                 if is_truly_integer(sol):
-                    return 'integer'
+                    return "integer"
                 if is_truly_rational(sol):
-                    return 'rational'
+                    return "rational"
                 # Check if complex (has imaginary unit)
                 if sol.has(sp.I):
-                    return 'complex'
+                    return "complex"
                 # Otherwise real (may be irrational)
-                return 'real'
+                return "real"
             except Exception:
-                return 'complex'
-        
+                return "complex"
+
         # 1. Integer Solutions - brute-force search
         integer_solutions = []
-        
+
         try:
             if len(sorted_syms) == 2:
                 x_sym, y_sym = sorted_syms[0], sorted_syms[1]
-                
+
                 try:
                     target_num = int(float(sp.N(target)))
                     import math
+
                     search_range = max(int(math.sqrt(abs(target_num)) + 2), 10)
                     search_range = min(search_range, 100)
                 except (ValueError, TypeError):
                     search_range = 20
-                
+
                 equation_expr = body - target
-                
+
                 for x_val in range(-search_range, search_range + 1):
                     for y_val in range(-search_range, search_range + 1):
                         try:
-                            result = equation_expr.subs([(x_sym, x_val), (y_sym, y_val)])
+                            result = equation_expr.subs(
+                                [(x_sym, x_val), (y_sym, y_val)]
+                            )
                             if result == 0:
                                 integer_solutions.append((x_val, y_val))
                         except Exception:
                             pass
-                
+
                 integer_solutions.sort(key=lambda p: (abs(p[0]), p[0], abs(p[1]), p[1]))
-                
+
             elif len(sorted_syms) == 1:
                 sym = sorted_syms[0]
                 for val in range(-100, 101):
@@ -1957,61 +1983,67 @@ def solve_inverse_function(func_name: str, target_value: str, param_names: list[
                         pass
         except Exception:
             pass
-        
+
         if integer_solutions:
             if len(sorted_syms) == 2:
                 results["domains"]["integers"] = {
                     "count": len(integer_solutions),
-                    "solutions": [{"x": s[0], "y": s[1]} for s in integer_solutions[:20]]
+                    "solutions": [
+                        {"x": s[0], "y": s[1]} for s in integer_solutions[:20]
+                    ],
                 }
             else:
                 results["domains"]["integers"] = {
                     "count": len(integer_solutions),
-                    "solutions": [{"x": s[0]} for s in integer_solutions[:20]]
+                    "solutions": [{"x": s[0]} for s in integer_solutions[:20]],
                 }
         else:
             results["domains"]["integers"] = None
-        
+
         # 2. Get symbolic solutions and classify them
         rational_solutions = []
         real_solutions = []
         complex_solutions = []
-        
+
         if len(sorted_syms) >= 1:
             try:
                 solve_var = sorted_syms[0]
                 all_sols = sp.solve(eq, solve_var)
-                
+
                 for sol in all_sols:
                     domain = classify_solution(sol)
                     sol_str = str(sol)
-                    
+
                     try:
                         numeric_val = complex(sp.N(sol))
                         if abs(numeric_val.imag) < 1e-10:
                             numeric_str = f"{numeric_val.real:.10g}"
                         else:
-                            numeric_str = f"{numeric_val.real:.6g} + {numeric_val.imag:.6g}i"
+                            numeric_str = (
+                                f"{numeric_val.real:.6g} + {numeric_val.imag:.6g}i"
+                            )
                     except Exception:
                         numeric_str = None
-                    
+
                     sol_entry = {"exact": sol_str, "numeric": numeric_str}
-                    
-                    if domain == 'rational':
+
+                    if domain == "rational":
                         rational_solutions.append(sol_entry)
-                    elif domain == 'real':
+                    elif domain == "real":
                         real_solutions.append(sol_entry)
-                    elif domain == 'complex':
+                    elif domain == "complex":
                         complex_solutions.append(sol_entry)
                     # Skip 'integer' - already handled via brute force
-                        
+
             except Exception as e:
                 logger.debug(f"Error solving equation: {e}")
-        
-        results["domains"]["rationals"] = rational_solutions if rational_solutions else None
+
+        results["domains"]["rationals"] = (
+            rational_solutions if rational_solutions else None
+        )
         results["domains"]["reals"] = real_solutions if real_solutions else None
         results["domains"]["complex"] = complex_solutions if complex_solutions else None
-        
+
         # 3. Parametric form for 2-variable
         if len(sorted_syms) == 2:
             x_sym, y_sym = sorted_syms[0], sorted_syms[1]
@@ -2020,29 +2052,28 @@ def solve_inverse_function(func_name: str, target_value: str, param_names: list[
                     r = sp.sqrt(target)
                     results["domains"]["parametric"] = {
                         "form": f"{x_sym} = {r}*cos(t), {y_sym} = {r}*sin(t)",
-                        "parameter": "t ∈ ℝ"
+                        "parameter": "t ∈ ℝ",
                     }
             except Exception:
                 pass
-            
+
             try:
                 x_sols = sp.solve(eq, x_sym)
                 if x_sols:
                     general_forms = [f"{x_sym} = {sol}" for sol in x_sols]
                     results["domains"]["general"] = {
                         "forms": general_forms,
-                        "note": "principal branch"
+                        "note": "principal branch",
                     }
             except Exception:
                 pass
-        
+
         return results
-        
+
     except Exception as e:
         logger.exception("Error in solve_inverse_function")
         return {
             "ok": False,
             "error": f"Solver error: {e}",
-            "error_code": "SOLVER_ERROR"
+            "error_code": "SOLVER_ERROR",
         }
-

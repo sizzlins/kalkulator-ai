@@ -116,9 +116,9 @@ OMP_MAX_ITERATIONS = int(
 
 # Model selection configuration
 USE_AIC_BIC = os.getenv("KALKULATOR_USE_AIC_BIC", "true").lower() == "true"
-PREFER_SIMPLER_MODELS = os.getenv(
-    "KALKULATOR_PREFER_SIMPLER_MODELS", "true"
-).lower() == "true"
+PREFER_SIMPLER_MODELS = (
+    os.getenv("KALKULATOR_PREFER_SIMPLER_MODELS", "true").lower() == "true"
+)
 
 ALLOWED_SYMPY_NAMES = {
     "pi": sp.pi,

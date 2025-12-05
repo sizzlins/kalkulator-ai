@@ -4,7 +4,7 @@ import argparse
 import json
 import logging
 import math
-import re # <--- ADDED: For parsing 'find' command
+import re  # <--- ADDED: For parsing 'find' command
 from fractions import Fraction
 from math import gcd
 from typing import Any
@@ -26,7 +26,10 @@ from .solver import solve_inequality, solve_single_equation, solve_system
 from .types import ParseError, ValidationError
 from .worker import evaluate_safely
 
-def _parse_target_with_ambiguity_detection(target_str: str, max_small_denominator: int = 12) -> tuple[sp.Rational, sp.Rational | None, bool]:
+
+def _parse_target_with_ambiguity_detection(
+    target_str: str, max_small_denominator: int = 12
+) -> tuple[sp.Rational, sp.Rational | None, bool]:
     """Parse target string with ambiguity detection for simpler rationals.
 
     Args:
@@ -42,8 +45,8 @@ def _parse_target_with_ambiguity_detection(target_str: str, max_small_denominato
     # Parse as exact Fraction first
     try:
         # Try parsing as fraction if it contains '/'
-        if '/' in target_str:
-            parts = target_str.split('/')
+        if "/" in target_str:
+            parts = target_str.split("/")
             if len(parts) == 2:
                 num = int(parts[0].strip())
                 den = int(parts[1].strip())
@@ -61,13 +64,20 @@ def _parse_target_with_ambiguity_detection(target_str: str, max_small_denominato
 
         # Check if simpler and very close
         if simpler_frac.denominator < literal_frac.denominator:
-            diff = abs(float(literal_frac - sp.Rational(simpler_frac.numerator, simpler_frac.denominator)))
+            diff = abs(
+                float(
+                    literal_frac
+                    - sp.Rational(simpler_frac.numerator, simpler_frac.denominator)
+                )
+            )
             literal_abs = abs(float(literal_frac))
             # Use practical tolerance: absolute diff < 1e-3 for detecting repeating decimals
             # This handles cases like 65.083 ≈ 781/12 (diff ≈ 0.0003)
             tolerance = 1e-3
             if diff <= tolerance:
-                simpler_rational = sp.Rational(simpler_frac.numerator, simpler_frac.denominator)
+                simpler_rational = sp.Rational(
+                    simpler_frac.numerator, simpler_frac.denominator
+                )
                 return (simpler_rational, literal_frac, True)
 
         return (literal_frac, None, False)
@@ -75,6 +85,7 @@ def _parse_target_with_ambiguity_detection(target_str: str, max_small_denominato
         # Fallback: try parsing with SymPy
         try:
             from .parser import parse_preprocessed
+
             target_expr = parse_preprocessed(target_str)
             if isinstance(target_expr, (sp.Float, float)):
                 target_expr = sp.Rational(str(target_expr))
@@ -97,7 +108,9 @@ def _extended_gcd(a: int, b: int) -> tuple[int, int, int]:
         return (s, t, g)
 
 
-def _compute_integerized_equation(coeffs: list[sp.Rational], target: sp.Rational, L_func: int) -> tuple[int, int, int, int] | None:
+def _compute_integerized_equation(
+    coeffs: list[sp.Rational], target: sp.Rational, L_func: int
+) -> tuple[int, int, int, int] | None:
     """Compute integerized form of linear equation A*x + B*y = C for integer solution finding.
 
     For equation: coeff_x*x + coeff_y*y + const = target
@@ -120,12 +133,17 @@ def _compute_integerized_equation(coeffs: list[sp.Rational], target: sp.Rational
     coeff_x, coeff_y, const = coeffs[0], coeffs[1], coeffs[2]
 
     # Check if coefficients are rational
-    if not (isinstance(coeff_x, sp.Rational) and isinstance(coeff_y, sp.Rational) and
-            isinstance(const, sp.Rational) and isinstance(target, sp.Rational)):
+    if not (
+        isinstance(coeff_x, sp.Rational)
+        and isinstance(coeff_y, sp.Rational)
+        and isinstance(const, sp.Rational)
+        and isinstance(target, sp.Rational)
+    ):
         return None
 
     # Compute L_total = lcm(L_func, denominator(target))
     dF = target.denominator
+
     def lcm(a: int, b: int) -> int:
         return abs(a * b) // gcd(a, b) if a and b else 0
 
@@ -234,7 +252,9 @@ def find_integer_solutions_for_linear(equation, x, y):
         return []
 
 
-def _solve_modulo_system_if_applicable(parts: list[str], var: str, output_format: str = "human") -> tuple[bool, int]:
+def _solve_modulo_system_if_applicable(
+    parts: list[str], var: str, output_format: str = "human"
+) -> tuple[bool, int]:
     """Check if parts form a system of congruences and solve it using CRT.
 
     Args:
@@ -255,10 +275,10 @@ def _solve_modulo_system_if_applicable(parts: list[str], var: str, output_format
             rhs = right.strip() or "0"
             # Check if RHS is a modulo expression (pattern: number % number)
             # Allow for optional whitespace and handle both integer and float-like patterns
-            modulo_match = re.match(r'^\s*(-?\d+)\s*%(?:\s*(\d+)\s*)?$', rhs)
+            modulo_match = re.match(r"^\s*(-?\d+)\s*%(?:\s*(\d+)\s*)?$", rhs)
             if modulo_match:
                 remainder_str = modulo_match.group(1)
-                modulus_str = modulo_match.group(2) # Modulus can be None if just 'X %'
+                modulus_str = modulo_match.group(2)  # Modulus can be None if just 'X %'
 
                 if modulus_str is None:
                     # Handle cases like 'X %', which should not be treated as congruence
@@ -285,17 +305,22 @@ def _solve_modulo_system_if_applicable(parts: list[str], var: str, output_format
     if all_modulo and len(congruences) > 1:
         try:
             from .solver import solve_system_of_congruences
+
             solution = solve_system_of_congruences(congruences)
             if solution is not None:
                 k, m = solution
                 if output_format == "json":
-                    print(json.dumps({
-                        "ok": True,
-                        "type": "congruence_system",
-                        "solution": f"{var} == {k} (mod {m})",  # Use == instead of ≡ for JSON compatibility
-                        "remainder": k,
-                        "modulus": m
-                    }))
+                    print(
+                        json.dumps(
+                            {
+                                "ok": True,
+                                "type": "congruence_system",
+                                "solution": f"{var} == {k} (mod {m})",  # Use == instead of ≡ for JSON compatibility
+                                "remainder": k,
+                                "modulus": m,
+                            }
+                        )
+                    )
                 else:
                     # Use ASCII-safe representation for Windows compatibility
                     try:
@@ -306,12 +331,18 @@ def _solve_modulo_system_if_applicable(parts: list[str], var: str, output_format
             else:
                 # System is inconsistent
                 if output_format == "json":
-                    print(json.dumps({
-                        "ok": False,
-                        "error": "System of congruences is inconsistent (no solution exists)"
-                    }))
+                    print(
+                        json.dumps(
+                            {
+                                "ok": False,
+                                "error": "System of congruences is inconsistent (no solution exists)",
+                            }
+                        )
+                    )
                 else:
-                    print("Error: System of congruences is inconsistent (no solution exists)")
+                    print(
+                        "Error: System of congruences is inconsistent (no solution exists)"
+                    )
                 return (True, 1)
         except Exception as e:
             # Log the exception for debugging, but fall through to individual evaluation
@@ -343,26 +374,30 @@ def _format_number_no_trailing_zeros(num_str: str) -> str:
         return num_str
 
 
-def _format_inverse_solutions(result: dict, func_name: str, param_names: list, target_value: str) -> None:
+def _format_inverse_solutions(
+    result: dict, func_name: str, param_names: list, target_value: str
+) -> None:
     """Format and print inverse solutions with proper domain classification."""
     if not result.get("ok"):
         print(f"Error: {result.get('error')}")
         return
-    
-    print(f"\nInverse solutions for {func_name}({', '.join(param_names)}) = {target_value}:")
+
+    print(
+        f"\nInverse solutions for {func_name}({', '.join(param_names)}) = {target_value}:"
+    )
     domains = result.get("domains", {})
-    
+
     # Summary header
     integers = domains.get("integers")
     rationals = domains.get("rationals")
     reals = domains.get("reals")
     complex_sols = domains.get("complex")
     parametric = domains.get("parametric")
-    
+
     int_count = integers.get("count", 0) if isinstance(integers, dict) else 0
     rat_count = len(rationals) if rationals else 0
     real_count = len(reals) if reals else 0
-    
+
     print("\n  Summary:")
     print(f"    Integer solutions: {int_count if int_count else 'None'}")
     print(f"    Rational solutions: {rat_count if rat_count else 'None'}")
@@ -372,7 +407,7 @@ def _format_inverse_solutions(result: dict, func_name: str, param_names: list, t
         print(f"    Real solutions: {real_count}")
     else:
         print(f"    Real solutions: None")
-    
+
     # 1. Integer solutions (2 per line for compactness)
     if isinstance(integers, dict) and int_count > 0:
         sols = integers.get("solutions", [])
@@ -391,7 +426,7 @@ def _format_inverse_solutions(result: dict, func_name: str, param_names: list, t
                 print(f"    x = {sol.get('x', '?')}")
     else:
         print("\n  Integers: None")
-    
+
     # 2. Rational solutions
     if rationals:
         print("\n  Rationals (exact):")
@@ -404,7 +439,7 @@ def _format_inverse_solutions(result: dict, func_name: str, param_names: list, t
                 print(f"    x = {exact}")
     else:
         print("\n  Rationals: None")
-    
+
     # 3. Real solutions (irrational) - skip if parametric covers it for 2-var
     if reals and len(param_names) == 1:
         print("\n  Reals (exact):")
@@ -415,12 +450,12 @@ def _format_inverse_solutions(result: dict, func_name: str, param_names: list, t
                 print(f"    x = {exact}  ≈ {numeric}")
             else:
                 print(f"    x = {exact}")
-    
+
     # 4. Parametric form (for 2-variable) - primary real representation
     if parametric:
         print("\n  Reals (parametric):")
         print(f"    {parametric.get('form', '')},  {parametric.get('parameter', '')}")
-    
+
     # 5. Algebraic form (only for 2-variable, combined with general)
     general = domains.get("general")
     if general and isinstance(general, dict) and len(param_names) == 2:
@@ -432,7 +467,8 @@ def _format_inverse_solutions(result: dict, func_name: str, param_names: list, t
             if len(forms) == 2 and "sqrt" in forms[0] and "sqrt" in forms[1]:
                 # Extract the sqrt expression
                 import re
-                match = re.search(r'sqrt\(([^)]+)\)', forms[0])
+
+                match = re.search(r"sqrt\(([^)]+)\)", forms[0])
                 if match:
                     inner = match.group(1)
                     sym = param_names[0]
@@ -445,7 +481,7 @@ def _format_inverse_solutions(result: dict, func_name: str, param_names: list, t
                     print(f"    {form}")
             if note:
                 print(f"    ({note})")
-    
+
     # 6. Complex solutions (only show if different from reals)
     if complex_sols and len(param_names) == 1:
         print("\n  Complex:")
@@ -458,7 +494,9 @@ def _format_inverse_solutions(result: dict, func_name: str, param_names: list, t
                 print(f"    x = {exact}")
 
 
-def _find_pi_fraction_form(num_val: float, max_denominator: int = 10000, tolerance: float = 1e-8) -> str | None:
+def _find_pi_fraction_form(
+    num_val: float, max_denominator: int = 10000, tolerance: float = 1e-8
+) -> str | None:
     """Find if a number is close to a rational multiple of π and return the fraction form.
 
     This implements Casio-style automatic π-fraction conversion.
@@ -743,11 +781,11 @@ def print_result_pretty(res: dict[str, Any], output_format: str = "human") -> No
                 for item in exact_formatted:
                     try:
                         # Try to encode to check if it's safe
-                        item.encode('ascii')
+                        item.encode("ascii")
                         exact_formatted_safe.append(item)
                     except UnicodeEncodeError:
                         # Replace Unicode characters with ASCII equivalents
-                        safe_item = item.replace('π', 'pi').replace('≈', 'approx')
+                        safe_item = item.replace("π", "pi").replace("≈", "approx")
                         exact_formatted_safe.append(safe_item)
                 print("Exact:", ", ".join(exact_formatted_safe))
 
@@ -897,6 +935,7 @@ def repl_loop(output_format: str = "human") -> None:
     # Pre-warm worker processes to avoid startup delay on first calculation
     try:
         from .worker import warmup_workers
+
         warmup_workers()
     except ImportError:
         pass
@@ -953,21 +992,27 @@ def repl_loop(output_format: str = "human") -> None:
                 # ALSO: Don't split if ALL parts look like chained simple variable assignments
                 # e.g. "a=1, x=a+1" should NOT be split
                 from .parser import split_top_level_commas
-                
+
                 # Check if this appears to be a variable-finding command (contains "find" and assignments)
                 has_find_keyword = "find" in raw_input.lower()
                 has_assignments = "=" in raw_input
-                
+
                 # Check if ALL parts look like simple variable assignments (var = expr)
                 # This pattern: single lowercase letter or word followed by = and expression
                 import re
+
                 parts_check = split_top_level_commas(raw_input)
-                simple_assignment_pattern = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*.+$')
-                all_simple_assignments = all(
-                    simple_assignment_pattern.match(p.strip()) and not p.strip().startswith('f(') and '(' not in p.split('=')[0]
-                    for p in parts_check if p.strip()
+                simple_assignment_pattern = re.compile(
+                    r"^[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*.+$"
                 )
-                
+                all_simple_assignments = all(
+                    simple_assignment_pattern.match(p.strip())
+                    and not p.strip().startswith("f(")
+                    and "(" not in p.split("=")[0]
+                    for p in parts_check
+                    if p.strip()
+                )
+
                 if has_find_keyword and has_assignments:
                     # Don't split - process entire input together for variable finding
                     raw = raw_input
@@ -1013,7 +1058,9 @@ def repl_loop(output_format: str = "human") -> None:
         # Check if input looks like a typo of a known command (single word, no math operators)
         raw_lower = raw.lower().strip()
         # Only check if it's a single word (no spaces) or has minimal spaces, and no math operators
-        has_math_ops = any(op in raw for op in ["+", "-", "*", "/", "=", "(", ")", "^", "<", ">"])
+        has_math_ops = any(
+            op in raw for op in ["+", "-", "*", "/", "=", "(", ")", "^", "<", ">"]
+        )
         is_single_word = " " not in raw_lower or raw_lower.count(" ") <= 1
 
         if raw_lower and not has_math_ops and is_single_word:
@@ -1038,10 +1085,12 @@ def repl_loop(output_format: str = "human") -> None:
 
             # Check all known commands and their variations
             all_commands = list(REPL_COMMANDS)
-            all_commands.extend(["clear cache", "show cache", "save cache", "load cache"])
+            all_commands.extend(
+                ["clear cache", "show cache", "save cache", "load cache"]
+            )
 
             best_match = None
-            best_distance = float('inf')
+            best_distance = float("inf")
             for cmd in all_commands:
                 cmd_lower = cmd.lower()
                 # Calculate distance
@@ -1051,7 +1100,10 @@ def repl_loop(output_format: str = "human") -> None:
                 if distance < best_distance and distance <= max_allowed:
                     # Also check if it starts with a significant prefix match
                     min_prefix_len = min(3, len(raw_lower), len(cmd_lower))
-                    if raw_lower[:min_prefix_len] == cmd_lower[:min_prefix_len] or distance <= 2:
+                    if (
+                        raw_lower[:min_prefix_len] == cmd_lower[:min_prefix_len]
+                        or distance <= 2
+                    ):
                         best_distance = distance
                         best_match = cmd
 
@@ -1064,12 +1116,14 @@ def repl_loop(output_format: str = "human") -> None:
         # Generates Python file from discovered function
         if raw_lower.startswith("export "):
             import re
+
             export_match = re.match(r"export\s+(\w+)\s+to\s+(.+)", raw, re.IGNORECASE)
             if export_match:
                 func_name = export_match.group(1)
                 filename = export_match.group(2).strip()
-                
+
                 from .function_manager import export_function_to_file
+
                 success, message = export_function_to_file(func_name, filename)
                 print(message)
                 continue
@@ -1164,10 +1218,12 @@ def repl_loop(output_format: str = "human") -> None:
 
                                 # Extract expression from hash:expression format
                                 display_expr = expr
-                                if ':' in expr:
+                                if ":" in expr:
                                     # Format is "hash:expression", extract just the expression
-                                    parts = expr.split(':', 1)
-                                    if len(parts) == 2 and len(parts[0]) == 32:  # MD5 hash is 32 chars
+                                    parts = expr.split(":", 1)
+                                    if (
+                                        len(parts) == 2 and len(parts[0]) == 32
+                                    ):  # MD5 hash is 32 chars
                                         display_expr = parts[1]
 
                                 # Support both old format (string) and new format (dict)
@@ -1190,7 +1246,9 @@ def repl_loop(output_format: str = "human") -> None:
                                         f"  {display_expr[:50]:50} → {result_formatted:20} [time: {cache_time:.4f}s]"
                                     )
                                 else:
-                                    print(f"  {display_expr[:50]:50} → {result_formatted}")
+                                    print(
+                                        f"  {display_expr[:50]:50} → {result_formatted}"
+                                    )
                             except (json.JSONDecodeError, KeyError):
                                 print(f"  {display_expr[:50]:50} → [cached result]")
                     else:
@@ -1203,10 +1261,12 @@ def repl_loop(output_format: str = "human") -> None:
 
                                 # Extract expression from hash:expression format
                                 display_expr = expr
-                                if ':' in expr:
+                                if ":" in expr:
                                     # Format is "hash:expression", extract just the expression
-                                    parts = expr.split(':', 1)
-                                    if len(parts) == 2 and len(parts[0]) == 32:  # MD5 hash is 32 chars
+                                    parts = expr.split(":", 1)
+                                    if (
+                                        len(parts) == 2 and len(parts[0]) == 32
+                                    ):  # MD5 hash is 32 chars
                                         display_expr = parts[1]
 
                                 # Support both old format (string) and new format (dict)
@@ -1229,7 +1289,9 @@ def repl_loop(output_format: str = "human") -> None:
                                         f"  {display_expr[:50]:50} → {result_formatted:20} [time: {cache_time:.4f}s]"
                                     )
                                 else:
-                                    print(f"  {display_expr[:50]:50} → {result_formatted}")
+                                    print(
+                                        f"  {display_expr[:50]:50} → {result_formatted}"
+                                    )
                             except (json.JSONDecodeError, KeyError):
                                 print(f"  {display_expr[:50]:50} → [cached result]")
                         if len(eval_cache) > 10:
@@ -1403,6 +1465,7 @@ def repl_loop(output_format: str = "human") -> None:
                         parse_find_function_command,
                         find_function_from_data,
                     )
+
                     find_func_cmd = parse_find_function_command(expr)
 
                     if find_func_cmd is not None:
@@ -1420,8 +1483,11 @@ def repl_loop(output_format: str = "human") -> None:
                         parse_find_function_command,
                         find_function_from_data,
                     )
+
                     # Count function assignment patterns: func_name(args) = value
-                    func_assignment_pattern = r'([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]+\)\s*=\s*[^,]+'
+                    func_assignment_pattern = (
+                        r"([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]+\)\s*=\s*[^,]+"
+                    )
                     matches = list(re.finditer(func_assignment_pattern, expr))
                     # If we have 2 or more such patterns, treat as function finding command
                     if len(matches) >= 2:
@@ -1431,37 +1497,54 @@ def repl_loop(output_format: str = "human") -> None:
                         if all(m.group(1) == func_name for m in matches):
                             # Infer parameter names from the first match
                             first_match = matches[0]
-                            args_match = re.search(rf'{re.escape(func_name)}\s*\(([^)]+)\)', first_match.group(0))
+                            args_match = re.search(
+                                rf"{re.escape(func_name)}\s*\(([^)]+)\)",
+                                first_match.group(0),
+                            )
                             if args_match:
                                 args_str = args_match.group(1)
                                 # Parse arguments to count them
                                 arg_list = split_top_level_commas(args_str)
                                 # Generate parameter names: x, y, z, ... or x1, x2, x3, ...
                                 param_names = []
-                                param_chars = 'xyzuvwrst'
+                                param_chars = "xyzuvwrst"
                                 for i, arg in enumerate(arg_list):
                                     if i < len(param_chars):
                                         param_names.append(param_chars[i])
                                     else:
                                         param_names.append(f"x{i+1}")
                                 # Create a modified expression with "find" keyword for parsing
-                                expr_with_find = expr.rstrip(',').strip() + f", find {func_name}({', '.join(param_names)})"
-                                find_func_cmd = parse_find_function_command(expr_with_find)
+                                expr_with_find = (
+                                    expr.rstrip(",").strip()
+                                    + f", find {func_name}({', '.join(param_names)})"
+                                )
+                                find_func_cmd = parse_find_function_command(
+                                    expr_with_find
+                                )
                                 if find_func_cmd is not None:
                                     is_find_command = True
                                     # Use the modified expression for parsing
                                     expr = expr_with_find
                 except Exception as e:
-                    logger.exception("Error detecting function finding from multiple assignments")
+                    logger.exception(
+                        "Error detecting function finding from multiple assignments"
+                    )
 
             # Process function finding if detected
             if is_find_command and find_func_cmd is not None:
                 try:
-                    from .function_manager import find_function_from_data, parse_function_definition, define_function
+                    from .function_manager import (
+                        find_function_from_data,
+                        parse_function_definition,
+                        define_function,
+                    )
+
                     func_name, param_names = find_func_cmd
                     find_pattern = rf"find\s+{re.escape(func_name)}\s*\([^)]*\)"
-                    data_str = re.sub(find_pattern, "", expr, flags=re.IGNORECASE).strip()
-                    data_str = data_str.rstrip(',').strip()
+                    data_str = re.sub(
+                        find_pattern, "", expr, flags=re.IGNORECASE
+                    ).strip()
+                    data_str = data_str.rstrip(",").strip()
 
                     # First, process any function definitions in data_str
                     # e.g., "f(x,y)=x^2+y^2, find f(x,y) = 5" should define f first
@@ -1478,7 +1561,9 @@ def repl_loop(output_format: str = "human") -> None:
                             try:
                                 define_function(def_func_name, def_params, def_body)
                                 params_str = ", ".join(def_params) if def_params else ""
-                                print(f"Function '{def_func_name}({params_str})' defined as: {def_body}")
+                                print(
+                                    f"Function '{def_func_name}({params_str})' defined as: {def_body}"
+                                )
                             except ValidationError as e:
                                 print(f"Error defining function: {e.message}")
                         else:
@@ -1487,7 +1572,6 @@ def repl_loop(output_format: str = "human") -> None:
 
                     # Update data_str with remaining parts
                     data_str = ", ".join(remaining_parts)
-
 
                     # Parse data points using the same logic as main REPL
                     data_points = []
@@ -1503,7 +1587,10 @@ def repl_loop(output_format: str = "human") -> None:
                         is_inverse_solve = True
                         target_value = data_str.strip()[1:].strip()
 
-                    elif not any(f"{func_name}(" in part for part in split_top_level_commas(data_str)):
+                    elif not any(
+                        f"{func_name}(" in part
+                        for part in split_top_level_commas(data_str)
+                    ):
                         # No function calls with this func_name, likely inverse solve
                         is_inverse_solve = True
                         # Check if there's an equals sign
@@ -1519,11 +1606,17 @@ def repl_loop(output_format: str = "human") -> None:
                         if func_name in _function_registry:
                             from .solver import solve_inverse_function
 
-                            result = solve_inverse_function(func_name, target_value, param_names)
-                            _format_inverse_solutions(result, func_name, param_names, target_value)
+                            result = solve_inverse_function(
+                                func_name, target_value, param_names
+                            )
+                            _format_inverse_solutions(
+                                result, func_name, param_names, target_value
+                            )
                             continue  # Skip further processing
                         else:
-                            print(f"Error: Function '{func_name}' is not defined. Define it first or provide data points.")
+                            print(
+                                f"Error: Function '{func_name}' is not defined. Define it first or provide data points."
+                            )
                             continue
 
                     # Otherwise, parse as data points for function finding
@@ -1542,7 +1635,26 @@ def repl_loop(output_format: str = "human") -> None:
                             value_str_preserved = None
                             try:
                                 float(value_str)
-                                if not any(op in value_str for op in ['+', '-', '*', '/', '(', ')', '^', '**', 'sqrt', 'sin', 'cos', 'exp', 'log', 'pi', 'e']):
+                                if not any(
+                                    op in value_str
+                                    for op in [
+                                        "+",
+                                        "-",
+                                        "*",
+                                        "/",
+                                        "(",
+                                        ")",
+                                        "^",
+                                        "**",
+                                        "sqrt",
+                                        "sin",
+                                        "cos",
+                                        "exp",
+                                        "log",
+                                        "pi",
+                                        "e",
+                                    ]
+                                ):
                                     value_str_preserved = value_str
                             except (ValueError, TypeError):
                                 pass
@@ -1556,7 +1668,26 @@ def repl_loop(output_format: str = "human") -> None:
                                     arg_str_preserved = None
                                     try:
                                         float(arg_stripped)
-                                        if not any(op in arg_stripped for op in ['+', '-', '*', '/', '(', ')', '^', '**', 'sqrt', 'sin', 'cos', 'exp', 'log', 'pi', 'e']):
+                                        if not any(
+                                            op in arg_stripped
+                                            for op in [
+                                                "+",
+                                                "-",
+                                                "*",
+                                                "/",
+                                                "(",
+                                                ")",
+                                                "^",
+                                                "**",
+                                                "sqrt",
+                                                "sin",
+                                                "cos",
+                                                "exp",
+                                                "log",
+                                                "pi",
+                                                "e",
+                                            ]
+                                        ):
                                             arg_str_preserved = arg_stripped
                                     except (ValueError, TypeError):
                                         pass
@@ -1586,7 +1717,10 @@ def repl_loop(output_format: str = "human") -> None:
                                     # Preserve strings for exact precision (same as main REPL)
                                     final_args = []
                                     for i, arg_val in enumerate(args):
-                                        if i < len(arg_strings_preserved) and arg_strings_preserved[i]:
+                                        if (
+                                            i < len(arg_strings_preserved)
+                                            and arg_strings_preserved[i]
+                                        ):
                                             final_args.append(arg_strings_preserved[i])
                                         elif isinstance(arg_val, str):
                                             final_args.append(arg_val)
@@ -1594,10 +1728,15 @@ def repl_loop(output_format: str = "human") -> None:
                                             final_args.append(arg_val)
                                         else:
                                             try:
-                                                if isinstance(arg_val, (sp.Rational, sp.Integer, sp.Float)):
+                                                if isinstance(
+                                                    arg_val,
+                                                    (sp.Rational, sp.Integer, sp.Float),
+                                                ):
                                                     final_args.append(str(arg_val))
                                                 else:
-                                                    final_args.append(float(sp.N(arg_val)))
+                                                    final_args.append(
+                                                        float(sp.N(arg_val))
+                                                    )
                                             except (ValueError, TypeError):
                                                 final_args.append(arg_val)
 
@@ -1607,25 +1746,38 @@ def repl_loop(output_format: str = "human") -> None:
                                         final_value = value
                                     elif isinstance(value, (int, float)):
                                         if isinstance(value, float):
-                                            final_value = format(value, '.15f').rstrip('0').rstrip('.')
+                                            final_value = (
+                                                format(value, ".15f")
+                                                .rstrip("0")
+                                                .rstrip(".")
+                                            )
                                         else:
                                             final_value = str(value)
                                     else:
                                         try:
-                                            if isinstance(value, (sp.Rational, sp.Integer, sp.Float)):
+                                            if isinstance(
+                                                value,
+                                                (sp.Rational, sp.Integer, sp.Float),
+                                            ):
                                                 final_value = str(value)
                                             else:
-                                                final_value = str(value) if hasattr(value, '__str__') else float(sp.N(value))
+                                                final_value = (
+                                                    str(value)
+                                                    if hasattr(value, "__str__")
+                                                    else float(sp.N(value))
+                                                )
                                         except (ValueError, TypeError):
                                             final_value = value
 
                                     data_points.append((final_args, final_value))
                                 except Exception as e:
-                                    logger.debug(f"Error parsing value '{value_str}': {e}")
+                                    logger.debug(
+                                        f"Error parsing value '{value_str}': {e}"
+                                    )
 
                     if data_points:
-                        success, func_str, factored_form, error_msg = find_function_from_data(
-                            data_points, param_names
+                        success, func_str, factored_form, error_msg = (
+                            find_function_from_data(data_points, param_names)
                         )
                         if success:
                             if output_format == "json":
@@ -1640,8 +1792,12 @@ def repl_loop(output_format: str = "human") -> None:
                                 # The function string is already human-readable
                                 print(f"{func_name}({params_str}) = {func_str}")
                                 if factored_form:
-                                    print(f"Equivalent: {func_name}({params_str}) = {factored_form}")
-                                print(f"Function '{func_name}' is now available. You can call it like: {func_name}(values)")
+                                    print(
+                                        f"Equivalent: {func_name}({params_str}) = {factored_form}"
+                                    )
+                                print(
+                                    f"Function '{func_name}' is now available. You can call it like: {func_name}(values)"
+                                )
                         else:
                             print(f"Error: Error finding function: {error_msg}")
                     else:
@@ -1695,7 +1851,11 @@ def repl_loop(output_format: str = "human") -> None:
                             continue
                         # Check if it's a function definition
                         try:
-                            from .function_manager import parse_function_definition, define_function
+                            from .function_manager import (
+                                parse_function_definition,
+                                define_function,
+                            )
+
                             func_def = parse_function_definition(part)
                             if func_def is not None:
                                 func_name, params, body = func_def
@@ -1703,9 +1863,20 @@ def repl_loop(output_format: str = "human") -> None:
                                     define_function(func_name, params, body)
                                     params_str = ", ".join(params) if params else ""
                                     if output_format == "json":
-                                        print(json.dumps({"ok": True, "function_defined": func_name, "params": params, "body": body}))
+                                        print(
+                                            json.dumps(
+                                                {
+                                                    "ok": True,
+                                                    "function_defined": func_name,
+                                                    "params": params,
+                                                    "body": body,
+                                                }
+                                            )
+                                        )
                                     else:
-                                        print(f"Function '{func_name}({params_str})' defined as: {body}")
+                                        print(
+                                            f"Function '{func_name}({params_str})' defined as: {body}"
+                                        )
                                     continue
                                 except ValidationError as e:
                                     print(f"Error: {e.message}")
@@ -1735,7 +1906,11 @@ def repl_loop(output_format: str = "human") -> None:
 
                 # Check for single function definition in --eval mode
                 try:
-                    from .function_manager import parse_function_definition, define_function
+                    from .function_manager import (
+                        parse_function_definition,
+                        define_function,
+                    )
+
                     func_def = parse_function_definition(expr)
                     if func_def is not None:
                         func_name, params, body = func_def
@@ -1743,16 +1918,31 @@ def repl_loop(output_format: str = "human") -> None:
                             define_function(func_name, params, body)
                             params_str = ", ".join(params) if params else ""
                             if output_format == "json":
-                                print(json.dumps({"ok": True, "function_defined": func_name, "params": params, "body": body}))
+                                print(
+                                    json.dumps(
+                                        {
+                                            "ok": True,
+                                            "function_defined": func_name,
+                                            "params": params,
+                                            "body": body,
+                                        }
+                                    )
+                                )
                             else:
-                                print(f"Function '{func_name}({params_str})' defined as: {body}")
+                                print(
+                                    f"Function '{func_name}({params_str})' defined as: {body}"
+                                )
                             if _timing_enabled:
-                                print(f"[Time: {time.perf_counter() - start_time:.4f}s]")
+                                print(
+                                    f"[Time: {time.perf_counter() - start_time:.4f}s]"
+                                )
                             continue
                         except ValidationError as e:
                             print(f"Error: {e.message}")
                             if _timing_enabled:
-                                print(f"[Time: {time.perf_counter() - start_time:.4f}s]")
+                                print(
+                                    f"[Time: {time.perf_counter() - start_time:.4f}s]"
+                                )
                             continue
                 except Exception:
                     pass
@@ -1782,15 +1972,26 @@ def repl_loop(output_format: str = "human") -> None:
                             for p in parts_eval
                         )
                         if all_assign_same_var_eval and len(parts_eval) > 1:
-                            assigned_vars_eval = [p.split("=", 1)[0].strip() for p in parts_eval if "=" in p]
-                            if len(assigned_vars_eval) > 1 and len(set(assigned_vars_eval)) == 1:
+                            assigned_vars_eval = [
+                                p.split("=", 1)[0].strip()
+                                for p in parts_eval
+                                if "=" in p
+                            ]
+                            if (
+                                len(assigned_vars_eval) > 1
+                                and len(set(assigned_vars_eval)) == 1
+                            ):
                                 # All assignments are to the same variable
                                 var = assigned_vars_eval[0]
                                 # Try to solve as system of congruences first
-                                solved, exit_code = _solve_modulo_system_if_applicable(parts_eval, var, output_format)
+                                solved, exit_code = _solve_modulo_system_if_applicable(
+                                    parts_eval, var, output_format
+                                )
                                 if solved:
                                     if _timing_enabled:
-                                        print(f"[Time: {time.perf_counter() - start_time:.4f}s]")
+                                        print(
+                                            f"[Time: {time.perf_counter() - start_time:.4f}s]"
+                                        )
                                     return exit_code
 
                                 # If not all modulo or CRT solving failed, evaluate each expression separately
@@ -1802,62 +2003,101 @@ def repl_loop(output_format: str = "human") -> None:
                                         # Evaluate the RHS expression (like "1 % 2")
                                         res = _evaluate_safely(rhs)
                                         if not res.get("ok"):
-                                            print(f"Error evaluating '{var} = {rhs}': {res.get('error')}")
+                                            print(
+                                                f"Error evaluating '{var} = {rhs}': {res.get('error')}"
+                                            )
                                             continue
                                         try:
                                             # Format and print the result
                                             val_str = res.get("result", "")
                                             approx_str = res.get("approx", "")
                                             if output_format == "json":
-                                                print(json.dumps({"ok": True, "result": val_str, "variable": var}))
+                                                print(
+                                                    json.dumps(
+                                                        {
+                                                            "ok": True,
+                                                            "result": val_str,
+                                                            "variable": var,
+                                                        }
+                                                    )
+                                                )
                                             else:
                                                 if approx_str:
                                                     print(f"{var} = {val_str}")
                                                     if approx_str != val_str:
-                                                        print(f"  Decimal: {approx_str}")
+                                                        print(
+                                                            f"  Decimal: {approx_str}"
+                                                        )
                                                 else:
                                                     print(f"{var} = {val_str}")
                                         except Exception as e:
-                                            print(f"Error formatting result for '{var} = {rhs}': {e}")
+                                            print(
+                                                f"Error formatting result for '{var} = {rhs}': {e}"
+                                            )
                                             continue
                                 if _timing_enabled:
-                                    print(f"[Time: {time.perf_counter() - start_time:.4f}s]")
+                                    print(
+                                        f"[Time: {time.perf_counter() - start_time:.4f}s]"
+                                    )
                                 continue
 
                     # Check for function finding patterns BEFORE equation solving (to avoid π-style output)
                     # This handles both single and comma-separated function finding patterns
-                    func_finding_pattern_eval = r'([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]+\)\s*=\s*[^,]+'
+                    func_finding_pattern_eval = (
+                        r"([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]+\)\s*=\s*[^,]+"
+                    )
                     if re.search(func_finding_pattern_eval, expr):
-                        matches_eval = list(re.finditer(func_finding_pattern_eval, expr))
+                        matches_eval = list(
+                            re.finditer(func_finding_pattern_eval, expr)
+                        )
                         has_numeric_args_eval = False
                         func_groups_eval = {}
                         for m in matches_eval:
                             func_name_eval = m.group(1)
-                            args_match_eval = re.search(rf'{re.escape(func_name_eval)}\s*\(([^)]+)\)', m.group(0))
+                            args_match_eval = re.search(
+                                rf"{re.escape(func_name_eval)}\s*\(([^)]+)\)",
+                                m.group(0),
+                            )
                             if args_match_eval:
                                 args_str_eval = args_match_eval.group(1).strip()
-                                if re.search(r'[-+]?\d', args_str_eval):
+                                if re.search(r"[-+]?\d", args_str_eval):
                                     has_numeric_args_eval = True
-                                    value_match_eval = re.search(r'=\s*(.+)', m.group(0))
+                                    value_match_eval = re.search(
+                                        r"=\s*(.+)", m.group(0)
+                                    )
                                     if value_match_eval:
-                                        value_str_eval = value_match_eval.group(1).strip()
+                                        value_str_eval = value_match_eval.group(
+                                            1
+                                        ).strip()
                                         if func_name_eval not in func_groups_eval:
                                             func_groups_eval[func_name_eval] = []
-                                        func_groups_eval[func_name_eval].append((args_str_eval, value_str_eval))
+                                        func_groups_eval[func_name_eval].append(
+                                            (args_str_eval, value_str_eval)
+                                        )
 
                         if has_numeric_args_eval and func_groups_eval:
                             # Process each function finding pattern
                             try:
-                                from .function_manager import find_function_from_data, define_function
+                                from .function_manager import (
+                                    find_function_from_data,
+                                    define_function,
+                                )
+
                                 processed_any = False
-                                for func_name_eval, data_points_list in func_groups_eval.items():
+                                for (
+                                    func_name_eval,
+                                    data_points_list,
+                                ) in func_groups_eval.items():
                                     # Process all data points for this function
-                                    param_names_eval = ['x']
+                                    param_names_eval = ["x"]
                                     data_points_eval = []
-                                    for args_str_eval, value_str_eval in data_points_list:
+                                    for (
+                                        args_str_eval,
+                                        value_str_eval,
+                                    ) in data_points_list:
                                         # Parse arguments
                                         arg_list_eval = []
-                                        for arg in args_str_eval.split(','):
+                                        for arg in args_str_eval.split(","):
                                             try:
                                                 arg_list_eval.append(float(arg.strip()))
                                             except ValueError:
@@ -1869,24 +2109,47 @@ def repl_loop(output_format: str = "human") -> None:
                                         except ValueError:
                                             value_eval = value_str_eval
 
-                                        data_points_eval.append(([arg_list_eval[0]] if len(arg_list_eval) == 1 else arg_list_eval, value_eval))
+                                        data_points_eval.append(
+                                            (
+                                                (
+                                                    [arg_list_eval[0]]
+                                                    if len(arg_list_eval) == 1
+                                                    else arg_list_eval
+                                                ),
+                                                value_eval,
+                                            )
+                                        )
 
                                     # Find function from all data points
-                                    success, func_str, factored_form, error_msg = find_function_from_data(
-                                        data_points_eval, param_names_eval
+                                    success, func_str, factored_form, error_msg = (
+                                        find_function_from_data(
+                                            data_points_eval, param_names_eval
+                                        )
                                     )
                                     if success:
                                         print(f"{func_name_eval}(x) = {func_str}")
                                         if factored_form:
-                                            print(f"Equivalent: {func_name_eval}(x) = {factored_form}")
+                                            print(
+                                                f"Equivalent: {func_name_eval}(x) = {factored_form}"
+                                            )
                                         try:
-                                            define_function(func_name_eval, param_names_eval, func_str)
-                                            print(f"Function '{func_name_eval}' is now available.")
+                                            define_function(
+                                                func_name_eval,
+                                                param_names_eval,
+                                                func_str,
+                                            )
+                                            print(
+                                                f"Function '{func_name_eval}' is now available."
+                                            )
                                             processed_any = True
                                         except Exception as e:
-                                            print(f"Warning: Could not define function automatically: {e}")
+                                            print(
+                                                f"Warning: Could not define function automatically: {e}"
+                                            )
                                     else:
-                                        print(f"Error finding {func_name_eval}: {error_msg}")
+                                        print(
+                                            f"Error finding {func_name_eval}: {error_msg}"
+                                        )
 
                                 # After processing all function finding patterns, check if there are remaining parts to evaluate
                                 if processed_any:
@@ -1894,24 +2157,40 @@ def repl_loop(output_format: str = "human") -> None:
                                     remaining_expr = expr
                                     for func_name_eval in func_groups_eval.keys():
                                         # Remove all patterns for this function
-                                        remaining_expr = re.sub(rf'{re.escape(func_name_eval)}\s*\([^)]+\)\s*=\s*[^,]+', '', remaining_expr)
-                                    remaining_expr = re.sub(r',\s*,+', ',', remaining_expr).strip(',').strip()
+                                        remaining_expr = re.sub(
+                                            rf"{re.escape(func_name_eval)}\s*\([^)]+\)\s*=\s*[^,]+",
+                                            "",
+                                            remaining_expr,
+                                        )
+                                    remaining_expr = (
+                                        re.sub(r",\s*,+", ",", remaining_expr)
+                                        .strip(",")
+                                        .strip()
+                                    )
 
                                     if remaining_expr:
                                         # Evaluate remaining parts (like f(g(2)))
                                         # split_top_level_commas is already imported at module level
-                                        remaining_parts = split_top_level_commas(remaining_expr)
+                                        remaining_parts = split_top_level_commas(
+                                            remaining_expr
+                                        )
                                         for part in remaining_parts:
                                             part = part.strip()
                                             if part:
                                                 try:
                                                     eva = _evaluate_safely(part)
                                                     if eva.get("ok"):
-                                                        print(f"{part} = {format_superscript(eva.get('result'))}")
+                                                        print(
+                                                            f"{part} = {format_superscript(eva.get('result'))}"
+                                                        )
                                                     else:
-                                                        print(f"Error: {eva.get('error', 'Unknown error')}")
+                                                        print(
+                                                            f"Error: {eva.get('error', 'Unknown error')}"
+                                                        )
                                                 except Exception as e:
-                                                    print(f"Error evaluating '{part}': {e}")
+                                                    print(
+                                                        f"Error evaluating '{part}': {e}"
+                                                    )
                                     continue
                             except Exception as e:
                                 print(f"Error processing function finding: {e}")
@@ -1919,13 +2198,23 @@ def repl_loop(output_format: str = "human") -> None:
                                 pass
 
                         # If we only found one function finding pattern, process it
-                        if has_numeric_args_eval and func_name_eval and args_str_eval and value_str_eval and len(matches_eval) == 1:
+                        if (
+                            has_numeric_args_eval
+                            and func_name_eval
+                            and args_str_eval
+                            and value_str_eval
+                            and len(matches_eval) == 1
+                        ):
                             # Process as function finding
                             try:
-                                from .function_manager import find_function_from_data, define_function
+                                from .function_manager import (
+                                    find_function_from_data,
+                                    define_function,
+                                )
+
                                 # Parse arguments
                                 arg_list_eval = []
-                                for arg in args_str_eval.split(','):
+                                for arg in args_str_eval.split(","):
                                     try:
                                         arg_list_eval.append(float(arg.strip()))
                                     except ValueError:
@@ -1938,20 +2227,39 @@ def repl_loop(output_format: str = "human") -> None:
                                     value_eval = value_str_eval
 
                                 # Find function
-                                param_names_eval = ['x']
-                                data_points_eval = [([arg_list_eval[0]] if len(arg_list_eval) == 1 else arg_list_eval, value_eval)]
-                                success, func_str, factored_form, error_msg = find_function_from_data(
-                                    data_points_eval, param_names_eval
+                                param_names_eval = ["x"]
+                                data_points_eval = [
+                                    (
+                                        (
+                                            [arg_list_eval[0]]
+                                            if len(arg_list_eval) == 1
+                                            else arg_list_eval
+                                        ),
+                                        value_eval,
+                                    )
+                                ]
+                                success, func_str, factored_form, error_msg = (
+                                    find_function_from_data(
+                                        data_points_eval, param_names_eval
+                                    )
                                 )
                                 if success:
                                     print(f"{func_name_eval}(x) = {func_str}")
                                     if factored_form:
-                                        print(f"Equivalent: {func_name_eval}(x) = {factored_form}")
+                                        print(
+                                            f"Equivalent: {func_name_eval}(x) = {factored_form}"
+                                        )
                                     try:
-                                        define_function(func_name_eval, param_names_eval, func_str)
-                                        print(f"Function '{func_name_eval}' is now available.")
+                                        define_function(
+                                            func_name_eval, param_names_eval, func_str
+                                        )
+                                        print(
+                                            f"Function '{func_name_eval}' is now available."
+                                        )
                                     except Exception as e:
-                                        print(f"Warning: Could not define function automatically: {e}")
+                                        print(
+                                            f"Warning: Could not define function automatically: {e}"
+                                        )
                                     continue
                                 else:
                                     print(f"Error: {error_msg}")
@@ -1969,15 +2277,24 @@ def repl_loop(output_format: str = "human") -> None:
                             for p in pts
                         )
                         if all_assign_check:
-                            assigned_vars_check = [p.split("=", 1)[0].strip() for p in pts if "=" in p]
-                            if len(assigned_vars_check) > 1 and len(set(assigned_vars_check)) == 1:
+                            assigned_vars_check = [
+                                p.split("=", 1)[0].strip() for p in pts if "=" in p
+                            ]
+                            if (
+                                len(assigned_vars_check) > 1
+                                and len(set(assigned_vars_check)) == 1
+                            ):
                                 # All assignments are to the same variable
                                 var = assigned_vars_check[0]
                                 # Try to solve as system of congruences first
-                                solved, exit_code = _solve_modulo_system_if_applicable(pts, var, output_format)
+                                solved, exit_code = _solve_modulo_system_if_applicable(
+                                    pts, var, output_format
+                                )
                                 if solved:
                                     if _timing_enabled:
-                                        print(f"[Time: {time.perf_counter() - start_time:.4f}s]")
+                                        print(
+                                            f"[Time: {time.perf_counter() - start_time:.4f}s]"
+                                        )
                                     return exit_code
 
                                 # If not all modulo or CRT solving failed, evaluate each expression separately
@@ -1989,26 +2306,42 @@ def repl_loop(output_format: str = "human") -> None:
                                         # Evaluate the RHS expression (like "1 % 2")
                                         res = _evaluate_safely(rhs)
                                         if not res.get("ok"):
-                                            print(f"Error evaluating '{var} = {rhs}': {res.get('error')}")
+                                            print(
+                                                f"Error evaluating '{var} = {rhs}': {res.get('error')}"
+                                            )
                                             continue
                                         try:
                                             # Format and print the result
                                             val_str = res.get("result", "")
                                             approx_str = res.get("approx", "")
                                             if output_format == "json":
-                                                print(json.dumps({"ok": True, "result": val_str, "variable": var}))
+                                                print(
+                                                    json.dumps(
+                                                        {
+                                                            "ok": True,
+                                                            "result": val_str,
+                                                            "variable": var,
+                                                        }
+                                                    )
+                                                )
                                             else:
                                                 if approx_str:
                                                     print(f"{var} = {val_str}")
                                                     if approx_str != val_str:
-                                                        print(f"  Decimal: {approx_str}")
+                                                        print(
+                                                            f"  Decimal: {approx_str}"
+                                                        )
                                                 else:
                                                     print(f"{var} = {val_str}")
                                         except Exception as e:
-                                            print(f"Error formatting result for '{var} = {rhs}': {e}")
+                                            print(
+                                                f"Error formatting result for '{var} = {rhs}': {e}"
+                                            )
                                             continue
                                 if _timing_enabled:
-                                    print(f"[Time: {time.perf_counter() - start_time:.4f}s]")
+                                    print(
+                                        f"[Time: {time.perf_counter() - start_time:.4f}s]"
+                                    )
                                 continue
 
                         res = solve_system(expr, None)
@@ -2049,7 +2382,9 @@ def repl_loop(output_format: str = "human") -> None:
                                     print("\n[Cache hits used:]")
                                     for hit_expr, cache_type in hits:
                                         cache_type_name = (
-                                            "eval" if cache_type == "eval" else "subexpr"
+                                            "eval"
+                                            if cache_type == "eval"
+                                            else "subexpr"
                                         )
                                         print(f"  {hit_expr} ({cache_type_name})")
                             except ImportError:
@@ -2183,7 +2518,9 @@ def repl_loop(output_format: str = "human") -> None:
 
                 parts = raw.split(None, 1)
                 if len(parts) < 2:
-                    print("Usage: plot <expression> [variable=x] [x_min=-10] [x_max=10] [--save filename]")
+                    print(
+                        "Usage: plot <expression> [variable=x] [x_min=-10] [x_max=10] [--save filename]"
+                    )
                     print("Example: plot x^2")
                     print("Example: plot sin(x), x_min=-pi, x_max=pi")
                     print("Example: plot x^2, --save plot.png")
@@ -2229,9 +2566,12 @@ def repl_loop(output_format: str = "human") -> None:
                                 # Evaluate expression (e.g., "-pi", "2*pi") before converting to float
                                 try:
                                     from .parser import parse_preprocessed
+
                                     eval_result = _evaluate_safely(value)
                                     if eval_result.get("ok"):
-                                        parsed_value = parse_preprocessed(eval_result["result"])
+                                        parsed_value = parse_preprocessed(
+                                            eval_result["result"]
+                                        )
                                         x_min = float(sp.N(parsed_value))
                                     else:
                                         # Fallback: try direct float conversion
@@ -2243,9 +2583,12 @@ def repl_loop(output_format: str = "human") -> None:
                                 # Evaluate expression (e.g., "pi", "2*pi") before converting to float
                                 try:
                                     from .parser import parse_preprocessed
+
                                     eval_result = _evaluate_safely(value)
                                     if eval_result.get("ok"):
-                                        parsed_value = parse_preprocessed(eval_result["result"])
+                                        parsed_value = parse_preprocessed(
+                                            eval_result["result"]
+                                        )
                                         x_max = float(sp.N(parsed_value))
                                     else:
                                         # Fallback: try direct float conversion
@@ -2258,8 +2601,12 @@ def repl_loop(output_format: str = "human") -> None:
                             else:
                                 print(f"Warning: Unknown parameter '{key}', ignoring")
                         except ValueError as ve:
-                            print(f"Error: Invalid value for parameter '{key}': {value}")
-                            print(f"  Hint: Use mathematical expressions like 'pi', '-pi', '2*pi', etc.")
+                            print(
+                                f"Error: Invalid value for parameter '{key}': {value}"
+                            )
+                            print(
+                                f"  Hint: Use mathematical expressions like 'pi', '-pi', '2*pi', etc."
+                            )
                             continue
 
                 # Plot the function (with save support if requested)
@@ -2268,13 +2615,16 @@ def repl_loop(output_format: str = "human") -> None:
                     try:
                         # Set non-GUI backend for saving (no Tkinter needed)
                         import matplotlib
-                        matplotlib.use('Agg')  # Non-GUI backend
+
+                        matplotlib.use("Agg")  # Non-GUI backend
                         import matplotlib.pyplot as plt
                         import numpy as np
                         from .plotting import HAS_MATPLOTLIB
 
                         if not HAS_MATPLOTLIB:
-                            print("Error: Plotting requires matplotlib. Install with: pip install matplotlib")
+                            print(
+                                "Error: Plotting requires matplotlib. Install with: pip install matplotlib"
+                            )
                             continue
 
                         # Evaluate and plot manually to keep figure for saving
@@ -2284,6 +2634,7 @@ def repl_loop(output_format: str = "human") -> None:
                             continue
 
                         from .parser import parse_preprocessed
+
                         expr = parse_preprocessed(eval_result["result"])
                         var_sym = sp.symbols(variable)
                         f = sp.lambdify(var_sym, expr, "numpy")
@@ -2297,23 +2648,40 @@ def repl_loop(output_format: str = "human") -> None:
                                 try:
                                     y = float(sp.N(expr.subs(var_sym, x)))
                                     y_vals.append(y)
-                                except (ValueError, TypeError, ZeroDivisionError, OverflowError):
+                                except (
+                                    ValueError,
+                                    TypeError,
+                                    ZeroDivisionError,
+                                    OverflowError,
+                                ):
                                     y_vals.append(np.nan)
                             y_vals = np.array(y_vals)
 
                         # Create and save plot
                         fig, ax = plt.subplots(figsize=(10, 6))
-                        ax.plot(x_vals, y_vals, linewidth=2, color='#2E86AB', label=f'f({variable}) = {expression}')
-                        ax.set_xlabel(variable, fontsize=12, fontweight='bold')
-                        ax.set_ylabel(f'f({variable})', fontsize=12, fontweight='bold')
-                        ax.set_title(f'Plot of {expression}', fontsize=14, fontweight='bold')
-                        ax.grid(True, alpha=0.3, linestyle='--')
-                        ax.axhline(y=0, color='k', linewidth=0.8, linestyle='-', alpha=0.3)
-                        ax.axvline(x=0, color='k', linewidth=0.8, linestyle='-', alpha=0.3)
-                        ax.legend(loc='best', fontsize=10)
+                        ax.plot(
+                            x_vals,
+                            y_vals,
+                            linewidth=2,
+                            color="#2E86AB",
+                            label=f"f({variable}) = {expression}",
+                        )
+                        ax.set_xlabel(variable, fontsize=12, fontweight="bold")
+                        ax.set_ylabel(f"f({variable})", fontsize=12, fontweight="bold")
+                        ax.set_title(
+                            f"Plot of {expression}", fontsize=14, fontweight="bold"
+                        )
+                        ax.grid(True, alpha=0.3, linestyle="--")
+                        ax.axhline(
+                            y=0, color="k", linewidth=0.8, linestyle="-", alpha=0.3
+                        )
+                        ax.axvline(
+                            x=0, color="k", linewidth=0.8, linestyle="-", alpha=0.3
+                        )
+                        ax.legend(loc="best", fontsize=10)
                         plt.tight_layout()
 
-                        plt.savefig(save_file, dpi=150, bbox_inches='tight')
+                        plt.savefig(save_file, dpi=150, bbox_inches="tight")
                         plt.close(fig)  # Close figure to free memory
                         print(f"Plot saved to: {save_file}")
 
@@ -2346,18 +2714,26 @@ def repl_loop(output_format: str = "human") -> None:
                         x_min=x_min,
                         x_max=x_max,
                         points=points,
-                        ascii=False
+                        ascii=False,
                     )
 
                     if result.ok:
                         print(result.result)
                     else:
                         print(f"Error: {result.error}")
-                        if "Tcl" in str(result.error) or "Tkinter" in str(result.error) or "init.tcl" in str(result.error):
-                            print("\nTip: GUI plotting is not available. Try saving the plot instead:")
+                        if (
+                            "Tcl" in str(result.error)
+                            or "Tkinter" in str(result.error)
+                            or "init.tcl" in str(result.error)
+                        ):
+                            print(
+                                "\nTip: GUI plotting is not available. Try saving the plot instead:"
+                            )
                             print(f"  plot {expression}, --save plot.png")
             except ImportError:
-                print("Error: Plotting requires matplotlib. Install with: pip install matplotlib")
+                print(
+                    "Error: Plotting requires matplotlib. Install with: pip install matplotlib"
+                )
             except Exception as e:
                 print(f"Error plotting: {e}")
             continue
@@ -2374,6 +2750,7 @@ def repl_loop(output_format: str = "human") -> None:
                 find_function_from_data,
                 define_function,
             )
+
             # split_top_level_commas is already imported at module level
 
             # Check if input contains "find" keyword OR multiple function assignment patterns
@@ -2383,7 +2760,9 @@ def repl_loop(output_format: str = "human") -> None:
             # If no "find" keyword, check for pattern of multiple f(...)=... assignments
             if not is_find_command:
                 # Count function assignment patterns: func_name(args) = value
-                func_assignment_pattern = r'([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]+\)\s*=\s*[^,]+'
+                func_assignment_pattern = (
+                    r"([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]+\)\s*=\s*[^,]+"
+                )
                 matches = list(re.finditer(func_assignment_pattern, raw))
                 # If we have 1 or more such patterns, check if it's function finding or function definition
                 # Function finding: f(1)=2 (numeric arguments - data points)
@@ -2393,12 +2772,14 @@ def repl_loop(output_format: str = "human") -> None:
                     has_numeric_args = False
                     for m in matches:
                         func_name_check = m.group(1)
-                        args_match_check = re.search(rf'{re.escape(func_name_check)}\s*\(([^)]+)\)', m.group(0))
+                        args_match_check = re.search(
+                            rf"{re.escape(func_name_check)}\s*\(([^)]+)\)", m.group(0)
+                        )
                         if args_match_check:
                             args_str_check = args_match_check.group(1).strip()
                             # Check if any argument contains a digit or numeric operator
                             # This indicates numeric data points, not symbolic parameters
-                            if re.search(r'[-+]?\d', args_str_check):
+                            if re.search(r"[-+]?\d", args_str_check):
                                 has_numeric_args = True
                                 break
 
@@ -2418,24 +2799,29 @@ def repl_loop(output_format: str = "human") -> None:
                             matches_for_func = func_groups[func_name]
                             # Infer parameter names from the first match
                             first_match = matches_for_func[0]
-                            args_match = re.search(rf'{re.escape(func_name)}\s*\(([^)]+)\)', first_match.group(0))
+                            args_match = re.search(
+                                rf"{re.escape(func_name)}\s*\(([^)]+)\)",
+                                first_match.group(0),
+                            )
                             if args_match:
                                 args_str = args_match.group(1)
                                 # Parse arguments to count them
                                 arg_list = split_top_level_commas(args_str)
                                 # Generate parameter names: x, y, z, ... or x1, x2, x3, ...
                                 param_names = []
-                                param_chars = 'xyzuvwrst'
+                                param_chars = "xyzuvwrst"
                                 for i, _ in enumerate(arg_list):
                                     if i < len(param_chars):
                                         param_names.append(param_chars[i])
                                     else:
-                                        param_names.append(f'x{i+1}')
+                                        param_names.append(f"x{i+1}")
                                 # Create a modified input with "find" keyword
                                 param_str = ", ".join(param_names)
                                 raw_with_find = f"{raw}, find {func_name}({param_str})"
                                 # Parse this as a find command
-                                find_func_cmd = parse_find_function_command(raw_with_find)
+                                find_func_cmd = parse_find_function_command(
+                                    raw_with_find
+                                )
                                 if find_func_cmd is not None:
                                     is_find_command = True
                                     # Replace raw with the modified version
@@ -2446,6 +2832,7 @@ def repl_loop(output_format: str = "human") -> None:
                         # Split by commas and handle each part that matches function finding pattern
                         # Import here to avoid scoping issues
                         from .parser import split_top_level_commas as _split_commas
+
                         parts = _split_commas(raw)
                         function_finding_parts = []
                         evaluation_parts = []
@@ -2461,11 +2848,13 @@ def repl_loop(output_format: str = "human") -> None:
                             if part_match:
                                 # Check if arguments contain numeric values (function finding) or are purely symbolic (function definition)
                                 func_name_check = part_match.group(1)
-                                args_match_check = re.search(rf'{re.escape(func_name_check)}\s*\(([^)]+)\)', part)
+                                args_match_check = re.search(
+                                    rf"{re.escape(func_name_check)}\s*\(([^)]+)\)", part
+                                )
                                 if args_match_check:
                                     args_str_check = args_match_check.group(1).strip()
                                     # Check if any argument contains a digit or numeric operator
-                                    if re.search(r'[-+]?\d', args_str_check):
+                                    if re.search(r"[-+]?\d", args_str_check):
                                         is_func_finding = True
 
                             if is_func_finding:
@@ -2477,28 +2866,36 @@ def repl_loop(output_format: str = "human") -> None:
                         if function_finding_parts:
                             # Process the first function finding part (will be handled by main function finding block)
                             first_part = function_finding_parts[0]
-                            func_name = re.match(func_assignment_pattern, first_part).group(1)
-                            args_match = re.search(rf'{re.escape(func_name)}\s*\(([^)]+)\)', first_part)
+                            func_name = re.match(
+                                func_assignment_pattern, first_part
+                            ).group(1)
+                            args_match = re.search(
+                                rf"{re.escape(func_name)}\s*\(([^)]+)\)", first_part
+                            )
                             if args_match:
                                 args_str = args_match.group(1)
                                 arg_list = _split_commas(args_str)
                                 param_names = []
-                                param_chars = 'xyzuvwrst'
+                                param_chars = "xyzuvwrst"
                                 for i, _ in enumerate(arg_list):
                                     if i < len(param_chars):
                                         param_names.append(param_chars[i])
                                     else:
-                                        param_names.append(f'x{i+1}')
+                                        param_names.append(f"x{i+1}")
 
                                 # Process first function finding
                                 raw_with_find = f"{first_part}, find {func_name}({', '.join(param_names)})"
-                                find_func_cmd = parse_find_function_command(raw_with_find)
+                                find_func_cmd = parse_find_function_command(
+                                    raw_with_find
+                                )
                                 if find_func_cmd:
                                     raw = raw_with_find
                                     is_find_command = True
 
                                     # Store remaining parts for processing after function finding
-                                    remaining_function_parts = function_finding_parts[1:]
+                                    remaining_function_parts = function_finding_parts[
+                                        1:
+                                    ]
                                     remaining_evaluation_parts = evaluation_parts
                         else:
                             # No function finding patterns, continue to normal evaluation
@@ -2516,13 +2913,16 @@ def repl_loop(output_format: str = "human") -> None:
 
                     # Remove "find f(x,y)" part to get data points
                     find_pattern = rf"find\s+{re.escape(func_name)}\s*\([^)]*\)"
-                    data_str = re.sub(find_pattern, "", raw, flags=re.IGNORECASE).strip()
+                    data_str = re.sub(
+                        find_pattern, "", raw, flags=re.IGNORECASE
+                    ).strip()
 
                     # Remove trailing commas
-                    data_str = data_str.rstrip(',').strip()
+                    data_str = data_str.rstrip(",").strip()
 
                     # First, process any function definitions in data_str (like main_entry path)
                     from .function_manager import parse_function_definition
+
                     parts_to_process = split_top_level_commas(data_str)
                     remaining_parts = []
                     for part in parts_to_process:
@@ -2535,7 +2935,9 @@ def repl_loop(output_format: str = "human") -> None:
                             try:
                                 define_function(def_func_name, def_params, def_body)
                                 params_str = ", ".join(def_params) if def_params else ""
-                                print(f"Function '{def_func_name}({params_str})' defined as: {def_body}")
+                                print(
+                                    f"Function '{def_func_name}({params_str})' defined as: {def_body}"
+                                )
                             except ValidationError as e:
                                 print(f"Error defining function: {e.message}")
                         else:
@@ -2550,7 +2952,10 @@ def repl_loop(output_format: str = "human") -> None:
                     if data_str.strip().startswith("="):
                         is_inverse_solve = True
                         target_value = data_str.strip()[1:].strip()
-                    elif not any(f"{func_name}(" in part for part in split_top_level_commas(data_str)):
+                    elif not any(
+                        f"{func_name}(" in part
+                        for part in split_top_level_commas(data_str)
+                    ):
                         # No function calls with this func_name, likely inverse solve
                         is_inverse_solve = True
                         if "=" in data_str:
@@ -2561,13 +2966,21 @@ def repl_loop(output_format: str = "human") -> None:
                     if is_inverse_solve and target_value:
                         # Check if function is defined for inverse solving
                         from .function_manager import _function_registry
+
                         if func_name in _function_registry:
                             from .solver import solve_inverse_function
-                            result = solve_inverse_function(func_name, target_value, param_names)
-                            _format_inverse_solutions(result, func_name, param_names, target_value)
+
+                            result = solve_inverse_function(
+                                func_name, target_value, param_names
+                            )
+                            _format_inverse_solutions(
+                                result, func_name, param_names, target_value
+                            )
                             continue  # Skip further processing
                         else:
-                            print(f"Error: Function '{func_name}' is not defined. Define it first or provide data points.")
+                            print(
+                                f"Error: Function '{func_name}' is not defined. Define it first or provide data points."
+                            )
                             continue
 
                     # Parse data points: f(arg1,arg2,...) = value
@@ -2612,7 +3025,26 @@ def repl_loop(output_format: str = "human") -> None:
                                 # Try to parse as float to see if it's a simple number
                                 float(value_str)
                                 # Check if it's just a number (no operators, functions, etc.)
-                                if not any(op in value_str for op in ['+', '-', '*', '/', '(', ')', '^', '**', 'sqrt', 'sin', 'cos', 'exp', 'log', 'pi', 'e']):
+                                if not any(
+                                    op in value_str
+                                    for op in [
+                                        "+",
+                                        "-",
+                                        "*",
+                                        "/",
+                                        "(",
+                                        ")",
+                                        "^",
+                                        "**",
+                                        "sqrt",
+                                        "sin",
+                                        "cos",
+                                        "exp",
+                                        "log",
+                                        "pi",
+                                        "e",
+                                    ]
+                                ):
                                     # Preserve original string for exact conversion
                                     value_str_preserved = value_str
                             except (ValueError, TypeError):
@@ -2628,7 +3060,26 @@ def repl_loop(output_format: str = "human") -> None:
                                     arg_str_preserved = None
                                     try:
                                         float(arg_stripped)
-                                        if not any(op in arg_stripped for op in ['+', '-', '*', '/', '(', ')', '^', '**', 'sqrt', 'sin', 'cos', 'exp', 'log', 'pi', 'e']):
+                                        if not any(
+                                            op in arg_stripped
+                                            for op in [
+                                                "+",
+                                                "-",
+                                                "*",
+                                                "/",
+                                                "(",
+                                                ")",
+                                                "^",
+                                                "**",
+                                                "sqrt",
+                                                "sin",
+                                                "cos",
+                                                "exp",
+                                                "log",
+                                                "pi",
+                                                "e",
+                                            ]
+                                        ):
                                             arg_str_preserved = arg_stripped
                                     except (ValueError, TypeError):
                                         pass
@@ -2645,7 +3096,9 @@ def repl_loop(output_format: str = "human") -> None:
                                         arg_val = arg_expr
                                     args.append(arg_val)
                                 except Exception as e:
-                                    print(f"Error: Invalid argument '{arg}' in data point: {e}")
+                                    print(
+                                        f"Error: Invalid argument '{arg}' in data point: {e}"
+                                    )
                                     break
                             else:
                                 # Parse value (can be numeric or symbolic)
@@ -2667,8 +3120,13 @@ def repl_loop(output_format: str = "human") -> None:
                                         final_args = []
                                         for i, arg_val in enumerate(args):
                                             # Use preserved string if available
-                                            if i < len(arg_strings_preserved) and arg_strings_preserved[i]:
-                                                final_args.append(arg_strings_preserved[i])
+                                            if (
+                                                i < len(arg_strings_preserved)
+                                                and arg_strings_preserved[i]
+                                            ):
+                                                final_args.append(
+                                                    arg_strings_preserved[i]
+                                                )
                                             elif isinstance(arg_val, str):
                                                 # Keep as string - function finder will convert with exact precision
                                                 final_args.append(arg_val)
@@ -2678,11 +3136,20 @@ def repl_loop(output_format: str = "human") -> None:
                                                 # SymPy expression, convert to float or string
                                                 try:
                                                     # Try to get string representation if it's a simple number
-                                                    if isinstance(arg_val, (sp.Rational, sp.Integer, sp.Float)):
+                                                    if isinstance(
+                                                        arg_val,
+                                                        (
+                                                            sp.Rational,
+                                                            sp.Integer,
+                                                            sp.Float,
+                                                        ),
+                                                    ):
                                                         # Convert to string for exact preservation
                                                         final_args.append(str(arg_val))
                                                     else:
-                                                        final_args.append(float(sp.N(arg_val)))
+                                                        final_args.append(
+                                                            float(sp.N(arg_val))
+                                                        )
                                                 except (ValueError, TypeError):
                                                     final_args.append(arg_val)
 
@@ -2695,22 +3162,33 @@ def repl_loop(output_format: str = "human") -> None:
                                         elif isinstance(value, (int, float)):
                                             # Convert to string to preserve exact decimal representation
                                             # Prefer using original value_str if available
-                                            if 'value_str' in locals() and value_str:
+                                            if "value_str" in locals() and value_str:
                                                 final_value = value_str
                                             else:
                                                 # Fallback: convert float to string
                                                 if isinstance(value, float):
                                                     # Format with enough precision to preserve exact decimal
-                                                    final_value = format(value, '.15f').rstrip('0').rstrip('.')
+                                                    final_value = (
+                                                        format(value, ".15f")
+                                                        .rstrip("0")
+                                                        .rstrip(".")
+                                                    )
                                                 else:
                                                     final_value = str(value)
                                         else:
                                             try:
-                                                if isinstance(value, (sp.Rational, sp.Integer, sp.Float)):
+                                                if isinstance(
+                                                    value,
+                                                    (sp.Rational, sp.Integer, sp.Float),
+                                                ):
                                                     final_value = str(value)
                                                 else:
                                                     # Try to get string representation
-                                                    final_value = str(value) if hasattr(value, '__str__') else float(sp.N(value))
+                                                    final_value = (
+                                                        str(value)
+                                                        if hasattr(value, "__str__")
+                                                        else float(sp.N(value))
+                                                    )
                                             except (ValueError, TypeError):
                                                 final_value = value
 
@@ -2720,7 +3198,9 @@ def repl_loop(output_format: str = "human") -> None:
                                             f"Error: Expected {len(param_names)} arguments, got {len(args)}"
                                         )
                                 except Exception as e:
-                                    print(f"Error: Invalid value '{value_str}' in data point: {e}")
+                                    print(
+                                        f"Error: Invalid value '{value_str}' in data point: {e}"
+                                    )
 
                     if data_points:
                         # Check if system is underdetermined (fewer points than needed for exact solution)
@@ -2728,8 +3208,8 @@ def repl_loop(output_format: str = "human") -> None:
                         n_coeffs = n_params + 1 if n_params > 1 else n_params
                         is_underdetermined = len(data_points) < n_coeffs
 
-                        success, func_str, factored_form, error_msg = find_function_from_data(
-                            data_points, param_names
+                        success, func_str, factored_form, error_msg = (
+                            find_function_from_data(data_points, param_names)
                         )
                         if success:
                             params_str = ", ".join(param_names)
@@ -2738,55 +3218,101 @@ def repl_loop(output_format: str = "human") -> None:
                             # The function string is already human-readable
                             print(f"{func_name}({params_str}) = {func_str}")
                             if factored_form:
-                                print(f"Equivalent: {func_name}({params_str}) = {factored_form}")
+                                print(
+                                    f"Equivalent: {func_name}({params_str}) = {factored_form}"
+                                )
 
                             # Warn if this is a best-fit solution (underdetermined system)
                             if is_underdetermined:
-                                print(f"Note: Best-fit solution (underdetermined system - {len(data_points)} point(s) for {n_coeffs} coefficient(s)). "
-                                      f"Not all data points may be exactly satisfied.")
+                                print(
+                                    f"Note: Best-fit solution (underdetermined system - {len(data_points)} point(s) for {n_coeffs} coefficient(s)). "
+                                    f"Not all data points may be exactly satisfied."
+                                )
 
                             # Compute and display L_func for canonical integerized form
                             try:
                                 # Parse function body to extract coefficients
-                                local_dict = {param: sp.Symbol(param) for param in param_names}
+                                local_dict = {
+                                    param: sp.Symbol(param) for param in param_names
+                                }
                                 func_body = sp.sympify(func_str, locals=local_dict)
                                 if len(param_names) == 2:
-                                    var1, var2 = sp.Symbol(param_names[0]), sp.Symbol(param_names[1])
+                                    var1, var2 = sp.Symbol(param_names[0]), sp.Symbol(
+                                        param_names[1]
+                                    )
                                     equation_expanded = sp.expand(func_body)
                                     coeff_x_raw = equation_expanded.coeff(var1)
                                     coeff_y_raw = equation_expanded.coeff(var2)
-                                    const_raw = equation_expanded.subs([(var1, 0), (var2, 0)])
+                                    const_raw = equation_expanded.subs(
+                                        [(var1, 0), (var2, 0)]
+                                    )
 
                                     # Convert to rationals
-                                    coeff_x = sp.Rational(coeff_x_raw) if isinstance(coeff_x_raw, (sp.Float, float)) else sp.simplify(coeff_x_raw)
-                                    coeff_y = sp.Rational(coeff_y_raw) if isinstance(coeff_y_raw, (sp.Float, float)) else sp.simplify(coeff_y_raw)
-                                    const = sp.Rational(const_raw) if isinstance(const_raw, (sp.Float, float)) else sp.simplify(const_raw)
+                                    coeff_x = (
+                                        sp.Rational(coeff_x_raw)
+                                        if isinstance(coeff_x_raw, (sp.Float, float))
+                                        else sp.simplify(coeff_x_raw)
+                                    )
+                                    coeff_y = (
+                                        sp.Rational(coeff_y_raw)
+                                        if isinstance(coeff_y_raw, (sp.Float, float))
+                                        else sp.simplify(coeff_y_raw)
+                                    )
+                                    const = (
+                                        sp.Rational(const_raw)
+                                        if isinstance(const_raw, (sp.Float, float))
+                                        else sp.simplify(const_raw)
+                                    )
 
-                                    if isinstance(coeff_x, sp.Rational) and isinstance(coeff_y, sp.Rational) and isinstance(const, sp.Rational):
+                                    if (
+                                        isinstance(coeff_x, sp.Rational)
+                                        and isinstance(coeff_y, sp.Rational)
+                                        and isinstance(const, sp.Rational)
+                                    ):
+
                                         def lcm(a: int, b: int) -> int:
-                                            return abs(a * b) // gcd(a, b) if a and b else 0
-                                        L_func = lcm(coeff_x.denominator, coeff_y.denominator)
+                                            return (
+                                                abs(a * b) // gcd(a, b)
+                                                if a and b
+                                                else 0
+                                            )
+
+                                        L_func = lcm(
+                                            coeff_x.denominator, coeff_y.denominator
+                                        )
                                         L_func = lcm(L_func, const.denominator)
                                         # Display canonical integerized form with L_func
                                         a_int = int(coeff_x * L_func)
                                         b_int = int(coeff_y * L_func)
-                                        c_const = int(-const * L_func)  # Negate const to get positive constant on RHS
+                                        c_const = int(
+                                            -const * L_func
+                                        )  # Negate const to get positive constant on RHS
                                         # Template: A*x + B*y = L_func*F + C_const (for target F)
                                         # Example: 127*x + 50*y = 12*F + 4670
-                                        print(f"Canonical integerized form (L_func = {L_func}): {a_int}*{param_names[0]} + {b_int}*{param_names[1]} = {L_func}*F + {c_const}")
+                                        print(
+                                            f"Canonical integerized form (L_func = {L_func}): {a_int}*{param_names[0]} + {b_int}*{param_names[1]} = {L_func}*F + {c_const}"
+                                        )
                             except Exception:
                                 pass  # Skip if computation fails
 
                             # Also define the function for future use (keep * for SymPy parsing)
                             try:
                                 define_function(func_name, param_names, func_str)
-                                print(f"Function '{func_name}' is now available. You can call it like: {func_name}(values)")
+                                print(
+                                    f"Function '{func_name}' is now available. You can call it like: {func_name}(values)"
+                                )
                             except Exception as e:
-                                print(f"Warning: Could not define function automatically: {e}")
+                                print(
+                                    f"Warning: Could not define function automatically: {e}"
+                                )
 
                             # Process solve requests if any
                             if solve_requests:
-                                from .function_manager import evaluate_function, list_functions
+                                from .function_manager import (
+                                    evaluate_function,
+                                    list_functions,
+                                )
+
                                 print()  # Empty line for readability
                                 for solve_part, target_value_str in solve_requests:
                                     try:
@@ -2795,7 +3321,13 @@ def repl_loop(output_format: str = "human") -> None:
 
                                         # Parse target value with ambiguity detection
                                         # CRITICAL: Capture target_expr in a local variable to avoid modification
-                                        parsed_target_expr, literal_frac, was_simplified = _parse_target_with_ambiguity_detection(current_target_str)
+                                        (
+                                            parsed_target_expr,
+                                            literal_frac,
+                                            was_simplified,
+                                        ) = _parse_target_with_ambiguity_detection(
+                                            current_target_str
+                                        )
 
                                         # Use parsed_target_expr throughout this iteration
                                         target_expr = parsed_target_expr
@@ -2807,14 +3339,18 @@ def repl_loop(output_format: str = "human") -> None:
                                             local_dict[param] = sp.Symbol(param)
 
                                         # Parse function body with parameter symbols
-                                        func_body = sp.sympify(func_str, locals=local_dict)
+                                        func_body = sp.sympify(
+                                            func_str, locals=local_dict
+                                        )
 
                                         # Build equation: func_body - target = 0
                                         equation = func_body - target_expr
 
                                         # Solve the equation
                                         solutions = []
-                                        param_symbols = [sp.Symbol(p) for p in param_names]
+                                        param_symbols = [
+                                            sp.Symbol(p) for p in param_names
+                                        ]
 
                                         # Initialize integer solution state variables before any try/except that references them
                                         found_integers = []
@@ -2829,17 +3365,30 @@ def repl_loop(output_format: str = "human") -> None:
                                                 if sols:
                                                     if isinstance(sols, list):
                                                         for sol in sols:
-                                                            sol_str = str(sp.simplify(sol))
-                                                            solutions.append({param_names[0]: sol_str})
+                                                            sol_str = str(
+                                                                sp.simplify(sol)
+                                                            )
+                                                            solutions.append(
+                                                                {
+                                                                    param_names[
+                                                                        0
+                                                                    ]: sol_str
+                                                                }
+                                                            )
                                                     else:
                                                         sol_str = str(sp.simplify(sols))
-                                                        solutions.append({param_names[0]: sol_str})
+                                                        solutions.append(
+                                                            {param_names[0]: sol_str}
+                                                        )
                                             except Exception:
                                                 pass
                                         elif len(param_names) == 2:
                                             # Two variables - solve for parametric solution
                                             # Prefer solving for the second variable (usually y) in terms of the first (usually x)
-                                            var1, var2 = param_symbols[0], param_symbols[1]
+                                            var1, var2 = (
+                                                param_symbols[0],
+                                                param_symbols[1],
+                                            )
                                             try:
                                                 # Try to solve for var2 (y) in terms of var1 (x) first
                                                 sol_var2 = sp.solve(equation, var2)
@@ -2847,8 +3396,15 @@ def repl_loop(output_format: str = "human") -> None:
                                                     if isinstance(sol_var2, list):
                                                         sol_var2 = sol_var2[0]
                                                     # Simplify the solution
-                                                    sol_var2_simplified = sp.simplify(sol_var2)
-                                                    sol_dict = {param_names[0]: param_names[0], param_names[1]: str(sol_var2_simplified)}
+                                                    sol_var2_simplified = sp.simplify(
+                                                        sol_var2
+                                                    )
+                                                    sol_dict = {
+                                                        param_names[0]: param_names[0],
+                                                        param_names[1]: str(
+                                                            sol_var2_simplified
+                                                        ),
+                                                    }
                                                     solutions.append(sol_dict)
                                             except Exception:
                                                 pass
@@ -2856,13 +3412,24 @@ def repl_loop(output_format: str = "human") -> None:
                                             # Try to find integer solutions if the equation is linear in both variables
                                             # This runs independently of sp.solve success
                                             try:
-                                                sols = find_integer_solutions_for_linear(equation, var1, var2)
+                                                sols = (
+                                                    find_integer_solutions_for_linear(
+                                                        equation, var1, var2
+                                                    )
+                                                )
                                                 if sols:
                                                     # Handle special sentinel for "all integer pairs"
-                                                    if isinstance(sols, list) and sols and isinstance(sols[0], dict) and sols[0].get("all_integer_pairs"):
+                                                    if (
+                                                        isinstance(sols, list)
+                                                        and sols
+                                                        and isinstance(sols[0], dict)
+                                                        and sols[0].get(
+                                                            "all_integer_pairs"
+                                                        )
+                                                    ):
                                                         int_solution_info = {
                                                             "type": "all_integer_pairs",
-                                                            "message": "Equation is tautologically 0=0 after scaling; every integer pair satisfies it."
+                                                            "message": "Equation is tautologically 0=0 after scaling; every integer pair satisfies it.",
                                                         }
                                                     else:
                                                         # Convert diophantine solutions to a normalized list format
@@ -2874,57 +3441,151 @@ def repl_loop(output_format: str = "human") -> None:
                                                             # Get the first solution tuple from diophantine
                                                             if sols and len(sols) > 0:
                                                                 # diophantine returns parameterized solutions, get first one
-                                                                first_sol = list(sols[0]) if hasattr(sols[0], '__iter__') and not isinstance(sols[0], str) else sols[0]
+                                                                first_sol = (
+                                                                    list(sols[0])
+                                                                    if hasattr(
+                                                                        sols[0],
+                                                                        "__iter__",
+                                                                    )
+                                                                    and not isinstance(
+                                                                        sols[0], str
+                                                                    )
+                                                                    else sols[0]
+                                                                )
 
                                                                 # Parse the equation to get coefficients
-                                                                poly = sp.Poly(equation, var1, var2)
-                                                                a = poly.coeff_monomial(var1)
-                                                                b = poly.coeff_monomial(var2)
-                                                                c = poly.coeff_monomial(1)
+                                                                poly = sp.Poly(
+                                                                    equation, var1, var2
+                                                                )
+                                                                a = poly.coeff_monomial(
+                                                                    var1
+                                                                )
+                                                                b = poly.coeff_monomial(
+                                                                    var2
+                                                                )
+                                                                c = poly.coeff_monomial(
+                                                                    1
+                                                                )
 
                                                                 # Build integerized equation
-                                                                from math import gcd as math_gcd
-                                                                def lcm(a: int, b: int) -> int:
-                                                                    return abs(a * b) // math_gcd(a, b) if a and b else 0
-                                                                def denom_of(sympy_number):
-                                                                    t = sp.together(sympy_number)
+                                                                from math import (
+                                                                    gcd as math_gcd,
+                                                                )
+
+                                                                def lcm(
+                                                                    a: int, b: int
+                                                                ) -> int:
+                                                                    return (
+                                                                        abs(a * b)
+                                                                        // math_gcd(
+                                                                            a, b
+                                                                        )
+                                                                        if a and b
+                                                                        else 0
+                                                                    )
+
+                                                                def denom_of(
+                                                                    sympy_number,
+                                                                ):
+                                                                    t = sp.together(
+                                                                        sympy_number
+                                                                    )
                                                                     if t.is_Rational:
                                                                         return int(t.q)
                                                                     if t.is_integer:
                                                                         return 1
                                                                     try:
-                                                                        r = sp.nsimplify(t)
-                                                                        if r.is_Rational:
-                                                                            return int(r.q)
+                                                                        r = sp.nsimplify(
+                                                                            t
+                                                                        )
+                                                                        if (
+                                                                            r.is_Rational
+                                                                        ):
+                                                                            return int(
+                                                                                r.q
+                                                                            )
                                                                     except Exception:
                                                                         pass
                                                                     return 1
-                                                                denoms = [denom_of(v) for v in (a, b, c)]
-                                                                lcm_den = math.lcm(*denoms) if denoms else 1
-                                                                A = int(sp.Integer(sp.simplify(a * lcm_den)))
-                                                                B = int(sp.Integer(sp.simplify(b * lcm_den)))
-                                                                C = int(sp.Integer(sp.simplify(-c * lcm_den)))
+
+                                                                denoms = [
+                                                                    denom_of(v)
+                                                                    for v in (a, b, c)
+                                                                ]
+                                                                lcm_den = (
+                                                                    math.lcm(*denoms)
+                                                                    if denoms
+                                                                    else 1
+                                                                )
+                                                                A = int(
+                                                                    sp.Integer(
+                                                                        sp.simplify(
+                                                                            a * lcm_den
+                                                                        )
+                                                                    )
+                                                                )
+                                                                B = int(
+                                                                    sp.Integer(
+                                                                        sp.simplify(
+                                                                            b * lcm_den
+                                                                        )
+                                                                    )
+                                                                )
+                                                                C = int(
+                                                                    sp.Integer(
+                                                                        sp.simplify(
+                                                                            -c * lcm_den
+                                                                        )
+                                                                    )
+                                                                )
 
                                                                 # Find a particular solution using extended gcd
-                                                                g = math.gcd(A, B) if B != 0 else abs(A) if A != 0 else 1
+                                                                g = (
+                                                                    math.gcd(A, B)
+                                                                    if B != 0
+                                                                    else (
+                                                                        abs(A)
+                                                                        if A != 0
+                                                                        else 1
+                                                                    )
+                                                                )
                                                                 if g > 0 and C % g == 0:
-                                                                    s, t_coeff, g_val = _extended_gcd(abs(A), abs(B))
+                                                                    (
+                                                                        s,
+                                                                        t_coeff,
+                                                                        g_val,
+                                                                    ) = _extended_gcd(
+                                                                        abs(A), abs(B)
+                                                                    )
                                                                     if A < 0:
                                                                         s = -s
                                                                     if B < 0:
-                                                                        t_coeff = -t_coeff
+                                                                        t_coeff = (
+                                                                            -t_coeff
+                                                                        )
                                                                     mult = C // g_val
                                                                     x0 = s * mult
                                                                     y0 = t_coeff * mult
 
                                                                     # Find the smallest positive solution (normalized)
                                                                     if B != 0:
-                                                                        b_div_g = abs(B) // g_val
+                                                                        b_div_g = (
+                                                                            abs(B)
+                                                                            // g_val
+                                                                        )
                                                                         mod = b_div_g
-                                                                        x0_norm = x0 % mod
+                                                                        x0_norm = (
+                                                                            x0 % mod
+                                                                        )
                                                                         if x0_norm < 0:
-                                                                            x0_norm += mod
-                                                                        y0_norm = (C - A * x0_norm) // B
+                                                                            x0_norm += (
+                                                                                mod
+                                                                            )
+                                                                        y0_norm = (
+                                                                            C
+                                                                            - A
+                                                                            * x0_norm
+                                                                        ) // B
                                                                     else:
                                                                         x0_norm = x0
                                                                         y0_norm = y0
@@ -2932,45 +3593,118 @@ def repl_loop(output_format: str = "human") -> None:
                                                                     # General solution: x = x0_norm + (B/g)*k, y = y0_norm - (A/g)*k
                                                                     # Find multiple positive solutions by trying different k values
                                                                     if B != 0:
-                                                                        step_x = abs(B) // g_val
-                                                                        A_div_g = A // g_val  # This handles the sign correctly
+                                                                        step_x = (
+                                                                            abs(B)
+                                                                            // g_val
+                                                                        )
+                                                                        A_div_g = (
+                                                                            A // g_val
+                                                                        )  # This handles the sign correctly
 
                                                                         # Try k values to find multiple positive solutions
                                                                         # Start from k=0 (gives normalized solution) and try both directions
                                                                         max_solutions = 20  # Limit to reasonable number
                                                                         k_range = 100  # Search k from -100 to 100
-                                                                        for k in range(-k_range, k_range + 1):
-                                                                            x_val = x0_norm + step_x * k
+                                                                        for k in range(
+                                                                            -k_range,
+                                                                            k_range + 1,
+                                                                        ):
+                                                                            x_val = (
+                                                                                x0_norm
+                                                                                + step_x
+                                                                                * k
+                                                                            )
                                                                             # y = y0_norm - (A/g)*k (note the minus sign)
-                                                                            y_val = y0_norm - A_div_g * k
+                                                                            y_val = (
+                                                                                y0_norm
+                                                                                - A_div_g
+                                                                                * k
+                                                                            )
                                                                             # Verify it's a solution and both are non-negative
-                                                                            if x_val >= 0 and y_val >= 0:
+                                                                            if (
+                                                                                x_val
+                                                                                >= 0
+                                                                                and y_val
+                                                                                >= 0
+                                                                            ):
                                                                                 # Verify it's actually a solution
-                                                                                if A * x_val + B * y_val == C:
-                                                                                    found_integers.append((x_val, y_val))
-                                                                                    if len(found_integers) >= max_solutions:
+                                                                                if (
+                                                                                    A
+                                                                                    * x_val
+                                                                                    + B
+                                                                                    * y_val
+                                                                                    == C
+                                                                                ):
+                                                                                    found_integers.append(
+                                                                                        (
+                                                                                            x_val,
+                                                                                            y_val,
+                                                                                        )
+                                                                                    )
+                                                                                    if (
+                                                                                        len(
+                                                                                            found_integers
+                                                                                        )
+                                                                                        >= max_solutions
+                                                                                    ):
                                                                                         break
                                                                         # Remove duplicates and sort
-                                                                        found_integers = sorted(list(set(found_integers)))
+                                                                        found_integers = sorted(
+                                                                            list(
+                                                                                set(
+                                                                                    found_integers
+                                                                                )
+                                                                            )
+                                                                        )
                                                                     else:
                                                                         # B == 0 case: only one solution
-                                                                        if x0_norm >= 0 and y0_norm >= 0:
-                                                                            found_integers.append((x0_norm, y0_norm))
+                                                                        if (
+                                                                            x0_norm >= 0
+                                                                            and y0_norm
+                                                                            >= 0
+                                                                        ):
+                                                                            found_integers.append(
+                                                                                (
+                                                                                    x0_norm,
+                                                                                    y0_norm,
+                                                                                )
+                                                                            )
                                                         except Exception as e:
-                                                            logger.exception("Error extracting specific solution from diophantine result")
+                                                            logger.exception(
+                                                                "Error extracting specific solution from diophantine result"
+                                                            )
 
                                                         # Build integerized equation string for display
                                                         int_eq_str = None
                                                         try:
-                                                            poly = sp.Poly(equation, var1, var2)
-                                                            a = poly.coeff_monomial(var1)
-                                                            b = poly.coeff_monomial(var2)
+                                                            poly = sp.Poly(
+                                                                equation, var1, var2
+                                                            )
+                                                            a = poly.coeff_monomial(
+                                                                var1
+                                                            )
+                                                            b = poly.coeff_monomial(
+                                                                var2
+                                                            )
                                                             c = poly.coeff_monomial(1)
-                                                            from math import gcd as math_gcd
-                                                            def lcm(a: int, b: int) -> int:
-                                                                return abs(a * b) // math_gcd(a, b) if a and b else 0
+                                                            from math import (
+                                                                gcd as math_gcd,
+                                                            )
+
+                                                            def lcm(
+                                                                a: int, b: int
+                                                            ) -> int:
+                                                                return (
+                                                                    abs(a * b)
+                                                                    // math_gcd(a, b)
+                                                                    if a and b
+                                                                    else 0
+                                                                )
+
                                                             def denom_of(sympy_number):
-                                                                t = sp.together(sympy_number)
+                                                                t = sp.together(
+                                                                    sympy_number
+                                                                )
                                                                 if t.is_Rational:
                                                                     return int(t.q)
                                                                 if t.is_integer:
@@ -2982,11 +3716,37 @@ def repl_loop(output_format: str = "human") -> None:
                                                                 except Exception:
                                                                     pass
                                                                 return 1
-                                                            denoms = [denom_of(v) for v in (a, b, c)]
-                                                            lcm_den = math.lcm(*denoms) if denoms else 1
-                                                            A = int(sp.Integer(sp.simplify(a * lcm_den)))
-                                                            B = int(sp.Integer(sp.simplify(b * lcm_den)))
-                                                            C = int(sp.Integer(sp.simplify(-c * lcm_den)))
+
+                                                            denoms = [
+                                                                denom_of(v)
+                                                                for v in (a, b, c)
+                                                            ]
+                                                            lcm_den = (
+                                                                math.lcm(*denoms)
+                                                                if denoms
+                                                                else 1
+                                                            )
+                                                            A = int(
+                                                                sp.Integer(
+                                                                    sp.simplify(
+                                                                        a * lcm_den
+                                                                    )
+                                                                )
+                                                            )
+                                                            B = int(
+                                                                sp.Integer(
+                                                                    sp.simplify(
+                                                                        b * lcm_den
+                                                                    )
+                                                                )
+                                                            )
+                                                            C = int(
+                                                                sp.Integer(
+                                                                    sp.simplify(
+                                                                        -c * lcm_den
+                                                                    )
+                                                                )
+                                                            )
                                                             int_eq_str = f"  Integerized equation (L_total = {lcm_den}): {A}*{param_names[0]} + {B}*{param_names[1]} = {C}"
                                                         except Exception:
                                                             pass
@@ -2996,21 +3756,34 @@ def repl_loop(output_format: str = "human") -> None:
                                                             "solutions": sols,
                                                             "integers": found_integers,
                                                             "equation": int_eq_str,
-                                                            "no_solution": None
+                                                            "no_solution": None,
                                                         }
                                                 else:
                                                     no_int_solution_msg = "No integer solutions found (Diophantine check failed or none exist)."
-                                                    int_solution_info = {"type": "none", "message": no_int_solution_msg}
+                                                    int_solution_info = {
+                                                        "type": "none",
+                                                        "message": no_int_solution_msg,
+                                                    }
                                             except ValueError as ve:
                                                 # coefficient non-numeric or not linear
-                                                logger.exception("Integer-solution validation failed")
+                                                logger.exception(
+                                                    "Integer-solution validation failed"
+                                                )
                                                 no_int_solution_msg = f"Integer-solution validation failed: {ve}"
-                                                int_solution_info = {"type": "error", "message": no_int_solution_msg}
+                                                int_solution_info = {
+                                                    "type": "error",
+                                                    "message": no_int_solution_msg,
+                                                }
                                             except Exception as ex:
                                                 # unexpected: log and keep a useful message for debugging
-                                                logger.exception("Unexpected error while finding integer solutions")
+                                                logger.exception(
+                                                    "Unexpected error while finding integer solutions"
+                                                )
                                                 no_int_solution_msg = f"Unexpected error while finding integer solutions: {ex}"
-                                                int_solution_info = {"type": "error", "message": no_int_solution_msg}
+                                                int_solution_info = {
+                                                    "type": "error",
+                                                    "message": no_int_solution_msg,
+                                                }
 
                                             # If sp.solve failed, try fallback
                                             if not solutions:
@@ -3019,8 +3792,17 @@ def repl_loop(output_format: str = "human") -> None:
                                                     if sol_var1:
                                                         if isinstance(sol_var1, list):
                                                             sol_var1 = sol_var1[0]
-                                                        sol_var1_simplified = sp.simplify(sol_var1)
-                                                        sol_dict = {param_names[0]: str(sol_var1_simplified), param_names[1]: param_names[1]}
+                                                        sol_var1_simplified = (
+                                                            sp.simplify(sol_var1)
+                                                        )
+                                                        sol_dict = {
+                                                            param_names[0]: str(
+                                                                sol_var1_simplified
+                                                            ),
+                                                            param_names[1]: param_names[
+                                                                1
+                                                            ],
+                                                        }
                                                         solutions.append(sol_dict)
                                                 except Exception:
                                                     pass
@@ -3029,41 +3811,128 @@ def repl_loop(output_format: str = "human") -> None:
                                             if int_solution_info is None:
                                                 # Try to build integerized equation from function body for display
                                                 try:
-                                                    equation_expanded = sp.expand(func_body)
-                                                    coeff_x_raw = equation_expanded.coeff(var1)
-                                                    coeff_y_raw = equation_expanded.coeff(var2)
-                                                    const_raw = equation_expanded.subs([(var1, 0), (var2, 0)])
-                                                    target_for_int_solve, _, _ = _parse_target_with_ambiguity_detection(current_target_str)
-                                                    if isinstance(target_for_int_solve, (sp.Rational, sp.Integer)):
-                                                        coeff_x = sp.Rational(coeff_x_raw) if isinstance(coeff_x_raw, (sp.Float, float)) else sp.simplify(coeff_x_raw)
-                                                        coeff_y = sp.Rational(coeff_y_raw) if isinstance(coeff_y_raw, (sp.Float, float)) else sp.simplify(coeff_y_raw)
-                                                        const = sp.Rational(const_raw) if isinstance(const_raw, (sp.Float, float)) else sp.simplify(const_raw)
-                                                        if isinstance(coeff_x, sp.Rational) and isinstance(coeff_y, sp.Rational) and isinstance(const, sp.Rational):
-                                                            from math import gcd as math_gcd
-                                                            def lcm(a: int, b: int) -> int:
-                                                                return abs(a * b) // math_gcd(a, b) if a and b else 0
-                                                            denom_A = coeff_x.denominator
-                                                            denom_B = coeff_y.denominator
+                                                    equation_expanded = sp.expand(
+                                                        func_body
+                                                    )
+                                                    coeff_x_raw = (
+                                                        equation_expanded.coeff(var1)
+                                                    )
+                                                    coeff_y_raw = (
+                                                        equation_expanded.coeff(var2)
+                                                    )
+                                                    const_raw = equation_expanded.subs(
+                                                        [(var1, 0), (var2, 0)]
+                                                    )
+                                                    target_for_int_solve, _, _ = (
+                                                        _parse_target_with_ambiguity_detection(
+                                                            current_target_str
+                                                        )
+                                                    )
+                                                    if isinstance(
+                                                        target_for_int_solve,
+                                                        (sp.Rational, sp.Integer),
+                                                    ):
+                                                        coeff_x = (
+                                                            sp.Rational(coeff_x_raw)
+                                                            if isinstance(
+                                                                coeff_x_raw,
+                                                                (sp.Float, float),
+                                                            )
+                                                            else sp.simplify(
+                                                                coeff_x_raw
+                                                            )
+                                                        )
+                                                        coeff_y = (
+                                                            sp.Rational(coeff_y_raw)
+                                                            if isinstance(
+                                                                coeff_y_raw,
+                                                                (sp.Float, float),
+                                                            )
+                                                            else sp.simplify(
+                                                                coeff_y_raw
+                                                            )
+                                                        )
+                                                        const = (
+                                                            sp.Rational(const_raw)
+                                                            if isinstance(
+                                                                const_raw,
+                                                                (sp.Float, float),
+                                                            )
+                                                            else sp.simplify(const_raw)
+                                                        )
+                                                        if (
+                                                            isinstance(
+                                                                coeff_x, sp.Rational
+                                                            )
+                                                            and isinstance(
+                                                                coeff_y, sp.Rational
+                                                            )
+                                                            and isinstance(
+                                                                const, sp.Rational
+                                                            )
+                                                        ):
+                                                            from math import (
+                                                                gcd as math_gcd,
+                                                            )
+
+                                                            def lcm(
+                                                                a: int, b: int
+                                                            ) -> int:
+                                                                return (
+                                                                    abs(a * b)
+                                                                    // math_gcd(a, b)
+                                                                    if a and b
+                                                                    else 0
+                                                                )
+
+                                                            denom_A = (
+                                                                coeff_x.denominator
+                                                            )
+                                                            denom_B = (
+                                                                coeff_y.denominator
+                                                            )
                                                             denom_C = const.denominator
-                                                            L_func = lcm(denom_A, denom_B)
-                                                            L_func = lcm(L_func, denom_C)
-                                                            coeffs = [coeff_x, coeff_y, const]
-                                                            int_eq = _compute_integerized_equation(coeffs, target_for_int_solve, L_func)
+                                                            L_func = lcm(
+                                                                denom_A, denom_B
+                                                            )
+                                                            L_func = lcm(
+                                                                L_func, denom_C
+                                                            )
+                                                            coeffs = [
+                                                                coeff_x,
+                                                                coeff_y,
+                                                                const,
+                                                            ]
+                                                            int_eq = _compute_integerized_equation(
+                                                                coeffs,
+                                                                target_for_int_solve,
+                                                                L_func,
+                                                            )
                                                             if int_eq is not None:
-                                                                a_total, b_total, RHS_total_int, L_total = int_eq
+                                                                (
+                                                                    a_total,
+                                                                    b_total,
+                                                                    RHS_total_int,
+                                                                    L_total,
+                                                                ) = int_eq
                                                                 int_eq_str = f"  Integerized equation (L_total = {L_total}): {a_total}*{param_names[0]} + {b_total}*{param_names[1]} = {RHS_total_int}"
                                                                 int_solution_info = {
-                                                                    'type': 'equation_only',
-                                                                    'equation': int_eq_str,
-                                                                    'integers': [],
-                                                                    'no_solution': None
+                                                                    "type": "equation_only",
+                                                                    "equation": int_eq_str,
+                                                                    "integers": [],
+                                                                    "no_solution": None,
                                                                 }
                                                 except Exception as e:
-                                                    logger.exception("Error building integerized equation fallback")
+                                                    logger.exception(
+                                                        "Error building integerized equation fallback"
+                                                    )
                                                     pass
 
                                             if int_solution_info is None:
-                                                int_solution_info = {"type": "none", "message": "Could not compute integer solution info"}
+                                                int_solution_info = {
+                                                    "type": "none",
+                                                    "message": "Could not compute integer solution info",
+                                                }
                                         else:
                                             # Multiple variables - solve for first variable in terms of others
                                             try:
@@ -3072,44 +3941,93 @@ def repl_loop(output_format: str = "human") -> None:
                                                 if sol:
                                                     if isinstance(sol, list):
                                                         sol = sol[0]
-                                                    sol_dict = {param_names[0]: str(sp.simplify(sol))}
+                                                    sol_dict = {
+                                                        param_names[0]: str(
+                                                            sp.simplify(sol)
+                                                        )
+                                                    }
                                                     # Other variables remain free
                                                     for i in range(1, len(param_names)):
-                                                        sol_dict[param_names[i]] = param_names[i]
+                                                        sol_dict[param_names[i]] = (
+                                                            param_names[i]
+                                                        )
                                                     solutions.append(sol_dict)
                                             except Exception as e:
-                                                logger.exception("Error solving for multiple variables")
+                                                logger.exception(
+                                                    "Error solving for multiple variables"
+                                                )
                                                 pass
 
                                         if solutions:
-                                            print(f"Solving {func_name}({', '.join(param_names)}) = {current_target_str}:")
+                                            print(
+                                                f"Solving {func_name}({', '.join(param_names)}) = {current_target_str}:"
+                                            )
 
                                             # Display ambiguity information if applicable
-                                            if was_simplified and literal_frac is not None:
-                                                print(f"  Parsed target '{current_target_str}' as {target_expr.numerator}/{target_expr.denominator} (literal {literal_frac.numerator}/{literal_frac.denominator}).")
-                                                print(f"  Using {target_expr.numerator}/{target_expr.denominator} for integer-solution search; to force literal use, input as {literal_frac.numerator}/{literal_frac.denominator} or supply override.")
+                                            if (
+                                                was_simplified
+                                                and literal_frac is not None
+                                            ):
+                                                print(
+                                                    f"  Parsed target '{current_target_str}' as {target_expr.numerator}/{target_expr.denominator} (literal {literal_frac.numerator}/{literal_frac.denominator})."
+                                                )
+                                                print(
+                                                    f"  Using {target_expr.numerator}/{target_expr.denominator} for integer-solution search; to force literal use, input as {literal_frac.numerator}/{literal_frac.denominator} or supply override."
+                                                )
 
                                             # Print integer solution info if available (computed earlier)
                                             if int_solution_info is not None:
-                                                info_type = int_solution_info.get('type', 'unknown')
-                                                if info_type == 'all_integer_pairs':
-                                                    print(f"  {int_solution_info.get('message', 'All integer pairs are solutions')}")
-                                                elif info_type == 'diophantine':
+                                                info_type = int_solution_info.get(
+                                                    "type", "unknown"
+                                                )
+                                                if info_type == "all_integer_pairs":
+                                                    print(
+                                                        f"  {int_solution_info.get('message', 'All integer pairs are solutions')}"
+                                                    )
+                                                elif info_type == "diophantine":
                                                     # Display integerized equation if available
-                                                    if 'equation' in int_solution_info:
-                                                        print(int_solution_info['equation'])
-                                                    elif 'solutions' in int_solution_info and int_solution_info['solutions']:
+                                                    if "equation" in int_solution_info:
+                                                        print(
+                                                            int_solution_info[
+                                                                "equation"
+                                                            ]
+                                                        )
+                                                    elif (
+                                                        "solutions" in int_solution_info
+                                                        and int_solution_info[
+                                                            "solutions"
+                                                        ]
+                                                    ):
                                                         # Build equation string from coefficients
                                                         try:
-                                                            poly = sp.Poly(equation, var1, var2)
-                                                            a = poly.coeff_monomial(var1)
-                                                            b = poly.coeff_monomial(var2)
+                                                            poly = sp.Poly(
+                                                                equation, var1, var2
+                                                            )
+                                                            a = poly.coeff_monomial(
+                                                                var1
+                                                            )
+                                                            b = poly.coeff_monomial(
+                                                                var2
+                                                            )
                                                             c = poly.coeff_monomial(1)
-                                                            from math import gcd as math_gcd
-                                                            def lcm(a: int, b: int) -> int:
-                                                                return abs(a * b) // math_gcd(a, b) if a and b else 0
+                                                            from math import (
+                                                                gcd as math_gcd,
+                                                            )
+
+                                                            def lcm(
+                                                                a: int, b: int
+                                                            ) -> int:
+                                                                return (
+                                                                    abs(a * b)
+                                                                    // math_gcd(a, b)
+                                                                    if a and b
+                                                                    else 0
+                                                                )
+
                                                             def denom_of(sympy_number):
-                                                                t = sp.together(sympy_number)
+                                                                t = sp.together(
+                                                                    sympy_number
+                                                                )
                                                                 if t.is_Rational:
                                                                     return int(t.q)
                                                                 if t.is_integer:
@@ -3121,148 +4039,352 @@ def repl_loop(output_format: str = "human") -> None:
                                                                 except Exception:
                                                                     pass
                                                                 return 1
-                                                            denoms = [denom_of(v) for v in (a, b, c)]
-                                                            lcm_den = math.lcm(*denoms) if denoms else 1
-                                                            A = int(sp.Integer(sp.simplify(a * lcm_den)))
-                                                            B = int(sp.Integer(sp.simplify(b * lcm_den)))
-                                                            C = int(sp.Integer(sp.simplify(-c * lcm_den)))
-                                                            print(f"  Integerized equation: {A}*{param_names[0]} + {B}*{param_names[1]} = {C}")
+
+                                                            denoms = [
+                                                                denom_of(v)
+                                                                for v in (a, b, c)
+                                                            ]
+                                                            lcm_den = (
+                                                                math.lcm(*denoms)
+                                                                if denoms
+                                                                else 1
+                                                            )
+                                                            A = int(
+                                                                sp.Integer(
+                                                                    sp.simplify(
+                                                                        a * lcm_den
+                                                                    )
+                                                                )
+                                                            )
+                                                            B = int(
+                                                                sp.Integer(
+                                                                    sp.simplify(
+                                                                        b * lcm_den
+                                                                    )
+                                                                )
+                                                            )
+                                                            C = int(
+                                                                sp.Integer(
+                                                                    sp.simplify(
+                                                                        -c * lcm_den
+                                                                    )
+                                                                )
+                                                            )
+                                                            print(
+                                                                f"  Integerized equation: {A}*{param_names[0]} + {B}*{param_names[1]} = {C}"
+                                                            )
                                                         except Exception:
-                                                            print(f"  Integer solutions exist (Diophantine parameterization found)")
+                                                            print(
+                                                                f"  Integer solutions exist (Diophantine parameterization found)"
+                                                            )
                                                     # Display specific integer solutions if found
-                                                    if int_solution_info.get('integers'):
-                                                        integer_sols = int_solution_info['integers']
+                                                    if int_solution_info.get(
+                                                        "integers"
+                                                    ):
+                                                        integer_sols = (
+                                                            int_solution_info[
+                                                                "integers"
+                                                            ]
+                                                        )
                                                         if len(integer_sols) == 1:
-                                                            print(f"  Integer solution:")
-                                                            x_int, y_int = integer_sols[0]
-                                                            print(f"    ({param_names[0]}, {param_names[1]}) = ({x_int}, {y_int})")
+                                                            print(
+                                                                f"  Integer solution:"
+                                                            )
+                                                            x_int, y_int = integer_sols[
+                                                                0
+                                                            ]
+                                                            print(
+                                                                f"    ({param_names[0]}, {param_names[1]}) = ({x_int}, {y_int})"
+                                                            )
                                                         else:
-                                                            print(f"  Integer solutions (found {len(integer_sols)}):")
-                                                            for x_int, y_int in integer_sols:
-                                                                print(f"    ({param_names[0]}, {param_names[1]}) = ({x_int}, {y_int})")
+                                                            print(
+                                                                f"  Integer solutions (found {len(integer_sols)}):"
+                                                            )
+                                                            for (
+                                                                x_int,
+                                                                y_int,
+                                                            ) in integer_sols:
+                                                                print(
+                                                                    f"    ({param_names[0]}, {param_names[1]}) = ({x_int}, {y_int})"
+                                                                )
                                                             if len(integer_sols) >= 20:
-                                                                print(f"    ... (showing first 20 of potentially infinite solutions)")
-                                                elif info_type == 'none':
-                                                    if 'equation' in int_solution_info:
-                                                        print(int_solution_info['equation'])
-                                                    if 'message' in int_solution_info:
-                                                        print(f"  {int_solution_info['message']}")
-                                                elif info_type == 'error':
-                                                    if 'equation' in int_solution_info:
-                                                        print(int_solution_info['equation'])
-                                                    if 'message' in int_solution_info:
-                                                        print(f"  {int_solution_info['message']}")
-                                                elif info_type == 'equation_only':
-                                                    if 'equation' in int_solution_info:
-                                                        print(int_solution_info['equation'])
+                                                                print(
+                                                                    f"    ... (showing first 20 of potentially infinite solutions)"
+                                                                )
+                                                elif info_type == "none":
+                                                    if "equation" in int_solution_info:
+                                                        print(
+                                                            int_solution_info[
+                                                                "equation"
+                                                            ]
+                                                        )
+                                                    if "message" in int_solution_info:
+                                                        print(
+                                                            f"  {int_solution_info['message']}"
+                                                        )
+                                                elif info_type == "error":
+                                                    if "equation" in int_solution_info:
+                                                        print(
+                                                            int_solution_info[
+                                                                "equation"
+                                                            ]
+                                                        )
+                                                    if "message" in int_solution_info:
+                                                        print(
+                                                            f"  {int_solution_info['message']}"
+                                                        )
+                                                elif info_type == "equation_only":
+                                                    if "equation" in int_solution_info:
+                                                        print(
+                                                            int_solution_info[
+                                                                "equation"
+                                                            ]
+                                                        )
                                                 else:
                                                     # Legacy format support
-                                                    if 'equation' in int_solution_info:
-                                                        print(int_solution_info['equation'])
-                                                    if int_solution_info.get('no_solution'):
-                                                        print(int_solution_info['no_solution'])
-                                                    elif int_solution_info.get('integers'):
+                                                    if "equation" in int_solution_info:
+                                                        print(
+                                                            int_solution_info[
+                                                                "equation"
+                                                            ]
+                                                        )
+                                                    if int_solution_info.get(
+                                                        "no_solution"
+                                                    ):
+                                                        print(
+                                                            int_solution_info[
+                                                                "no_solution"
+                                                            ]
+                                                        )
+                                                    elif int_solution_info.get(
+                                                        "integers"
+                                                    ):
                                                         print(f"  Integer solution:")
-                                                        for x_int, y_int in int_solution_info['integers']:
-                                                            print(f"    ({param_names[0]}, {param_names[1]}) = ({x_int}, {y_int})")
+                                                        for (
+                                                            x_int,
+                                                            y_int,
+                                                        ) in int_solution_info[
+                                                            "integers"
+                                                        ]:
+                                                            print(
+                                                                f"    ({param_names[0]}, {param_names[1]}) = ({x_int}, {y_int})"
+                                                            )
 
                                             # Try to show the equation in simplified form first (for linear equations)
                                             try:
                                                 if len(param_names) == 2:
                                                     # Rearrange to show: A*x + B*y = C
-                                                    equation_rearranged = sp.simplify(equation)
+                                                    equation_rearranged = sp.simplify(
+                                                        equation
+                                                    )
                                                     # Try to get it in the form: coeff_x*x + coeff_y*y = const
-                                                    var1, var2 = param_symbols[0], param_symbols[1]
-                                                    coeff_x = equation_rearranged.coeff(var1)
-                                                    coeff_y = equation_rearranged.coeff(var2)
-                                                    const = -equation_rearranged.subs([(var1, 0), (var2, 0)])
+                                                    var1, var2 = (
+                                                        param_symbols[0],
+                                                        param_symbols[1],
+                                                    )
+                                                    coeff_x = equation_rearranged.coeff(
+                                                        var1
+                                                    )
+                                                    coeff_y = equation_rearranged.coeff(
+                                                        var2
+                                                    )
+                                                    const = -equation_rearranged.subs(
+                                                        [(var1, 0), (var2, 0)]
+                                                    )
 
                                                     if coeff_x != 0 and coeff_y != 0:
                                                         # Convert to exact rationals if possible, format nicely
                                                         try:
-                                                            coeff_x_rational = sp.Rational(coeff_x) if isinstance(coeff_x, (sp.Float, float)) else sp.simplify(coeff_x)
-                                                            coeff_y_rational = sp.Rational(coeff_y) if isinstance(coeff_y, (sp.Float, float)) else sp.simplify(coeff_y)
-                                                            const_rational = sp.Rational(const) if isinstance(const, (sp.Float, float)) else sp.simplify(const)
+                                                            coeff_x_rational = (
+                                                                sp.Rational(coeff_x)
+                                                                if isinstance(
+                                                                    coeff_x,
+                                                                    (sp.Float, float),
+                                                                )
+                                                                else sp.simplify(
+                                                                    coeff_x
+                                                                )
+                                                            )
+                                                            coeff_y_rational = (
+                                                                sp.Rational(coeff_y)
+                                                                if isinstance(
+                                                                    coeff_y,
+                                                                    (sp.Float, float),
+                                                                )
+                                                                else sp.simplify(
+                                                                    coeff_y
+                                                                )
+                                                            )
+                                                            const_rational = (
+                                                                sp.Rational(const)
+                                                                if isinstance(
+                                                                    const,
+                                                                    (sp.Float, float),
+                                                                )
+                                                                else sp.simplify(const)
+                                                            )
 
                                                             # Try to simplify to integer form if possible
                                                             # Check if we can multiply through by common denominator to get integers
-                                                            if isinstance(coeff_x_rational, sp.Rational) and isinstance(coeff_y_rational, sp.Rational) and isinstance(const_rational, sp.Rational):
+                                                            if (
+                                                                isinstance(
+                                                                    coeff_x_rational,
+                                                                    sp.Rational,
+                                                                )
+                                                                and isinstance(
+                                                                    coeff_y_rational,
+                                                                    sp.Rational,
+                                                                )
+                                                                and isinstance(
+                                                                    const_rational,
+                                                                    sp.Rational,
+                                                                )
+                                                            ):
                                                                 from math import gcd
+
                                                                 def lcm(a, b):
-                                                                    return abs(a * b) // gcd(a, b) if a and b else 0
-                                                                denom_x = coeff_x_rational.denominator
-                                                                denom_y = coeff_y_rational.denominator
-                                                                denom_const = const_rational.denominator
-                                                                common_denom = lcm(lcm(denom_x, denom_y), denom_const)
+                                                                    return (
+                                                                        abs(a * b)
+                                                                        // gcd(a, b)
+                                                                        if a and b
+                                                                        else 0
+                                                                    )
+
+                                                                denom_x = (
+                                                                    coeff_x_rational.denominator
+                                                                )
+                                                                denom_y = (
+                                                                    coeff_y_rational.denominator
+                                                                )
+                                                                denom_const = (
+                                                                    const_rational.denominator
+                                                                )
+                                                                common_denom = lcm(
+                                                                    lcm(
+                                                                        denom_x, denom_y
+                                                                    ),
+                                                                    denom_const,
+                                                                )
 
                                                                 # Multiply through to get integer coefficients
-                                                                a_int_display = int(coeff_x_rational * common_denom)
-                                                                b_int_display = int(coeff_y_rational * common_denom)
-                                                                c_int_display = int(const_rational * common_denom)
+                                                                a_int_display = int(
+                                                                    coeff_x_rational
+                                                                    * common_denom
+                                                                )
+                                                                b_int_display = int(
+                                                                    coeff_y_rational
+                                                                    * common_denom
+                                                                )
+                                                                c_int_display = int(
+                                                                    const_rational
+                                                                    * common_denom
+                                                                )
 
                                                                 # Simplify by dividing by gcd
-                                                                g_all = gcd(gcd(abs(a_int_display), abs(b_int_display)), abs(c_int_display))
+                                                                g_all = gcd(
+                                                                    gcd(
+                                                                        abs(
+                                                                            a_int_display
+                                                                        ),
+                                                                        abs(
+                                                                            b_int_display
+                                                                        ),
+                                                                    ),
+                                                                    abs(c_int_display),
+                                                                )
                                                                 if g_all > 1:
-                                                                    a_int_display //= g_all
-                                                                    b_int_display //= g_all
-                                                                    c_int_display //= g_all
+                                                                    a_int_display //= (
+                                                                        g_all
+                                                                    )
+                                                                    b_int_display //= (
+                                                                        g_all
+                                                                    )
+                                                                    c_int_display //= (
+                                                                        g_all
+                                                                    )
 
                                                                 # Format: A*x + B*y = C (integer form)
                                                                 eq_str = f"{a_int_display}*{param_names[0]} + {b_int_display}*{param_names[1]} = {c_int_display}"
-                                                                print(f"  Equation: {eq_str}")
+                                                                print(
+                                                                    f"  Equation: {eq_str}"
+                                                                )
                                                             else:
                                                                 # Fallback to rational form
                                                                 eq_str = f"{coeff_x_rational}*{param_names[0]} + {coeff_y_rational}*{param_names[1]} = {const_rational}"
-                                                                print(f"  Equation: {eq_str}")
+                                                                print(
+                                                                    f"  Equation: {eq_str}"
+                                                                )
                                                         except (TypeError, ValueError):
                                                             # Fallback to simplified form
                                                             eq_str = f"{sp.simplify(coeff_x)}*{param_names[0]} + {sp.simplify(coeff_y)}*{param_names[1]} = {sp.simplify(const)}"
-                                                            print(f"  Equation: {eq_str}")
+                                                            print(
+                                                                f"  Equation: {eq_str}"
+                                                            )
                                             except Exception:
                                                 pass
 
                                             for i, sol in enumerate(solutions, 1):
-                                                sol_parts = [f"{k} = {v}" for k, v in sol.items()]
-                                                print(f"  Solution {i}: {', '.join(sol_parts)}")
+                                                sol_parts = [
+                                                    f"{k} = {v}" for k, v in sol.items()
+                                                ]
+                                                print(
+                                                    f"  Solution {i}: {', '.join(sol_parts)}"
+                                                )
                                         else:
-                                            print(f"Could not solve {func_name}({', '.join(param_names)}) = {current_target_str}")
+                                            print(
+                                                f"Could not solve {func_name}({', '.join(param_names)}) = {current_target_str}"
+                                            )
                                     except Exception as e:
-                                        logger.exception("Outer try block failed while processing equation")
+                                        logger.exception(
+                                            "Outer try block failed while processing equation"
+                                        )
                                         print(f"Error solving {solve_part}: {e}")
                                         # Ensure int_solution_info exists (defensive)
                                         if int_solution_info is None:
-                                            int_solution_info = {"type": "error", "message": "Processing failed; see logs."}
+                                            int_solution_info = {
+                                                "type": "error",
+                                                "message": "Processing failed; see logs.",
+                                            }
                         else:
                             print(f"Error: {error_msg}")
                     else:
-                        print("Error: No valid data points found. Format: f(arg1,arg2,...) = value, ...")
+                        print(
+                            "Error: No valid data points found. Format: f(arg1,arg2,...) = value, ..."
+                        )
 
                     # Process remaining function finding parts and evaluation parts if any
-                    if 'remaining_function_parts' in locals() and remaining_function_parts:
+                    if (
+                        "remaining_function_parts" in locals()
+                        and remaining_function_parts
+                    ):
                         # Process each remaining function finding part
-                        func_assignment_pattern_local = r'([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]+\)\s*=\s*[^,]+'
+                        func_assignment_pattern_local = (
+                            r"([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]+\)\s*=\s*[^,]+"
+                        )
                         for part in remaining_function_parts:
                             part_match = re.match(func_assignment_pattern_local, part)
                             if part_match:
                                 func_name = part_match.group(1)
-                                args_match = re.search(rf'{re.escape(func_name)}\s*\(([^)]+)\)', part)
+                                args_match = re.search(
+                                    rf"{re.escape(func_name)}\s*\(([^)]+)\)", part
+                                )
                                 if args_match:
                                     args_str = args_match.group(1)
                                     arg_list = _split_commas(args_str)
                                     param_names = []
-                                    param_chars = 'xyzuvwrst'
+                                    param_chars = "xyzuvwrst"
                                     for i, _ in enumerate(arg_list):
                                         if i < len(param_chars):
                                             param_names.append(param_chars[i])
                                         else:
-                                            param_names.append(f'x{i+1}')
+                                            param_names.append(f"x{i+1}")
 
                                     # Process this function finding
                                     part_with_find = f"{part}, find {func_name}({', '.join(param_names)})"
                                     # Recursively process this part (simplified - just call the function finding logic)
                                     try:
                                         # Extract data point from this part
-                                        value_match = re.search(r'=\s*(.+)', part)
+                                        value_match = re.search(r"=\s*(.+)", part)
                                         if value_match:
                                             value_str = value_match.group(1).strip()
                                             # Parse arguments
@@ -3281,38 +4403,68 @@ def repl_loop(output_format: str = "human") -> None:
                                                 value = value_str
 
                                             # Find function
-                                            data_points = [([arg] if len(param_names) == 1 else final_args, value)]
-                                            success, func_str, factored_form, error_msg = find_function_from_data(
+                                            data_points = [
+                                                (
+                                                    (
+                                                        [arg]
+                                                        if len(param_names) == 1
+                                                        else final_args
+                                                    ),
+                                                    value,
+                                                )
+                                            ]
+                                            (
+                                                success,
+                                                func_str,
+                                                factored_form,
+                                                error_msg,
+                                            ) = find_function_from_data(
                                                 data_points, param_names
                                             )
                                             if success:
                                                 params_str = ", ".join(param_names)
-                                                print(f"{func_name}({params_str}) = {func_str}")
+                                                print(
+                                                    f"{func_name}({params_str}) = {func_str}"
+                                                )
                                                 if factored_form:
-                                                    print(f"Equivalent: {func_name}({params_str}) = {factored_form}")
+                                                    print(
+                                                        f"Equivalent: {func_name}({params_str}) = {factored_form}"
+                                                    )
                                                 try:
-                                                    define_function(func_name, param_names, func_str)
-                                                    print(f"Function '{func_name}' is now available.")
+                                                    define_function(
+                                                        func_name, param_names, func_str
+                                                    )
+                                                    print(
+                                                        f"Function '{func_name}' is now available."
+                                                    )
                                                 except Exception as e:
-                                                    print(f"Warning: Could not define function automatically: {e}")
+                                                    print(
+                                                        f"Warning: Could not define function automatically: {e}"
+                                                    )
                                     except Exception as e:
                                         print(f"Error processing {part}: {e}")
 
                     # Process evaluation parts
-                    if 'remaining_evaluation_parts' in locals() and remaining_evaluation_parts:
+                    if (
+                        "remaining_evaluation_parts" in locals()
+                        and remaining_evaluation_parts
+                    ):
                         for part in remaining_evaluation_parts:
                             part = part.strip()
                             if not part:
                                 continue
                             try:
                                 import time
+
                                 start_time = time.perf_counter()
                                 eva = _evaluate_safely(part)
                                 elapsed = time.perf_counter() - start_time
                                 if eva.get("ok"):
                                     res_str = eva.get("result")
                                     formatted_res = _format_special_values(res_str)
-                                    print(f"{part} = {format_superscript(formatted_res)}")
+                                    print(
+                                        f"{part} = {format_superscript(formatted_res)}"
+                                    )
                                     if _timing_enabled:
                                         print(f"[Time: {elapsed:.4f}s]")
                                 else:
@@ -3332,43 +4484,50 @@ def repl_loop(output_format: str = "human") -> None:
                 except:
                     pass
                 print(f"Error: Failed to process function finding command: {e}")
-                print("  Make sure the format is: f(arg1,arg2,...) = value, ..., find f(x,y)")
+                print(
+                    "  Make sure the format is: f(arg1,arg2,...) = value, ..., find f(x,y)"
+                )
                 continue
             # Otherwise, silently continue (function finding wasn't intended)
             # But check if it looks like function finding pattern to avoid wrong path
-            func_finding_check = re.search(r'([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]+\)\s*=\s*[^,]+', raw)
+            func_finding_check = re.search(
+                r"([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]+\)\s*=\s*[^,]+", raw
+            )
             if func_finding_check:
                 # Looks like function finding but detection failed - don't try function definition
-                args_str = re.search(rf'{re.escape(func_finding_check.group(1))}\s*\(([^)]+)\)', raw)
-                if args_str and re.search(r'[-+]?\d', args_str.group(1)):
+                args_str = re.search(
+                    rf"{re.escape(func_finding_check.group(1))}\s*\(([^)]+)\)", raw
+                )
+                if args_str and re.search(r"[-+]?\d", args_str.group(1)):
                     # Has numeric arguments - skip function definition parsing
                     pass
             pass
 
         # Check for pattern: f(x,y)=expression=value (solve for inputs that give output value)
         # Count number of '=' signs
-        equals_count = raw.count('=')
+        equals_count = raw.count("=")
         if equals_count == 2:
             # Pattern: func_name(params)=body=target_value
             # Split by '=' to get parts
-            parts = raw.split('=')
+            parts = raw.split("=")
             if len(parts) == 3:
                 left_part = parts[0].strip()  # f(x,y)
                 body_part = parts[1].strip()  # expression
                 target_part = parts[2].strip()  # target value
 
                 # Check if left_part matches function definition pattern
-                func_def_pattern = r'^([a-zA-Z][a-zA-Z0-9]*)\s*\(([^)]*)\)$'
+                func_def_pattern = r"^([a-zA-Z][a-zA-Z0-9]*)\s*\(([^)]*)\)$"
                 match = re.match(func_def_pattern, left_part)
                 if match:
                     func_name = match.group(1)
                     params_str = match.group(2).strip()
-                    params = [p.strip() for p in params_str.split(',') if p.strip()]
+                    params = [p.strip() for p in params_str.split(",") if p.strip()]
 
                     if params and body_part and target_part:
                         # Define the function first
                         try:
                             from .function_manager import define_function
+
                             define_function(func_name, params, body_part)
 
                             # Now solve: func_name(params) = target_value
@@ -3408,7 +4567,9 @@ def repl_loop(output_format: str = "human") -> None:
                                             if isinstance(sols, list):
                                                 for sol in sols:
                                                     sol_str = str(sp.simplify(sol))
-                                                    solutions.append({params[0]: sol_str})
+                                                    solutions.append(
+                                                        {params[0]: sol_str}
+                                                    )
                                             else:
                                                 sol_str = str(sp.simplify(sols))
                                                 solutions.append({params[0]: sol_str})
@@ -3423,7 +4584,10 @@ def repl_loop(output_format: str = "human") -> None:
                                         if sol_var1:
                                             if isinstance(sol_var1, list):
                                                 sol_var1 = sol_var1[0]
-                                            sol_dict = {params[0]: str(sp.simplify(sol_var1)), params[1]: params[1]}
+                                            sol_dict = {
+                                                params[0]: str(sp.simplify(sol_var1)),
+                                                params[1]: params[1],
+                                            }
                                             solutions.append(sol_dict)
                                         else:
                                             # Try solving for var2 in terms of var1
@@ -3431,7 +4595,12 @@ def repl_loop(output_format: str = "human") -> None:
                                             if sol_var2:
                                                 if isinstance(sol_var2, list):
                                                     sol_var2 = sol_var2[0]
-                                                sol_dict = {params[0]: params[0], params[1]: str(sp.simplify(sol_var2))}
+                                                sol_dict = {
+                                                    params[0]: params[0],
+                                                    params[1]: str(
+                                                        sp.simplify(sol_var2)
+                                                    ),
+                                                }
                                                 solutions.append(sol_dict)
                                     except Exception:
                                         pass
@@ -3443,7 +4612,9 @@ def repl_loop(output_format: str = "human") -> None:
                                         if sol:
                                             if isinstance(sol, list):
                                                 sol = sol[0]
-                                            sol_dict = {params[0]: str(sp.simplify(sol))}
+                                            sol_dict = {
+                                                params[0]: str(sp.simplify(sol))
+                                            }
                                             # Other variables remain free
                                             for i in range(1, len(params)):
                                                 sol_dict[params[i]] = params[i]
@@ -3452,25 +4623,39 @@ def repl_loop(output_format: str = "human") -> None:
                                         pass
 
                                 if solutions:
-                                    print(f"Solving {func_name}({', '.join(params)}) = {target_part}:")
+                                    print(
+                                        f"Solving {func_name}({', '.join(params)}) = {target_part}:"
+                                    )
                                     for i, sol in enumerate(solutions, 1):
-                                        sol_parts = [f"{k} = {v}" for k, v in sol.items()]
+                                        sol_parts = [
+                                            f"{k} = {v}" for k, v in sol.items()
+                                        ]
                                         print(f"  Solution {i}: {', '.join(sol_parts)}")
 
                                     # Also show that the function is defined
                                     params_display = ", ".join(params)
-                                    print(f"\nFunction '{func_name}({params_display})' is defined as: {body_part}")
+                                    print(
+                                        f"\nFunction '{func_name}({params_display})' is defined as: {body_part}"
+                                    )
                                     continue
                                 else:
-                                    print(f"Could not solve {func_name}({', '.join(params)}) = {target_part}")
-                                    print(f"Function '{func_name}({', '.join(params)})' is defined as: {body_part}")
+                                    print(
+                                        f"Could not solve {func_name}({', '.join(params)}) = {target_part}"
+                                    )
+                                    print(
+                                        f"Function '{func_name}({', '.join(params)})' is defined as: {body_part}"
+                                    )
                                     continue
 
                             except Exception as e:
                                 # If solving fails, at least define the function
                                 params_display = ", ".join(params)
-                                print(f"Function '{func_name}({params_display})' is defined as: {body_part}")
-                                print(f"Note: Could not solve equation automatically: {e}")
+                                print(
+                                    f"Function '{func_name}({params_display})' is defined as: {body_part}"
+                                )
+                                print(
+                                    f"Note: Could not solve equation automatically: {e}"
+                                )
                                 continue
                         except Exception as e:
                             print(f"Error: {e}")
@@ -3478,31 +4663,39 @@ def repl_loop(output_format: str = "human") -> None:
 
         # Check for function finding patterns BEFORE system/equation solving
         # This prevents f(-1)=3 from being treated as an equation
-        func_finding_pattern_early = r'([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]+\)\s*=\s*[^,]+'
+        func_finding_pattern_early = r"([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]+\)\s*=\s*[^,]+"
         if re.search(func_finding_pattern_early, raw):
             matches_early = list(re.finditer(func_finding_pattern_early, raw))
             # Check if any match has numeric arguments (function finding) vs parameter names (function definition)
             has_numeric_args = False
             for m in matches_early:
                 func_name_early = m.group(1)
-                args_match_early = re.search(rf'{re.escape(func_name_early)}\s*\(([^)]+)\)', m.group(0))
+                args_match_early = re.search(
+                    rf"{re.escape(func_name_early)}\s*\(([^)]+)\)", m.group(0)
+                )
                 if args_match_early:
                     args_str_early = args_match_early.group(1).strip()
-                    if re.search(r'[-+]?\d', args_str_early):
+                    if re.search(r"[-+]?\d", args_str_early):
                         has_numeric_args = True
                         break
 
             if has_numeric_args:
                 # This is a function finding pattern - it should have been handled earlier
                 # But if we reach here, the detection failed, so provide helpful message
-                print(f"Error: '{raw}' looks like a function finding pattern (f(value)=result), not an equation.")
+                print(
+                    f"Error: '{raw}' looks like a function finding pattern (f(value)=result), not an equation."
+                )
                 if len(matches_early) == 1:
                     func_name_early = matches_early[0].group(1)
-                    print(f"  For single data point, use: {raw}, find {func_name_early}(x)")
+                    print(
+                        f"  For single data point, use: {raw}, find {func_name_early}(x)"
+                    )
                     print(f"  This will return the constant function f(x) = <value>")
                 else:
                     func_name_early = matches_early[0].group(1)
-                    print(f"  For function finding, use: {raw}, find {func_name_early}(x)")
+                    print(
+                        f"  For function finding, use: {raw}, find {func_name_early}(x)"
+                    )
                 continue
 
         # Check for system of equations FIRST (before trying to evaluate parts individually)
@@ -3514,9 +4707,12 @@ def repl_loop(output_format: str = "human") -> None:
             looks_like_function_calls = False
             try:
                 from .function_manager import list_functions
+
                 defined_funcs = list_functions()
                 for part in parts_for_system:
-                    func_match = re.match(r'^(\w+)\s*\([^)]*\)\s*=\s*(.+)$', part.strip())
+                    func_match = re.match(
+                        r"^(\w+)\s*\([^)]*\)\s*=\s*(.+)$", part.strip()
+                    )
                     if func_match:
                         func_name = func_match.group(1)
                         if func_name in defined_funcs:
@@ -3526,21 +4722,35 @@ def repl_loop(output_format: str = "human") -> None:
                 pass
 
             # Check for "find" command with multiple variables (e.g., "find x, y")
-            find_pattern = re.search(r"\bfind\s+([a-zA-Z_][a-zA-Z0-9_]*(?:\s*,\s*[a-zA-Z_][a-zA-Z0-9_]*)*)\b", raw, re.IGNORECASE)
+            find_pattern = re.search(
+                r"\bfind\s+([a-zA-Z_][a-zA-Z0-9_]*(?:\s*,\s*[a-zA-Z_][a-zA-Z0-9_]*)*)\b",
+                raw,
+                re.IGNORECASE,
+            )
             find_vars = None
             find = None  # Initialize find variable
             if find_pattern:
                 find_vars_str = find_pattern.group(1)
                 # Extract all variable names from "find x, y" -> ["x", "y"]
-                find_vars = [v.strip() for v in re.findall(r'[a-zA-Z_][a-zA-Z0-9_]*', find_vars_str)]
-                raw_no_find = re.sub(r"\bfind\s+[a-zA-Z_][a-zA-Z0-9_]*(?:\s*,\s*[a-zA-Z_][a-zA-Z0-9_]*)*\b", "", raw, flags=re.IGNORECASE).strip()
+                find_vars = [
+                    v.strip()
+                    for v in re.findall(r"[a-zA-Z_][a-zA-Z0-9_]*", find_vars_str)
+                ]
+                raw_no_find = re.sub(
+                    r"\bfind\s+[a-zA-Z_][a-zA-Z0-9_]*(?:\s*,\s*[a-zA-Z_][a-zA-Z0-9_]*)*\b",
+                    "",
+                    raw,
+                    flags=re.IGNORECASE,
+                ).strip()
                 # Initialize find from find_vars
                 find = find_vars[0] if find_vars else None
             else:
                 # Try single variable pattern for backward compatibility
                 find_tokens = re.findall(r"\bfind\s+(\w+)\b", raw, re.IGNORECASE)
                 find_vars = find_tokens if find_tokens else None
-                raw_no_find = re.sub(r"\bfind\s+\w+\b", "", raw, flags=re.IGNORECASE).strip()
+                raw_no_find = re.sub(
+                    r"\bfind\s+\w+\b", "", raw, flags=re.IGNORECASE
+                ).strip()
                 find = find_tokens[0] if find_tokens else None
 
             # If all parts contain "=" and don't look like function calls, treat as system
@@ -3552,17 +4762,27 @@ def repl_loop(output_format: str = "human") -> None:
                     for p in parts_for_system
                 )
                 if all_assign_same_var_check and len(parts_for_system) > 1:
-                    assigned_vars_check = [p.split("=", 1)[0].strip() for p in parts_for_system if "=" in p]
-                    if len(assigned_vars_check) > 1 and len(set(assigned_vars_check)) == 1:
+                    assigned_vars_check = [
+                        p.split("=", 1)[0].strip() for p in parts_for_system if "=" in p
+                    ]
+                    if (
+                        len(assigned_vars_check) > 1
+                        and len(set(assigned_vars_check)) == 1
+                    ):
                         # All assignments are to the same variable
                         var = assigned_vars_check[0]
                         import time
+
                         start_time = time.perf_counter()
                         # Try to solve as system of congruences first
-                        solved, exit_code = _solve_modulo_system_if_applicable(parts_for_system, var, output_format)
+                        solved, exit_code = _solve_modulo_system_if_applicable(
+                            parts_for_system, var, output_format
+                        )
                         if solved:
                             if _timing_enabled:
-                                print(f"[Time: {time.perf_counter() - start_time:.4f}s]")
+                                print(
+                                    f"[Time: {time.perf_counter() - start_time:.4f}s]"
+                                )
                             continue
 
                         # If not all modulo or CRT solving failed, evaluate each expression separately
@@ -3574,7 +4794,9 @@ def repl_loop(output_format: str = "human") -> None:
                                 # Evaluate the RHS expression (like "1 % 2")
                                 res = _evaluate_safely(rhs)
                                 if not res.get("ok"):
-                                    print(f"Error evaluating '{var} = {rhs}': {res.get('error')}")
+                                    print(
+                                        f"Error evaluating '{var} = {rhs}': {res.get('error')}"
+                                    )
                                     continue
                                 try:
                                     # Format and print the result
@@ -3587,7 +4809,9 @@ def repl_loop(output_format: str = "human") -> None:
                                     else:
                                         print(f"{var} = {val_str}")
                                 except Exception as e:
-                                    print(f"Error formatting result for '{var} = {rhs}': {e}")
+                                    print(
+                                        f"Error formatting result for '{var} = {rhs}': {e}"
+                                    )
                                     continue
                         elapsed = time.perf_counter() - start_time
                         if _timing_enabled:
@@ -3609,7 +4833,11 @@ def repl_loop(output_format: str = "human") -> None:
                             var_pattern = "|".join(find_vars)
                             # Check if lhs matches a pattern like "xy" where x and y are in find_vars
                             # This is a heuristic: if lhs has no operators and all find_vars are single chars
-                            if all(len(v) == 1 for v in find_vars) and len(lhs) == len(find_vars) and all(c in find_vars for c in lhs):
+                            if (
+                                all(len(v) == 1 for v in find_vars)
+                                and len(lhs) == len(find_vars)
+                                and all(c in find_vars for c in lhs)
+                            ):
                                 # Convert "xy" to "x*y"
                                 converted_lhs = "*".join(lhs)
                                 converted_parts.append(f"{converted_lhs} = {rhs}")
@@ -3625,6 +4853,7 @@ def repl_loop(output_format: str = "human") -> None:
 
                 try:
                     import time
+
                     start_time = time.perf_counter()
                     res = solve_system(raw_no_find, find)
                     elapsed = time.perf_counter() - start_time
@@ -3656,14 +4885,20 @@ def repl_loop(output_format: str = "human") -> None:
 
                     # Check if it's a function definition
                     try:
-                        from .function_manager import parse_function_definition, define_function
+                        from .function_manager import (
+                            parse_function_definition,
+                            define_function,
+                        )
+
                         func_def = parse_function_definition(part)
                         if func_def is not None:
                             func_name, params, body = func_def
                             try:
                                 define_function(func_name, params, body)
                                 params_str = ", ".join(params) if params else ""
-                                print(f"Function '{func_name}({params_str})' defined as: {body}")
+                                print(
+                                    f"Function '{func_name}({params_str})' defined as: {body}"
+                                )
                                 handled_parts.append(part)
                                 continue
                             except ValidationError as e:
@@ -3676,22 +4911,29 @@ def repl_loop(output_format: str = "human") -> None:
                     # Check if it's a function call (f(1)=value or just f(1))
                     # Pattern: func_name(args) = value or func_name(args)
                     try:
-                        from .function_manager import parse_function_call, list_functions
+                        from .function_manager import (
+                            parse_function_call,
+                            list_functions,
+                        )
+
                         defined_funcs = list_functions()
 
                         # Check if this looks like a function call
-                        func_call_pattern = re.match(r'^(\w+)\s*\([^)]*\)\s*(?:=\s*(.+))?$', part)
+                        func_call_pattern = re.match(
+                            r"^(\w+)\s*\([^)]*\)\s*(?:=\s*(.+))?$", part
+                        )
                         if func_call_pattern:
                             func_name_in_call = func_call_pattern.group(1)
                             if func_name_in_call in defined_funcs:
                                 # This is a function call
-                                if '=' in part:
+                                if "=" in part:
                                     # Format: f(1)=41 - evaluate the function and show result
-                                    func_call_part = part.split('=', 1)[0].strip()
-                                    expected_value_str = part.split('=', 1)[1].strip()
+                                    func_call_part = part.split("=", 1)[0].strip()
+                                    expected_value_str = part.split("=", 1)[1].strip()
 
                                     # Evaluate the function call
                                     import time
+
                                     start_time = time.perf_counter()
                                     eva = _evaluate_safely(func_call_part)
                                     elapsed = time.perf_counter() - start_time
@@ -3699,35 +4941,59 @@ def repl_loop(output_format: str = "human") -> None:
                                     if eva.get("ok"):
                                         res_str = eva.get("result")
                                         formatted_res = _format_special_values(res_str)
-                                        print(f"{func_call_part} = {format_superscript(formatted_res)}")
+                                        print(
+                                            f"{func_call_part} = {format_superscript(formatted_res)}"
+                                        )
                                         # Check if it matches expected value
                                         try:
-                                            expected_val = _parse_preprocessed(expected_value_str)
+                                            expected_val = _parse_preprocessed(
+                                                expected_value_str
+                                            )
                                             computed_val = _parse_preprocessed(res_str)
-                                            if abs(float(sp.N(expected_val - computed_val))) < 1e-10:
-                                                print(f"✓ Matches expected value: {expected_value_str}")
+                                            if (
+                                                abs(
+                                                    float(
+                                                        sp.N(
+                                                            expected_val - computed_val
+                                                        )
+                                                    )
+                                                )
+                                                < 1e-10
+                                            ):
+                                                print(
+                                                    f"✓ Matches expected value: {expected_value_str}"
+                                                )
                                             else:
-                                                print(f"  (Expected: {expected_value_str}, Got: {res_str})")
+                                                print(
+                                                    f"  (Expected: {expected_value_str}, Got: {res_str})"
+                                                )
                                         except Exception:
                                             pass
                                         if _timing_enabled:
                                             print(f"[Time: {elapsed:.4f}s]")
                                     else:
-                                        print(f"Error evaluating {func_call_part}: {eva.get('error', 'Unknown error')}")
+                                        print(
+                                            f"Error evaluating {func_call_part}: {eva.get('error', 'Unknown error')}"
+                                        )
                                 else:
                                     # Format: f(1) - just evaluate
                                     import time
+
                                     start_time = time.perf_counter()
                                     eva = _evaluate_safely(part)
                                     elapsed = time.perf_counter() - start_time
                                     if eva.get("ok"):
                                         res_str = eva.get("result")
                                         formatted_res = _format_special_values(res_str)
-                                        print(f"{part} = {format_superscript(formatted_res)}")
+                                        print(
+                                            f"{part} = {format_superscript(formatted_res)}"
+                                        )
                                         if _timing_enabled:
                                             print(f"[Time: {elapsed:.4f}s]")
                                     else:
-                                        print(f"Error: {eva.get('error', 'Unknown error')}")
+                                        print(
+                                            f"Error: {eva.get('error', 'Unknown error')}"
+                                        )
                                 handled_parts.append(part)
                                 continue
                     except Exception:
@@ -3739,6 +5005,7 @@ def repl_loop(output_format: str = "human") -> None:
                         # Evaluate this part
                         try:
                             import time
+
                             start_time = time.perf_counter()
                             eva = _evaluate_safely(part)
                             elapsed = time.perf_counter() - start_time
@@ -3755,13 +5022,19 @@ def repl_loop(output_format: str = "human") -> None:
                                 if _timing_enabled:
                                     print(f"[Time: {elapsed:.4f}s]")
                             else:
-                                error_msg = eva.get('error', 'Unknown error')
-                                error_code = eva.get('error_code', '')
+                                error_msg = eva.get("error", "Unknown error")
+                                error_code = eva.get("error_code", "")
                                 # Provide helpful error message
                                 if error_code == "PARSE_ERROR" and "f(" in part:
-                                    print(f"Error: Could not parse '{part}'. Did you mean to call a function?")
-                                    print(f"  If '{part.split('(')[0] if '(' in part else part}' is a function, make sure it's defined first.")
-                                    print(f"  Use 'find f(x)' to find a function from data points, or 'f(x)=...' to define it.")
+                                    print(
+                                        f"Error: Could not parse '{part}'. Did you mean to call a function?"
+                                    )
+                                    print(
+                                        f"  If '{part.split('(')[0] if '(' in part else part}' is a function, make sure it's defined first."
+                                    )
+                                    print(
+                                        f"  Use 'find f(x)' to find a function from data points, or 'f(x)=...' to define it."
+                                    )
                                 else:
                                     print(f"Error: {error_msg}")
                         except Exception as e:
@@ -3777,19 +5050,25 @@ def repl_loop(output_format: str = "human") -> None:
             from .function_manager import parse_function_definition, define_function
 
             # Check if this looks like a function finding pattern (numeric args) vs definition (parameter names)
-            func_finding_pattern = r'([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]+\)\s*=\s*[^,]+'
+            func_finding_pattern = r"([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]+\)\s*=\s*[^,]+"
             if re.search(func_finding_pattern, raw):
                 # Check if arguments are numeric (function finding) vs parameter names (function definition)
                 matches = list(re.finditer(func_finding_pattern, raw))
                 is_function_finding = False
                 for m in matches:
                     func_name = m.group(1)
-                    args_match = re.search(rf'{re.escape(func_name)}\s*\(([^)]+)\)', m.group(0))
+                    args_match = re.search(
+                        rf"{re.escape(func_name)}\s*\(([^)]+)\)", m.group(0)
+                    )
                     if args_match:
                         args_str = args_match.group(1).strip()
                         # If args contain numbers or negative signs, it's likely function finding
                         # If args are just letters, it's likely function definition
-                        if re.search(r'[-+]?\d', args_str) or args_str.startswith('-') or args_str.startswith('+'):
+                        if (
+                            re.search(r"[-+]?\d", args_str)
+                            or args_str.startswith("-")
+                            or args_str.startswith("+")
+                        ):
                             is_function_finding = True
                             break
 
@@ -3819,7 +5098,6 @@ def repl_loop(output_format: str = "human") -> None:
         try:
             import time
 
-
             start_time = time.perf_counter()
             if any(op in raw for op in ("<", ">", "<=", ">=")):
                 res = solve_inequality(raw, None)
@@ -3828,23 +5106,31 @@ def repl_loop(output_format: str = "human") -> None:
                 if _timing_enabled:
                     print(f"[Time: {elapsed:.4f}s]")
                 continue
-            
+
             # Check for "find f(x)" or "find f(x,y) = value" command
 
             if "find" in raw.lower():
                 try:
                     from .function_manager import parse_find_function_command
+
                     find_func_cmd = parse_find_function_command(raw)
 
                     if find_func_cmd is not None:
                         # This is a function finding/inverse solving command
                         # Use the same logic as in --eval mode
                         try:
-                            from .function_manager import find_function_from_data, parse_function_definition, define_function
+                            from .function_manager import (
+                                find_function_from_data,
+                                parse_function_definition,
+                                define_function,
+                            )
+
                             func_name, param_names = find_func_cmd
                             find_pattern = rf"find\s+{re.escape(func_name)}\s*\([^)]*\)"
-                            data_str = re.sub(find_pattern, "", raw, flags=re.IGNORECASE).strip()
-                            data_str = data_str.rstrip(',').strip()
+                            data_str = re.sub(
+                                find_pattern, "", raw, flags=re.IGNORECASE
+                            ).strip()
+                            data_str = data_str.rstrip(",").strip()
 
                             # First, process any function definitions in data_str
                             # e.g., "f(x,y)=x^2+y^2, find f(x,y) = 5" should define f first
@@ -3859,9 +5145,15 @@ def repl_loop(output_format: str = "human") -> None:
                                 if func_def is not None:
                                     def_func_name, def_params, def_body = func_def
                                     try:
-                                        define_function(def_func_name, def_params, def_body)
-                                        params_str = ", ".join(def_params) if def_params else ""
-                                        print(f"Function '{def_func_name}({params_str})' defined as: {def_body}")
+                                        define_function(
+                                            def_func_name, def_params, def_body
+                                        )
+                                        params_str = (
+                                            ", ".join(def_params) if def_params else ""
+                                        )
+                                        print(
+                                            f"Function '{def_func_name}({params_str})' defined as: {def_body}"
+                                        )
                                     except ValidationError as e:
                                         print(f"Error defining function: {e.message}")
                                 else:
@@ -3870,7 +5162,6 @@ def repl_loop(output_format: str = "human") -> None:
 
                             # Update data_str with remaining parts
                             data_str = ", ".join(remaining_parts)
-
 
                             # Check if this is an inverse solving case (e.g., "find f(x,y) = 5")
                             # vs function finding case (e.g., "f(1)=1, f(2)=4, find f(x)")
@@ -3882,7 +5173,10 @@ def repl_loop(output_format: str = "human") -> None:
                             if data_str.strip().startswith("="):
                                 is_inverse_solve = True
                                 target_value = data_str.strip()[1:].strip()
-                            elif not any(f"{func_name}(" in part for part in split_top_level_commas(data_str)):
+                            elif not any(
+                                f"{func_name}(" in part
+                                for part in split_top_level_commas(data_str)
+                            ):
                                 # No function calls with this func_name, likely inverse solve
                                 is_inverse_solve = True
                                 # Check if there's an equals sign
@@ -3892,26 +5186,32 @@ def repl_loop(output_format: str = "human") -> None:
                                 else:
                                     target_value = data_str.strip()
 
-
                             if is_inverse_solve and target_value:
                                 # Check if function is defined for inverse solving
                                 from .function_manager import _function_registry
 
-                                logger.debug(f"Checking registry for {func_name}: {func_name in _function_registry}, registry keys: {list(_function_registry.keys())}")
+                                logger.debug(
+                                    f"Checking registry for {func_name}: {func_name in _function_registry}, registry keys: {list(_function_registry.keys())}"
+                                )
                                 if func_name in _function_registry:
                                     from .solver import solve_inverse_function
 
-
-                                    result = solve_inverse_function(func_name, target_value, param_names)
-                                    _format_inverse_solutions(result, func_name, param_names, target_value)
+                                    result = solve_inverse_function(
+                                        func_name, target_value, param_names
+                                    )
+                                    _format_inverse_solutions(
+                                        result, func_name, param_names, target_value
+                                    )
                                     continue  # Skip further processing
                                 else:
-                                    print(f"Error: Function '{func_name}' is not defined. Define it first or provide data points.")
+                                    print(
+                                        f"Error: Function '{func_name}' is not defined. Define it first or provide data points."
+                                    )
                                     continue
-                            
+
                             # If not inverse solve, fall through to function finding logic below (or implement it here)
                             # For now, let's implement the function finding logic here too to be complete
-                            
+
                             # Parse data points
                             data_points = []
                             parts = split_top_level_commas(data_str)
@@ -3919,12 +5219,14 @@ def repl_loop(output_format: str = "human") -> None:
                                 part = part.strip()
                                 if not part:
                                     continue
-                                pattern = rf"{re.escape(func_name)}\s*\(([^)]+)\)\s*=\s*(.+)"
+                                pattern = (
+                                    rf"{re.escape(func_name)}\s*\(([^)]+)\)\s*=\s*(.+)"
+                                )
                                 match = re.match(pattern, part)
                                 if match:
                                     args_str = match.group(1)
                                     value_str = match.group(2).strip()
-                                    
+
                                     # Parse arguments
                                     args = []
                                     for arg in split_top_level_commas(args_str):
@@ -3937,7 +5239,7 @@ def repl_loop(output_format: str = "human") -> None:
                                             args.append(arg_val)
                                         except Exception:
                                             break
-                                    
+
                                     if len(args) == len(param_names):
                                         try:
                                             value_expr = _parse_preprocessed(value_str)
@@ -3948,24 +5250,32 @@ def repl_loop(output_format: str = "human") -> None:
                                             data_points.append((args, value))
                                         except Exception:
                                             pass
-                            
+
                             if not data_points:
-                                print("Error: No valid data points found. Format: f(arg1,arg2,...) = value, ...")
+                                print(
+                                    "Error: No valid data points found. Format: f(arg1,arg2,...) = value, ..."
+                                )
                                 continue
-                                
+
                             # Find function
-                            success, func_str, factored_form, error_msg = find_function_from_data(
-                                data_points, param_names
+                            success, func_str, factored_form, error_msg = (
+                                find_function_from_data(data_points, param_names)
                             )
                             if success:
-                                print(f"{func_name}({', '.join(param_names)}) = {func_str}")
+                                print(
+                                    f"{func_name}({', '.join(param_names)}) = {func_str}"
+                                )
                                 if factored_form:
-                                    print(f"Equivalent: {func_name}({', '.join(param_names)}) = {factored_form}")
+                                    print(
+                                        f"Equivalent: {func_name}({', '.join(param_names)}) = {factored_form}"
+                                    )
                                 try:
                                     define_function(func_name, param_names, func_str)
                                     print(f"Function '{func_name}' is now available.")
                                 except Exception as e:
-                                    print(f"Warning: Could not define function automatically: {e}")
+                                    print(
+                                        f"Warning: Could not define function automatically: {e}"
+                                    )
                             else:
                                 print(f"Error: {error_msg}")
                             continue
@@ -3978,18 +5288,32 @@ def repl_loop(output_format: str = "human") -> None:
                     pass
 
             # Check for "find" command with multiple variables (e.g., "find x, y")
-            find_pattern = re.search(r"\bfind\s+([a-zA-Z_][a-zA-Z0-9_]*(?:\s*,\s*[a-zA-Z_][a-zA-Z0-9_]*)*)\b", raw, re.IGNORECASE)
+            find_pattern = re.search(
+                r"\bfind\s+([a-zA-Z_][a-zA-Z0-9_]*(?:\s*,\s*[a-zA-Z_][a-zA-Z0-9_]*)*)\b",
+                raw,
+                re.IGNORECASE,
+            )
             find_vars = None
             if find_pattern:
                 find_vars_str = find_pattern.group(1)
                 # Extract all variable names from "find x, y" -> ["x", "y"]
-                find_vars = [v.strip() for v in re.findall(r'[a-zA-Z_][a-zA-Z0-9_]*', find_vars_str)]
-                raw_no_find = re.sub(r"\bfind\s+[a-zA-Z_][a-zA-Z0-9_]*(?:\s*,\s*[a-zA-Z_][a-zA-Z0-9_]*)*\b", "", raw, flags=re.IGNORECASE).strip()
+                find_vars = [
+                    v.strip()
+                    for v in re.findall(r"[a-zA-Z_][a-zA-Z0-9_]*", find_vars_str)
+                ]
+                raw_no_find = re.sub(
+                    r"\bfind\s+[a-zA-Z_][a-zA-Z0-9_]*(?:\s*,\s*[a-zA-Z_][a-zA-Z0-9_]*)*\b",
+                    "",
+                    raw,
+                    flags=re.IGNORECASE,
+                ).strip()
             else:
                 # Try single variable pattern for backward compatibility
                 find_tokens = re.findall(r"\bfind\s+(\w+)\b", raw, re.IGNORECASE)
                 find_vars = find_tokens if find_tokens else None
-                raw_no_find = re.sub(r"\bfind\s+\w+\b", "", raw, flags=re.IGNORECASE).strip()
+                raw_no_find = re.sub(
+                    r"\bfind\s+\w+\b", "", raw, flags=re.IGNORECASE
+                ).strip()
 
             parts = split_top_level_commas(raw_no_find)
             if not parts:
@@ -4013,7 +5337,11 @@ def repl_loop(output_format: str = "human") -> None:
                             rhs = rhs.strip()
                             # Check if lhs is a concatenation of find_vars (e.g., "xy" when find_vars=["x", "y"])
                             # This is a heuristic: if lhs has no operators and all find_vars are single chars
-                            if all(len(v) == 1 for v in find_vars) and len(lhs) == len(find_vars) and all(c in find_vars for c in lhs):
+                            if (
+                                all(len(v) == 1 for v in find_vars)
+                                and len(lhs) == len(find_vars)
+                                and all(c in find_vars for c in lhs)
+                            ):
                                 # Convert "xy" to "x*y"
                                 converted_lhs = "*".join(lhs)
                                 converted_parts.append(f"{converted_lhs} = {rhs}")
@@ -4045,9 +5373,13 @@ def repl_loop(output_format: str = "human") -> None:
                             # Evaluate the RHS expression (like "1 % 2")
                             res = _evaluate_safely(rhs)
                             if not res.get("ok"):
-                                print(f"Error evaluating '{var} = {rhs}': {res.get('error')}")
+                                print(
+                                    f"Error evaluating '{var} = {rhs}': {res.get('error')}"
+                                )
                                 if _timing_enabled:
-                                    print(f"[Time: {time.perf_counter() - start_time:.4f}s]")
+                                    print(
+                                        f"[Time: {time.perf_counter() - start_time:.4f}s]"
+                                    )
                                 continue
                             try:
                                 # Format and print the result
@@ -4060,9 +5392,13 @@ def repl_loop(output_format: str = "human") -> None:
                                 else:
                                     print(f"{var} = {val_str}")
                             except Exception as e:
-                                print(f"Error formatting result for '{var} = {rhs}': {e}")
+                                print(
+                                    f"Error formatting result for '{var} = {rhs}': {e}"
+                                )
                                 if _timing_enabled:
-                                    print(f"[Time: {time.perf_counter() - start_time:.4f}s]")
+                                    print(
+                                        f"[Time: {time.perf_counter() - start_time:.4f}s]"
+                                    )
                                 continue
                     if _timing_enabled:
                         elapsed = time.perf_counter() - start_time
@@ -4075,7 +5411,7 @@ def repl_loop(output_format: str = "human") -> None:
                     left, right = p.split("=", 1)
                     var = left.strip()
                     rhs = right.strip() or "0"
-                    
+
                     # Apply previous substitutions to the RHS expression BEFORE evaluation
                     if subs:
                         try:
@@ -4084,7 +5420,7 @@ def repl_loop(output_format: str = "human") -> None:
                             rhs = str(rhs_expr)
                         except Exception:
                             pass  # If parsing fails, use original rhs
-                    
+
                     res = _evaluate_safely(rhs)
                     if not res.get("ok"):
                         print("Error evaluating assignment RHS:", res.get("error"))
@@ -4101,16 +5437,18 @@ def repl_loop(output_format: str = "human") -> None:
                     # Use Symbol as key for proper SymPy substitution
                     subs[sp.Symbol(var)] = val
                     print(f"{var} = {format_solution(val)}")
-                
+
                 # Now handle find_vars if present
                 if find_vars:
                     for find_var in find_vars:
                         find_sym = sp.Symbol(find_var)
                         if find_sym in subs:
-                            print(f"Result: {find_var} = {format_solution(subs[find_sym])}")
+                            print(
+                                f"Result: {find_var} = {format_solution(subs[find_sym])}"
+                            )
                         else:
                             print(f"Variable '{find_var}' not found in assignments.")
-                            
+
                 if _timing_enabled:
                     elapsed = time.perf_counter() - start_time
                     print(f"[Time: {elapsed:.4f}s]")
@@ -4121,9 +5459,12 @@ def repl_loop(output_format: str = "human") -> None:
                 looks_like_function_calls = False
                 try:
                     from .function_manager import list_functions
+
                     defined_funcs = list_functions()
                     for part in parts:
-                        func_match = re.match(r'^(\w+)\s*\([^)]*\)\s*=\s*(.+)$', part.strip())
+                        func_match = re.match(
+                            r"^(\w+)\s*\([^)]*\)\s*=\s*(.+)$", part.strip()
+                        )
                         if func_match:
                             func_name = func_match.group(1)
                             if func_name in defined_funcs:
@@ -4134,10 +5475,14 @@ def repl_loop(output_format: str = "human") -> None:
 
                 if looks_like_function_calls:
                     # These are function calls, not equations to solve
-                    print("Error: These look like function calls, not equations to solve.")
+                    print(
+                        "Error: These look like function calls, not equations to solve."
+                    )
                     print("  To evaluate function calls, use: f(1), f(2), f(3)")
                     print("  To verify function values, use: f(1)=value, f(2)=value")
-                    print("  To find a function from data, use: f(1)=value, f(2)=value, find f(x)")
+                    print(
+                        "  To find a function from data, use: f(1)=value, f(2)=value, find f(x)"
+                    )
                     if _timing_enabled:
                         print(f"[Time: {time.perf_counter() - start_time:.4f}s]")
                     continue
@@ -4149,11 +5494,13 @@ def repl_loop(output_format: str = "human") -> None:
                 if not res.get("ok"):
                     error_msg = res.get("error", "Unknown error")
                     # Check if it looks like function calls were misinterpreted
-                    if any(re.match(r'^\w+\s*\([^)]*\)', p.strip()) for p in parts):
+                    if any(re.match(r"^\w+\s*\([^)]*\)", p.strip()) for p in parts):
                         print("Error: Could not solve this as a system of equations.")
                         print("  Did you mean to evaluate function calls?")
                         print("  Use: f(1), f(2), f(3) to evaluate functions")
-                        print("  Or: f(1)=value, f(2)=value, f(3)=value to verify function values")
+                        print(
+                            "  Or: f(1)=value, f(2)=value, f(3)=value to verify function values"
+                        )
                     else:
                         print(f"Error: {error_msg}")
                 else:
@@ -4163,16 +5510,29 @@ def repl_loop(output_format: str = "human") -> None:
                 continue
             elif len(parts) > 1:
                 # Check if there's a "find" command that we missed
-                find_pattern_in_raw = re.search(r"\bfind\s+([a-zA-Z_][a-zA-Z0-9_]*(?:\s*,\s*[a-zA-Z_][a-zA-Z0-9_]*)*)\b", raw, re.IGNORECASE)
+                find_pattern_in_raw = re.search(
+                    r"\bfind\s+([a-zA-Z_][a-zA-Z0-9_]*(?:\s*,\s*[a-zA-Z_][a-zA-Z0-9_]*)*)\b",
+                    raw,
+                    re.IGNORECASE,
+                )
                 if find_pattern_in_raw:
                     # Try to handle it as a system with find
                     find_vars_str = find_pattern_in_raw.group(1)
-                    find_vars = [v.strip() for v in re.findall(r'[a-zA-Z_][a-zA-Z0-9_]*', find_vars_str)]
-                    raw_no_find = re.sub(r"\bfind\s+[a-zA-Z_][a-zA-Z0-9_]*(?:\s*,\s*[a-zA-Z_][a-zA-Z0-9_]*)*\b", "", raw, flags=re.IGNORECASE).strip()
+                    find_vars = [
+                        v.strip()
+                        for v in re.findall(r"[a-zA-Z_][a-zA-Z0-9_]*", find_vars_str)
+                    ]
+                    raw_no_find = re.sub(
+                        r"\bfind\s+[a-zA-Z_][a-zA-Z0-9_]*(?:\s*,\s*[a-zA-Z_][a-zA-Z0-9_]*)*\b",
+                        "",
+                        raw,
+                        flags=re.IGNORECASE,
+                    ).strip()
                     parts_for_find = split_top_level_commas(raw_no_find)
                     # Try to solve as system
                     try:
                         import time
+
                         start_time = time.perf_counter()
                         find = find_vars[0] if find_vars else None
                         res = solve_system(raw_no_find, find)
@@ -4196,24 +5556,32 @@ def repl_loop(output_format: str = "human") -> None:
                 if "=" in part:
                     # Check if this looks like a function finding pattern (f(-1)=3) vs equation
                     # This MUST happen before solve_single_equation to prevent π-style output
-                    func_finding_pattern_check = re.match(r'([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]+\)\s*=\s*[^,]+', part)
+                    func_finding_pattern_check = re.match(
+                        r"([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]+\)\s*=\s*[^,]+", part
+                    )
                     if func_finding_pattern_check:
                         func_name_check = func_finding_pattern_check.group(1)
-                        args_match_check = re.search(rf'{re.escape(func_name_check)}\s*\(([^)]+)\)', part)
+                        args_match_check = re.search(
+                            rf"{re.escape(func_name_check)}\s*\(([^)]+)\)", part
+                        )
                         if args_match_check:
                             args_str_check = args_match_check.group(1).strip()
                             # If args contain numbers, it's function finding, not equation solving
-                            if re.search(r'[-+]?\d', args_str_check):
+                            if re.search(r"[-+]?\d", args_str_check):
                                 # Process as function finding directly
                                 try:
-                                    from .function_manager import find_function_from_data, define_function
+                                    from .function_manager import (
+                                        find_function_from_data,
+                                        define_function,
+                                    )
+
                                     # Extract value
-                                    value_match = re.search(r'=\s*(.+)', part)
+                                    value_match = re.search(r"=\s*(.+)", part)
                                     if value_match:
                                         value_str = value_match.group(1).strip()
                                         # Parse arguments
                                         arg_list = []
-                                        for arg in args_str_check.split(','):
+                                        for arg in args_str_check.split(","):
                                             try:
                                                 arg_list.append(float(arg.strip()))
                                             except ValueError:
@@ -4226,20 +5594,41 @@ def repl_loop(output_format: str = "human") -> None:
                                             value = value_str
 
                                         # Find function (single data point = constant function)
-                                        param_names_single = ['x']
-                                        data_points_single = [([arg_list[0]] if len(arg_list) == 1 else arg_list, value)]
-                                        success, func_str, factored_form, error_msg = find_function_from_data(
-                                            data_points_single, param_names_single
+                                        param_names_single = ["x"]
+                                        data_points_single = [
+                                            (
+                                                (
+                                                    [arg_list[0]]
+                                                    if len(arg_list) == 1
+                                                    else arg_list
+                                                ),
+                                                value,
+                                            )
+                                        ]
+                                        success, func_str, factored_form, error_msg = (
+                                            find_function_from_data(
+                                                data_points_single, param_names_single
+                                            )
                                         )
                                         if success:
                                             print(f"{func_name_check}(x) = {func_str}")
                                             if factored_form:
-                                                print(f"Equivalent: {func_name_check}(x) = {factored_form}")
+                                                print(
+                                                    f"Equivalent: {func_name_check}(x) = {factored_form}"
+                                                )
                                             try:
-                                                define_function(func_name_check, param_names_single, func_str)
-                                                print(f"Function '{func_name_check}' is now available.")
+                                                define_function(
+                                                    func_name_check,
+                                                    param_names_single,
+                                                    func_str,
+                                                )
+                                                print(
+                                                    f"Function '{func_name_check}' is now available."
+                                                )
                                             except Exception as e:
-                                                print(f"Warning: Could not define function automatically: {e}")
+                                                print(
+                                                    f"Warning: Could not define function automatically: {e}"
+                                                )
                                             continue
                                         else:
                                             print(f"Error: {error_msg}")
@@ -4250,7 +5639,9 @@ def repl_loop(output_format: str = "human") -> None:
                     # Initialize find if not already set (check for "find" keyword in the input)
                     find = None
                     if "find" in raw.lower():
-                        find_tokens = re.findall(r"\bfind\s+(\w+)\b", raw, re.IGNORECASE)
+                        find_tokens = re.findall(
+                            r"\bfind\s+(\w+)\b", raw, re.IGNORECASE
+                        )
                         find = find_tokens[0] if find_tokens else None
                     res = solve_single_equation(part, find)
                     elapsed = time.perf_counter() - start_time
@@ -4335,7 +5726,9 @@ def repl_loop(output_format: str = "human") -> None:
                                 eva.get("approx")
                             )
                             # π-fraction conversion (Casio-style) disabled
-                            print(f"Decimal: {_format_special_values(approx_formatted)}")
+                            print(
+                                f"Decimal: {_format_special_values(approx_formatted)}"
+                            )
         except Exception as e:
             try:
                 from .logging_config import get_logger
@@ -4684,7 +6077,9 @@ def main_entry(argv: list[str] | None = None) -> int:
             expr = expr[3:].strip()
         # Handle empty input or just "="
         if not expr or expr == "=":
-            print("Error: Empty input. Please enter a valid expression, equation, or command.")
+            print(
+                "Error: Empty input. Please enter a valid expression, equation, or command."
+            )
             return 1
         import re
 
@@ -4699,6 +6094,7 @@ def main_entry(argv: list[str] | None = None) -> int:
                     parse_find_function_command,
                     find_function_from_data,
                 )
+
                 find_func_cmd = parse_find_function_command(expr)
                 if find_func_cmd is not None:
                     is_find_command = True
@@ -4712,8 +6108,11 @@ def main_entry(argv: list[str] | None = None) -> int:
                     parse_find_function_command,
                     find_function_from_data,
                 )
+
                 # Count function assignment patterns: func_name(args) = value
-                func_assignment_pattern = r'([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]+\)\s*=\s*[^,]+'
+                func_assignment_pattern = (
+                    r"([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]+\)\s*=\s*[^,]+"
+                )
                 matches = list(re.finditer(func_assignment_pattern, expr))
                 # If we have 2 or more such patterns, treat as function finding command
                 if len(matches) >= 2:
@@ -4723,21 +6122,27 @@ def main_entry(argv: list[str] | None = None) -> int:
                     if all(m.group(1) == func_name for m in matches):
                         # Infer parameter names from the first match
                         first_match = matches[0]
-                        args_match = re.search(rf'{re.escape(func_name)}\s*\(([^)]+)\)', first_match.group(0))
+                        args_match = re.search(
+                            rf"{re.escape(func_name)}\s*\(([^)]+)\)",
+                            first_match.group(0),
+                        )
                         if args_match:
                             args_str = args_match.group(1)
                             # Parse arguments to count them
                             arg_list = split_top_level_commas(args_str)
                             # Generate parameter names: x, y, z, ... or x1, x2, x3, ...
                             param_names = []
-                            param_chars = 'xyzuvwrst'
+                            param_chars = "xyzuvwrst"
                             for i, arg in enumerate(arg_list):
                                 if i < len(param_chars):
                                     param_names.append(param_chars[i])
                                 else:
                                     param_names.append(f"x{i+1}")
                             # Create a modified expression with "find" keyword for parsing
-                            expr_with_find = expr.rstrip(',').strip() + f", find {func_name}({', '.join(param_names)})"
+                            expr_with_find = (
+                                expr.rstrip(",").strip()
+                                + f", find {func_name}({', '.join(param_names)})"
+                            )
                             find_func_cmd = parse_find_function_command(expr_with_find)
                             if find_func_cmd is not None:
                                 is_find_command = True
@@ -4749,6 +6154,7 @@ def main_entry(argv: list[str] | None = None) -> int:
         if is_find_command and find_func_cmd is not None:
             try:
                 from .function_manager import find_function_from_data
+
                 # split_top_level_commas is already imported at module level
                 import sympy as sp
                 from .parser import parse_preprocessed as _parse_preprocessed
@@ -4756,7 +6162,7 @@ def main_entry(argv: list[str] | None = None) -> int:
                 func_name, param_names = find_func_cmd
                 find_pattern = rf"find\s+{re.escape(func_name)}\s*\([^)]*\)"
                 data_str = re.sub(find_pattern, "", expr, flags=re.IGNORECASE).strip()
-                data_str = data_str.rstrip(',').strip()
+                data_str = data_str.rstrip(",").strip()
 
                 # First, process any function definitions in data_str
                 # e.g., "f(x,y)=x^2+y^2, find f(x,y) = 5" should define f first
@@ -4768,14 +6174,21 @@ def main_entry(argv: list[str] | None = None) -> int:
                         continue
                     # Try to parse as function definition
                     try:
-                        from .function_manager import parse_function_definition, define_function, ValidationError
+                        from .function_manager import (
+                            parse_function_definition,
+                            define_function,
+                            ValidationError,
+                        )
+
                         func_def = parse_function_definition(part)
                         if func_def is not None:
                             def_func_name, def_params, def_body = func_def
                             try:
                                 define_function(def_func_name, def_params, def_body)
                                 params_str = ", ".join(def_params) if def_params else ""
-                                print(f"Function '{def_func_name}({params_str})' defined as: {def_body}")
+                                print(
+                                    f"Function '{def_func_name}({params_str})' defined as: {def_body}"
+                                )
                             except ValidationError as e:
                                 print(f"Error defining function: {e.message}")
                         else:
@@ -4796,7 +6209,9 @@ def main_entry(argv: list[str] | None = None) -> int:
                 if data_str.strip().startswith("="):
                     is_inverse_solve = True
                     target_value = data_str.strip()[1:].strip()
-                elif not any(f"{func_name}(" in part for part in split_top_level_commas(data_str)):
+                elif not any(
+                    f"{func_name}(" in part for part in split_top_level_commas(data_str)
+                ):
                     # No function calls with this func_name, likely inverse solve
                     is_inverse_solve = True
                     # Check if there's an equals sign
@@ -4808,17 +6223,24 @@ def main_entry(argv: list[str] | None = None) -> int:
                 if is_inverse_solve and target_value:
                     # Check if function is defined for inverse solving
                     from .function_manager import _function_registry
+
                     if func_name in _function_registry:
                         from .solver import solve_inverse_function
 
-                        result = solve_inverse_function(func_name, target_value, param_names)
-                        _format_inverse_solutions(result, func_name, param_names, target_value)
+                        result = solve_inverse_function(
+                            func_name, target_value, param_names
+                        )
+                        _format_inverse_solutions(
+                            result, func_name, param_names, target_value
+                        )
                         if result["ok"]:
                             return 0
                         else:
                             return 1
                     else:
-                        print(f"Error: Function '{func_name}' is not defined. Define it first or provide data points.")
+                        print(
+                            f"Error: Function '{func_name}' is not defined. Define it first or provide data points."
+                        )
                         return 1
 
                 # Parse data points
@@ -4838,7 +6260,26 @@ def main_entry(argv: list[str] | None = None) -> int:
                         value_str_preserved = None
                         try:
                             float(value_str)
-                            if not any(op in value_str for op in ['+', '-', '*', '/', '(', ')', '^', '**', 'sqrt', 'sin', 'cos', 'exp', 'log', 'pi', 'e']):
+                            if not any(
+                                op in value_str
+                                for op in [
+                                    "+",
+                                    "-",
+                                    "*",
+                                    "/",
+                                    "(",
+                                    ")",
+                                    "^",
+                                    "**",
+                                    "sqrt",
+                                    "sin",
+                                    "cos",
+                                    "exp",
+                                    "log",
+                                    "pi",
+                                    "e",
+                                ]
+                            ):
                                 value_str_preserved = value_str
                         except (ValueError, TypeError):
                             pass
@@ -4852,7 +6293,26 @@ def main_entry(argv: list[str] | None = None) -> int:
                                 arg_str_preserved = None
                                 try:
                                     float(arg_stripped)
-                                    if not any(op in arg_stripped for op in ['+', '-', '*', '/', '(', ')', '^', '**', 'sqrt', 'sin', 'cos', 'exp', 'log', 'pi', 'e']):
+                                    if not any(
+                                        op in arg_stripped
+                                        for op in [
+                                            "+",
+                                            "-",
+                                            "*",
+                                            "/",
+                                            "(",
+                                            ")",
+                                            "^",
+                                            "**",
+                                            "sqrt",
+                                            "sin",
+                                            "cos",
+                                            "exp",
+                                            "log",
+                                            "pi",
+                                            "e",
+                                        ]
+                                    ):
                                         arg_str_preserved = arg_stripped
                                 except (ValueError, TypeError):
                                     pass
@@ -4881,7 +6341,10 @@ def main_entry(argv: list[str] | None = None) -> int:
                                 # Preserve strings for exact precision
                                 final_args = []
                                 for i, arg_val in enumerate(args):
-                                    if i < len(arg_strings_preserved) and arg_strings_preserved[i]:
+                                    if (
+                                        i < len(arg_strings_preserved)
+                                        and arg_strings_preserved[i]
+                                    ):
                                         final_args.append(arg_strings_preserved[i])
                                     elif isinstance(arg_val, str):
                                         final_args.append(arg_val)
@@ -4889,7 +6352,10 @@ def main_entry(argv: list[str] | None = None) -> int:
                                         final_args.append(arg_val)
                                     else:
                                         try:
-                                            if isinstance(arg_val, (sp.Rational, sp.Integer, sp.Float)):
+                                            if isinstance(
+                                                arg_val,
+                                                (sp.Rational, sp.Integer, sp.Float),
+                                            ):
                                                 final_args.append(str(arg_val))
                                             else:
                                                 final_args.append(float(sp.N(arg_val)))
@@ -4902,15 +6368,25 @@ def main_entry(argv: list[str] | None = None) -> int:
                                     final_value = value
                                 elif isinstance(value, (int, float)):
                                     if isinstance(value, float):
-                                        final_value = format(value, '.15f').rstrip('0').rstrip('.')
+                                        final_value = (
+                                            format(value, ".15f")
+                                            .rstrip("0")
+                                            .rstrip(".")
+                                        )
                                     else:
                                         final_value = str(value)
                                 else:
                                     try:
-                                        if isinstance(value, (sp.Rational, sp.Integer, sp.Float)):
+                                        if isinstance(
+                                            value, (sp.Rational, sp.Integer, sp.Float)
+                                        ):
                                             final_value = str(value)
                                         else:
-                                            final_value = str(value) if hasattr(value, '__str__') else float(sp.N(value))
+                                            final_value = (
+                                                str(value)
+                                                if hasattr(value, "__str__")
+                                                else float(sp.N(value))
+                                            )
                                     except (ValueError, TypeError):
                                         final_value = value
 
@@ -4919,15 +6395,19 @@ def main_entry(argv: list[str] | None = None) -> int:
                                 pass
 
                 if data_points:
-                    success, func_str, factored_form, error_msg = find_function_from_data(
-                        data_points, param_names
+                    success, func_str, factored_form, error_msg = (
+                        find_function_from_data(data_points, param_names)
                     )
                     if success:
                         params_str = ", ".join(param_names)
                         print(f"{func_name}({params_str}) = {func_str}")
                         if factored_form:
-                            print(f"Equivalent: {func_name}({params_str}) = {factored_form}")
-                        print(f"Function '{func_name}' is now available. You can call it like: {func_name}(values)")
+                            print(
+                                f"Equivalent: {func_name}({params_str}) = {factored_form}"
+                            )
+                        print(
+                            f"Function '{func_name}' is now available. You can call it like: {func_name}(values)"
+                        )
                         return 0
                     else:
                         print(f"Error: Error finding function: {error_msg}")
@@ -4956,16 +6436,24 @@ def main_entry(argv: list[str] | None = None) -> int:
                     for p in parts
                 )
                 if all_assign_same:
-                    assigned_vars_main = [p.split("=", 1)[0].strip() for p in parts if "=" in p]
-                    if len(assigned_vars_main) > 1 and len(set(assigned_vars_main)) == 1:
+                    assigned_vars_main = [
+                        p.split("=", 1)[0].strip() for p in parts if "=" in p
+                    ]
+                    if (
+                        len(assigned_vars_main) > 1
+                        and len(set(assigned_vars_main)) == 1
+                    ):
                         # All assignments are to the same variable
                         var = assigned_vars_main[0]
                         # Try to solve as system of congruences first
-                        solved, exit_code = _solve_modulo_system_if_applicable(parts, var, output_format)
+                        solved, exit_code = _solve_modulo_system_if_applicable(
+                            parts, var, output_format
+                        )
                         if solved:
                             # Save cache after evaluation
                             try:
                                 from .cache_manager import save_cache_to_disk
+
                                 save_cache_to_disk()
                             except ImportError:
                                 pass
@@ -4980,14 +6468,24 @@ def main_entry(argv: list[str] | None = None) -> int:
                                 # Evaluate the RHS expression (like "1 % 2")
                                 eva = evaluate_safely(rhs)
                                 if not eva.get("ok"):
-                                    print(f"Error evaluating '{var} = {rhs}': {eva.get('error')}")
+                                    print(
+                                        f"Error evaluating '{var} = {rhs}': {eva.get('error')}"
+                                    )
                                     continue
                                 try:
                                     # Format and print the result
                                     val_str = eva.get("result", "")
                                     approx_str = eva.get("approx", "")
                                     if output_format == "json":
-                                        print(json.dumps({"ok": True, "result": val_str, "variable": var}))
+                                        print(
+                                            json.dumps(
+                                                {
+                                                    "ok": True,
+                                                    "result": val_str,
+                                                    "variable": var,
+                                                }
+                                            )
+                                        )
                                     else:
                                         if approx_str:
                                             print(f"{var} = {val_str}")
@@ -4996,11 +6494,14 @@ def main_entry(argv: list[str] | None = None) -> int:
                                         else:
                                             print(f"{var} = {val_str}")
                                 except Exception as e:
-                                    print(f"Error formatting result for '{var} = {rhs}': {e}")
+                                    print(
+                                        f"Error formatting result for '{var} = {rhs}': {e}"
+                                    )
                                     continue
                         # Save cache after evaluation
                         try:
                             from .cache_manager import save_cache_to_disk
+
                             save_cache_to_disk()
                         except ImportError:
                             pass
