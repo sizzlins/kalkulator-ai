@@ -1242,9 +1242,36 @@ def _polynomial_solution_to_string(
     return func_str
 
 
+def _symbolify_coefficient(val):
+    """
+    Attempt to convert a float coefficient to a symbolic form (e.g., pi/2).
+    """
+    try:
+        if abs(val) < 1e-10:
+            return None
+
+        import sympy as sp
+        
+        # Method 1: Check PI multiples directly (more robust for noise)
+        # Check val / pi
+        ratio_pi = val / sp.pi.evalf()
+        simplified_pi = sp.nsimplify(ratio_pi, tolerance=1e-5, rational=True)
+        # If simplified ratio is simple (e.g. 1/2, 1, 2), then val = ratio * pi
+        if simplified_pi != ratio_pi: # If it actually simplified something
+             # Check complexity of the multiplier
+             den = sp.denom(simplified_pi)
+             num = sp.numer(simplified_pi)
+             if abs(den) < 1000 and abs(num) < 1000:
+                  return f"{simplified_pi}*pi".replace("1*pi", "pi")
+
+        return None
+    except Exception:
+        return None
+
+
 def find_function_from_data(
-    data_points: list[tuple[list[float], float]], param_names: list[str]
-) -> tuple[bool, str | None, str | None, str | None]:
+    data_points: list[tuple[Any, Any]], param_names: list[str] = ["x"]
+) -> tuple[bool, str | None, dict[str, Any] | None, str | None]:
     """Find a function from data points using interpolation/regression.
 
     For single-parameter functions:
@@ -1529,11 +1556,11 @@ def find_function_from_data(
                 new_indices = []
                 new_refined_coeffs = []
 
-                # Filter out noise (coefficients < 1e-9 * max or absolute < 1e-10)
-                # This ensures we don't keep terms like 2.5e-15*sinh(t)
+                # Filter out noise (coefficients < 1e-7 * max or absolute < 1e-8)
+                # This ensures we don't keep terms like 2.5e-15*sinh(t) OR 2e-8*y^2*cos(y)
                 param_changed = False
                 for i, c in enumerate(refined_coeffs):
-                    if abs(c) > 1e-9 * max_coeff_abs and abs(c) > 1e-10:
+                    if abs(c) > 1e-7 * max_coeff_abs and abs(c) > 1e-8:
                         new_indices.append(selected_indices[i])
                         new_refined_coeffs.append(c)
                     else:
@@ -1554,7 +1581,11 @@ def find_function_from_data(
             equation_parts = []
 
             # Use higher precision (.10g) to avoid "Shrinkage" (4.903 vs 4.903325)
-            if abs(intercept) > 1e-6:
+            # Try symbolic recovery for intercept
+            sym_intercept = _symbolify_coefficient(intercept)
+            if sym_intercept:
+                equation_parts.append(sym_intercept)
+            elif abs(intercept) > 1e-6:
                 equation_parts.append(f"{intercept:.10g}")
 
             for i, idx in enumerate(selected_indices):
@@ -1562,13 +1593,20 @@ def find_function_from_data(
                 name = feature_names[idx]
 
                 # Format coefficient nicely with high precision
-                if abs(coeff - 1.0) < 1e-9:
+                # Try symbolic conversion first
+                sym_coeff = _symbolify_coefficient(coeff)
+                
+                if sym_coeff:
+                     equation_parts.append(f"{sym_coeff}*{name}")
+                elif abs(coeff - 1.0) < 1e-9:
                     term = name
+                    equation_parts.append(term)
                 elif abs(coeff + 1.0) < 1e-9:
                     term = f"-{name}"
+                    equation_parts.append(term)
                 else:
                     term = f"{coeff:.10g}*{name}"
-                equation_parts.append(term)
+                    equation_parts.append(term)
 
             if not equation_parts:
                 func_str = "0"
@@ -1614,7 +1652,6 @@ def find_function_from_data(
 
                 mse = total_error / len(data_points)
 
-                # If fit is good, return it!
                 if mse < 1e-5:
                     return (True, func_str, None, None)
             except Exception:

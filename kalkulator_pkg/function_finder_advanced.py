@@ -686,6 +686,20 @@ def generate_candidate_features(
             features.append(1 / (col**2))
             feature_names.append(f"1/{name}^2")
 
+    # --- NEW: SELF-POWER FUNCTIONS (x^x) ---
+    for i in range(n_vars):
+        col = X_data[:, i]
+        name = variable_names[i]
+
+        # x^x is only valid for x > 0 (to stay real)
+        if np.all(col > 0):
+            with np.errstate(over="ignore", invalid="ignore"):
+                # Use power(col, col)
+                self_pow = np.power(col, col)
+                if np.all(np.isfinite(self_pow)) and np.max(np.abs(self_pow)) < 1e100:
+                    features.append(self_pow)
+                    feature_names.append(f"{name}^{name}")
+
     return np.column_stack(features), feature_names
 
 
