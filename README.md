@@ -37,7 +37,7 @@ You are the Director of Research. You collect the data, and the AI acts as your 
 
 When Galileo dropped balls from the Leaning Tower of Pisa, he didn't have a formula. He just had timestamps and distances. He had to spend years analyzing that data to realize d ∝ t².
 
-Kalkulator just did Galileo's life's work in 0.02 seconds.That is the difference, one answers questions; the other discovers truth.
+Kalkulator just did Galileo's life's work in 0.02 seconds. That is the difference, one answers questions; the other discovers truth.
 `d(t) = 4.903325*t^2`
 
 `>>> diff(diff(d(t), t), t)`
