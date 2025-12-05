@@ -534,7 +534,6 @@ def preprocess(input_str: str, skip_exponent_conversion: bool = False) -> str:
     for cmd in REPL_COMMANDS:
         # Check if command appears as a whole word (not part of another word)
         # Use word boundaries or check that it's not part of a valid identifier
-        import re
 
         pattern = r"\b" + re.escape(cmd) + r"\b"
         if re.search(pattern, input_lower, re.IGNORECASE):
@@ -781,7 +780,7 @@ def preprocess(input_str: str, skip_exponent_conversion: bool = False) -> str:
                         # Cache hit has already been tracked by get_cached_subexpr above
                         before = processed_str[: match.start()]
                         after = processed_str[match.end() :]
-                        processed_str = before + cached_value + after
+                        processed_str = before + "(" + cached_value + ")" + after
                         changed = True
                         break  # Restart scanning after replacement
 
@@ -1078,7 +1077,7 @@ def parse_preprocessed(expr_str: str) -> Any:
                     # Validate the result
                     _validate_expression_tree(result)
                     return result
-            except Exception as e:
+            except Exception:
                 # If special handling fails, fall through to normal parsing
                 pass
 
@@ -1177,9 +1176,9 @@ def expand_function_calls(expr_str: str) -> str:
     """
     try:
         from .function_manager import (
-            parse_function_call,
             evaluate_function,
             list_functions,
+            parse_function_call,
         )
         from .types import ValidationError
 

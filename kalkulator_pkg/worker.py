@@ -288,8 +288,8 @@ def _get_user_friendly_error_message(
             )
         if "invalid" in error_msg.lower() and "name" in error_msg.lower():
             return (
-                f"Invalid variable or function name. "
-                f"Names must start with a letter and contain only letters, numbers, and underscores.",
+                "Invalid variable or function name. "
+                "Names must start with a letter and contain only letters, numbers, and underscores.",
                 "INVALID_NAME",
             )
 
@@ -753,7 +753,7 @@ def _worker_daemon_main(
 
                         registry_dump = json.loads(registry_dump_json)
                         update_function_registry_from_dump(registry_dump)
-                    except Exception as e:
+                    except Exception:
                         # Log error but continue evaluation
                         # We can't easily log to main process logger from here, so just ignore
                         pass
@@ -1063,7 +1063,7 @@ def _worker_eval_cached(
     """Evaluate expression with persistent cache support."""
     # Check persistent cache first
     try:
-        from .cache_manager import get_cached_eval, get_cache_hits
+        from .cache_manager import get_cache_hits, get_cached_eval
 
         cached_result = get_cached_eval(preprocessed_expr, context_hash)
         if cached_result is not None:
@@ -1122,10 +1122,7 @@ def _worker_eval_cached(
         result_json = json.dumps(resp)
         # Save to persistent cache if evaluation was successful
         try:
-            from .cache_manager import (
-                update_eval_cache,
-                update_subexpr_cache,
-            )
+            from .cache_manager import update_eval_cache, update_subexpr_cache
 
             if resp.get("ok"):
                 update_eval_cache(
@@ -1163,10 +1160,7 @@ def _worker_eval_cached(
         result_text = proc.stdout or ""
         # Try to save to persistent cache
         try:
-            from .cache_manager import (
-                update_eval_cache,
-                update_subexpr_cache,
-            )
+            from .cache_manager import update_eval_cache, update_subexpr_cache
 
             try:
                 result_data = json.loads(result_text)
@@ -1242,8 +1236,8 @@ def _worker_solve_cached(payload_json: str) -> str:
 
 def evaluate_safely(expr: str, timeout: int = WORKER_TIMEOUT) -> dict[str, Any]:
     """Safely evaluate an expression string via worker sandbox."""
-    from .parser import preprocess
     from .cache_manager import clear_cache_hits, get_cache_hits
+    from .parser import preprocess
 
     # Clear cache hits at the start (before any operations)
     clear_cache_hits()
@@ -1252,8 +1246,8 @@ def evaluate_safely(expr: str, timeout: int = WORKER_TIMEOUT) -> dict[str, Any]:
     subexpr_cache_hits: list[tuple[str, str]] = []
     try:
         from .function_manager import (
-            get_function_registry_hash,
             get_function_registry_dump,
+            get_function_registry_hash,
         )
 
         context_hash = get_function_registry_hash()

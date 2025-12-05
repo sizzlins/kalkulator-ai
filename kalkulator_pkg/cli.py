@@ -11,8 +11,6 @@ from typing import Any
 
 import sympy as sp
 
-logger = logging.getLogger(__name__)
-
 from .config import VAR_NAME_RE, VERSION
 from .parser import (
     format_inequality_solution,
@@ -25,6 +23,8 @@ from .parser import (
 from .solver import solve_inequality, solve_single_equation, solve_system
 from .types import ParseError, ValidationError
 from .worker import evaluate_safely
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_target_with_ambiguity_detection(
@@ -40,7 +40,6 @@ def _parse_target_with_ambiguity_detection(
         Tuple (target_rational, simpler_rational_or_none, was_simplified)
     """
     from decimal import Decimal
-    from fractions import Fraction
 
     # Parse as exact Fraction first
     try:
@@ -70,7 +69,7 @@ def _parse_target_with_ambiguity_detection(
                     - sp.Rational(simpler_frac.numerator, simpler_frac.denominator)
                 )
             )
-            literal_abs = abs(float(literal_frac))
+
             # Use practical tolerance: absolute diff < 1e-3 for detecting repeating decimals
             # This handles cases like 65.083 ≈ 781/12 (diff ≈ 0.0003)
             tolerance = 1e-3
@@ -91,7 +90,7 @@ def _parse_target_with_ambiguity_detection(
                 target_expr = sp.Rational(str(target_expr))
             return (target_expr, None, False)
         except (TypeError, ValueError):
-            raise ValueError(f"Cannot parse target '{target_str}'")
+            raise ValueError(f"Cannot parse target '{target_str}'") from None
 
 
 def _extended_gcd(a: int, b: int) -> tuple[int, int, int]:
@@ -189,7 +188,7 @@ def find_integer_solutions_for_linear(equation, x, y):
     # Ensure expr is linear in x,y
     poly = sp.Poly(expr, x, y)
     if poly.total_degree() > 1:
-        raise ValueError("Equation is not linear in %s and %s" % (x, y))
+        raise ValueError(f"Equation is not linear in {x} and {y}")
 
     # Extract coefficients from expr = a*x + b*y + c  (i.e. expr should be 0 when satisfied)
     a = sp.simplify(poly.coeff_monomial(x))
@@ -246,7 +245,7 @@ def find_integer_solutions_for_linear(equation, x, y):
     try:
         sols = list(sp.diophantine(A * x + B * y - C))
         return sols
-    except Exception as e:
+    except Exception:
         logger.exception("diophantine failed")
         # fallback: return empty and let caller decide
         return []
@@ -402,11 +401,11 @@ def _format_inverse_solutions(
     print(f"    Integer solutions: {int_count if int_count else 'None'}")
     print(f"    Rational solutions: {rat_count if rat_count else 'None'}")
     if parametric:
-        print(f"    Real solutions: continuous (see parametric form)")
+        print("    Real solutions: continuous (see parametric form)")
     elif real_count:
         print(f"    Real solutions: {real_count}")
     else:
-        print(f"    Real solutions: None")
+        print("    Real solutions: None")
 
     # 1. Integer solutions (2 per line for compactness)
     if isinstance(integers, dict) and int_count > 0:
@@ -842,7 +841,7 @@ def print_result_pretty(res: dict[str, Any], output_format: str = "human") -> No
             print("No solutions found.")
         else:
             print("System Solutions:")
-            for i, sol in enumerate(sols):
+            for _, sol in enumerate(sols):
                 # sol is a dict like {'a': '2', 'b': '5'}
                 formatted_parts = []
                 for var, val in sol.items():
@@ -943,8 +942,9 @@ def repl_loop(output_format: str = "human") -> None:
     # Ensure evaluate_safely and parse_preprocessed are always available in this function scope
     # Import them here to avoid any scoping issues in nested blocks
     import sympy as sp  # Import locally to avoid scoping issues with later local imports
-    from .worker import evaluate_safely as _evaluate_safely
+
     from .parser import parse_preprocessed as _parse_preprocessed
+    from .worker import evaluate_safely as _evaluate_safely
 
     print("Kalkulator Aljabar — type 'help' for commands, 'quit' to exit.")
     _current_req_id = None  # Track current request for cancellation
@@ -1462,8 +1462,8 @@ def repl_loop(output_format: str = "human") -> None:
 
                 try:
                     from .function_manager import (
-                        parse_find_function_command,
                         find_function_from_data,
+                        parse_find_function_command,
                     )
 
                     find_func_cmd = parse_find_function_command(expr)
@@ -1480,8 +1480,8 @@ def repl_loop(output_format: str = "human") -> None:
             if not is_find_command:
                 try:
                     from .function_manager import (
-                        parse_find_function_command,
                         find_function_from_data,
+                        parse_find_function_command,
                     )
 
                     # Count function assignment patterns: func_name(args) = value
@@ -1508,7 +1508,7 @@ def repl_loop(output_format: str = "human") -> None:
                                 # Generate parameter names: x, y, z, ... or x1, x2, x3, ...
                                 param_names = []
                                 param_chars = "xyzuvwrst"
-                                for i, arg in enumerate(arg_list):
+                                for i, _ in enumerate(arg_list):
                                     if i < len(param_chars):
                                         param_names.append(param_chars[i])
                                     else:
@@ -1525,7 +1525,7 @@ def repl_loop(output_format: str = "human") -> None:
                                     is_find_command = True
                                     # Use the modified expression for parsing
                                     expr = expr_with_find
-                except Exception as e:
+                except Exception:
                     logger.exception(
                         "Error detecting function finding from multiple assignments"
                     )
@@ -1534,9 +1534,9 @@ def repl_loop(output_format: str = "human") -> None:
             if is_find_command and find_func_cmd is not None:
                 try:
                     from .function_manager import (
+                        define_function,
                         find_function_from_data,
                         parse_function_definition,
-                        define_function,
                     )
 
                     func_name, param_names = find_func_cmd
@@ -1852,8 +1852,8 @@ def repl_loop(output_format: str = "human") -> None:
                         # Check if it's a function definition
                         try:
                             from .function_manager import (
-                                parse_function_definition,
                                 define_function,
+                                parse_function_definition,
                             )
 
                             func_def = parse_function_definition(part)
@@ -1907,8 +1907,8 @@ def repl_loop(output_format: str = "human") -> None:
                 # Check for single function definition in --eval mode
                 try:
                     from .function_manager import (
-                        parse_function_definition,
                         define_function,
+                        parse_function_definition,
                     )
 
                     func_def = parse_function_definition(expr)
@@ -2079,8 +2079,8 @@ def repl_loop(output_format: str = "human") -> None:
                             # Process each function finding pattern
                             try:
                                 from .function_manager import (
-                                    find_function_from_data,
                                     define_function,
+                                    find_function_from_data,
                                 )
 
                                 processed_any = False
@@ -2208,8 +2208,8 @@ def repl_loop(output_format: str = "human") -> None:
                             # Process as function finding
                             try:
                                 from .function_manager import (
-                                    find_function_from_data,
                                     define_function,
+                                    find_function_from_data,
                                 )
 
                                 # Parse arguments
@@ -2600,12 +2600,12 @@ def repl_loop(output_format: str = "human") -> None:
                                 points = int(value)
                             else:
                                 print(f"Warning: Unknown parameter '{key}', ignoring")
-                        except ValueError as ve:
+                        except ValueError:
                             print(
                                 f"Error: Invalid value for parameter '{key}': {value}"
                             )
                             print(
-                                f"  Hint: Use mathematical expressions like 'pi', '-pi', '2*pi', etc."
+                                "  Hint: Use mathematical expressions like 'pi', '-pi', '2*pi', etc."
                             )
                             continue
 
@@ -2619,6 +2619,7 @@ def repl_loop(output_format: str = "human") -> None:
                         matplotlib.use("Agg")  # Non-GUI backend
                         import matplotlib.pyplot as plt
                         import numpy as np
+
                         from .plotting import HAS_MATPLOTLIB
 
                         if not HAS_MATPLOTLIB:
@@ -2688,8 +2689,8 @@ def repl_loop(output_format: str = "human") -> None:
                         # Try to open the file automatically
                         try:
                             import os
-                            import sys
                             import subprocess
+                            import sys
 
                             if sys.platform == "win32":
                                 os.startfile(save_file)
@@ -2746,17 +2747,15 @@ def repl_loop(output_format: str = "human") -> None:
 
         try:
             from .function_manager import (
-                parse_find_function_command,
-                find_function_from_data,
                 define_function,
+                find_function_from_data,
+                parse_find_function_command,
             )
 
             # split_top_level_commas is already imported at module level
-
             # Check if input contains "find" keyword OR multiple function assignment patterns
             # Pattern: f(...)=..., f(...)=..., ... (suggests function finding)
             # (is_find_command already set above)
-
             # If no "find" keyword, check for pattern of multiple f(...)=... assignments
             if not is_find_command:
                 # Count function assignment patterns: func_name(args) = value
@@ -3309,7 +3308,6 @@ def repl_loop(output_format: str = "human") -> None:
                             # Process solve requests if any
                             if solve_requests:
                                 from .function_manager import (
-                                    evaluate_function,
                                     list_functions,
                                 )
 
@@ -3650,10 +3648,8 @@ def repl_loop(output_format: str = "human") -> None:
                                                                                         break
                                                                         # Remove duplicates and sort
                                                                         found_integers = sorted(
-                                                                            list(
-                                                                                set(
-                                                                                    found_integers
-                                                                                )
+                                                                            set(
+                                                                                found_integers
                                                                             )
                                                                         )
                                                                     else:
@@ -3669,7 +3665,7 @@ def repl_loop(output_format: str = "human") -> None:
                                                                                     y0_norm,
                                                                                 )
                                                                             )
-                                                        except Exception as e:
+                                                        except Exception:
                                                             logger.exception(
                                                                 "Error extracting specific solution from diophantine result"
                                                             )
@@ -3922,7 +3918,7 @@ def repl_loop(output_format: str = "human") -> None:
                                                                     "integers": [],
                                                                     "no_solution": None,
                                                                 }
-                                                except Exception as e:
+                                                except Exception:
                                                     logger.exception(
                                                         "Error building integerized equation fallback"
                                                     )
@@ -3952,7 +3948,7 @@ def repl_loop(output_format: str = "human") -> None:
                                                             param_names[i]
                                                         )
                                                     solutions.append(sol_dict)
-                                            except Exception as e:
+                                            except Exception:
                                                 logger.exception(
                                                     "Error solving for multiple variables"
                                                 )
@@ -4075,7 +4071,7 @@ def repl_loop(output_format: str = "human") -> None:
                                                             )
                                                         except Exception:
                                                             print(
-                                                                f"  Integer solutions exist (Diophantine parameterization found)"
+                                                                "  Integer solutions exist (Diophantine parameterization found)"
                                                             )
                                                     # Display specific integer solutions if found
                                                     if int_solution_info.get(
@@ -4087,9 +4083,7 @@ def repl_loop(output_format: str = "human") -> None:
                                                             ]
                                                         )
                                                         if len(integer_sols) == 1:
-                                                            print(
-                                                                f"  Integer solution:"
-                                                            )
+                                                            print("  Integer solution:")
                                                             x_int, y_int = integer_sols[
                                                                 0
                                                             ]
@@ -4109,7 +4103,7 @@ def repl_loop(output_format: str = "human") -> None:
                                                                 )
                                                             if len(integer_sols) >= 20:
                                                                 print(
-                                                                    f"    ... (showing first 20 of potentially infinite solutions)"
+                                                                    "    ... (showing first 20 of potentially infinite solutions)"
                                                                 )
                                                 elif info_type == "none":
                                                     if "equation" in int_solution_info:
@@ -4159,7 +4153,7 @@ def repl_loop(output_format: str = "human") -> None:
                                                     elif int_solution_info.get(
                                                         "integers"
                                                     ):
-                                                        print(f"  Integer solution:")
+                                                        print("  Integer solution:")
                                                         for (
                                                             x_int,
                                                             y_int,
@@ -4481,7 +4475,7 @@ def repl_loop(output_format: str = "human") -> None:
             if is_find_command:
                 try:
                     logger.exception("Error processing function finding command")
-                except:
+                except Exception:
                     pass
                 print(f"Error: Failed to process function finding command: {e}")
                 print(
@@ -4690,7 +4684,7 @@ def repl_loop(output_format: str = "human") -> None:
                     print(
                         f"  For single data point, use: {raw}, find {func_name_early}(x)"
                     )
-                    print(f"  This will return the constant function f(x) = <value>")
+                    print("  This will return the constant function f(x) = <value>")
                 else:
                     func_name_early = matches_early[0].group(1)
                     print(
@@ -4861,7 +4855,7 @@ def repl_loop(output_format: str = "human") -> None:
                     if _timing_enabled:
                         print(f"[Time: {elapsed:.4f}s]")
                     continue
-                except Exception as e:
+                except Exception:
                     # If system solving fails, fall through to normal processing
                     logger.exception("Error solving system of equations")
 
@@ -4886,8 +4880,8 @@ def repl_loop(output_format: str = "human") -> None:
                     # Check if it's a function definition
                     try:
                         from .function_manager import (
-                            parse_function_definition,
                             define_function,
+                            parse_function_definition,
                         )
 
                         func_def = parse_function_definition(part)
@@ -4911,10 +4905,7 @@ def repl_loop(output_format: str = "human") -> None:
                     # Check if it's a function call (f(1)=value or just f(1))
                     # Pattern: func_name(args) = value or func_name(args)
                     try:
-                        from .function_manager import (
-                            parse_function_call,
-                            list_functions,
-                        )
+                        from .function_manager import list_functions
 
                         defined_funcs = list_functions()
 
@@ -5033,7 +5024,7 @@ def repl_loop(output_format: str = "human") -> None:
                                         f"  If '{part.split('(')[0] if '(' in part else part}' is a function, make sure it's defined first."
                                     )
                                     print(
-                                        f"  Use 'find f(x)' to find a function from data points, or 'f(x)=...' to define it."
+                                        "  Use 'find f(x)' to find a function from data points, or 'f(x)=...' to define it."
                                     )
                                 else:
                                     print(f"Error: {error_msg}")
@@ -5047,7 +5038,7 @@ def repl_loop(output_format: str = "human") -> None:
         # BUT skip if it looks like a function finding pattern (f(-1)=3, not f(x)=3)
         # Function finding patterns have numeric arguments, function definitions have parameter names
         try:
-            from .function_manager import parse_function_definition, define_function
+            from .function_manager import define_function, parse_function_definition
 
             # Check if this looks like a function finding pattern (numeric args) vs definition (parameter names)
             func_finding_pattern = r"([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]+\)\s*=\s*[^,]+"
@@ -5120,9 +5111,9 @@ def repl_loop(output_format: str = "human") -> None:
                         # Use the same logic as in --eval mode
                         try:
                             from .function_manager import (
+                                define_function,
                                 find_function_from_data,
                                 parse_function_definition,
-                                define_function,
                             )
 
                             func_name, param_names = find_func_cmd
@@ -5571,8 +5562,8 @@ def repl_loop(output_format: str = "human") -> None:
                                 # Process as function finding directly
                                 try:
                                     from .function_manager import (
-                                        find_function_from_data,
                                         define_function,
+                                        find_function_from_data,
                                     )
 
                                     # Extract value
@@ -6091,8 +6082,8 @@ def main_entry(argv: list[str] | None = None) -> int:
         if "find" in expr.lower():
             try:
                 from .function_manager import (
-                    parse_find_function_command,
                     find_function_from_data,
+                    parse_find_function_command,
                 )
 
                 find_func_cmd = parse_find_function_command(expr)
@@ -6105,8 +6096,8 @@ def main_entry(argv: list[str] | None = None) -> int:
         if not is_find_command:
             try:
                 from .function_manager import (
-                    parse_find_function_command,
                     find_function_from_data,
+                    parse_find_function_command,
                 )
 
                 # Count function assignment patterns: func_name(args) = value
@@ -6133,7 +6124,7 @@ def main_entry(argv: list[str] | None = None) -> int:
                             # Generate parameter names: x, y, z, ... or x1, x2, x3, ...
                             param_names = []
                             param_chars = "xyzuvwrst"
-                            for i, arg in enumerate(arg_list):
+                            for i, _ in enumerate(arg_list):
                                 if i < len(param_chars):
                                     param_names.append(param_chars[i])
                                 else:
@@ -6153,10 +6144,10 @@ def main_entry(argv: list[str] | None = None) -> int:
         # Process function finding if detected
         if is_find_command and find_func_cmd is not None:
             try:
-                from .function_manager import find_function_from_data
-
                 # split_top_level_commas is already imported at module level
                 import sympy as sp
+
+                from .function_manager import find_function_from_data
                 from .parser import parse_preprocessed as _parse_preprocessed
 
                 func_name, param_names = find_func_cmd
@@ -6175,9 +6166,9 @@ def main_entry(argv: list[str] | None = None) -> int:
                     # Try to parse as function definition
                     try:
                         from .function_manager import (
-                            parse_function_definition,
-                            define_function,
                             ValidationError,
+                            define_function,
+                            parse_function_definition,
                         )
 
                         func_def = parse_function_definition(part)

@@ -1,5 +1,5 @@
 import unittest
-import math
+
 from kalkulator_pkg.function_manager import find_function_from_data
 
 

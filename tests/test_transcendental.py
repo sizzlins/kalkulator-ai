@@ -1,5 +1,6 @@
-import unittest
 import math
+import unittest
+
 from kalkulator_pkg.function_manager import find_function_from_data
 
 
@@ -18,7 +19,7 @@ class TestTranscendentalFunctions(unittest.TestCase):
     def test_cosine_function(self):
         """Test finding f(x) = cos(x)."""
         # f(0)=1, f(pi/2)=0, f(pi)=-1
-        data = [([0], 1), ([math.pi / 2], 0), ([math.pi], -1)]
+        data = [([0], 1), ([math.pi / 3], 0.5), ([math.pi / 2], 0), ([math.pi], -1)]
         success, func_str, _, error = find_function_from_data(data, ["x"])
         self.assertTrue(success, f"Failed to find cos(x): {error}")
         self.assertIn("cos(x)", func_str)

@@ -1,6 +1,5 @@
-import numpy as np
-import sys
 import os
+import sys
 
 # Create project root path
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

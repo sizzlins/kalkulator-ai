@@ -43,8 +43,8 @@ def _open_file_in_viewer(file_path: str) -> bool:
     """
     try:
         import os
-        import sys
         import subprocess
+        import sys
 
         if sys.platform == "win32":
             # Windows
@@ -228,8 +228,8 @@ def plot_function(
                     return EvalResult(ok=True, result="Plot displayed")
                 else:
                     # Using non-GUI backend, save to temp file and inform user
-                    import tempfile
                     import os
+                    import tempfile
 
                     temp_file = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
                     temp_path = temp_file.name
@@ -251,8 +251,8 @@ def plot_function(
             except Exception as e:
                 # If showing fails, try to save instead
                 try:
-                    import tempfile
                     import os
+                    import tempfile
 
                     temp_file = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
                     temp_path = temp_file.name
@@ -272,7 +272,7 @@ def plot_function(
                             ok=True,
                             result=f"Plot saved to: {temp_path}\n(GUI display failed: {str(e)})",
                         )
-                except Exception as save_error:
+                except Exception:
                     plt.close(fig)
                     return EvalResult(
                         ok=False, error=f"Failed to display or save plot: {str(e)}"

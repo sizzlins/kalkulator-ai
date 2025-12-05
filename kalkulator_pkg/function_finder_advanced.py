@@ -30,8 +30,6 @@ from .config import (
     LASSO_LAMBDA,
     OMP_MAX_ITERATIONS,
     RELATIVE_TOLERANCE,
-    RESIDUAL_THRESHOLD,
-    USE_AIC_BIC,
 )
 
 # Set high precision for Decimal
@@ -382,10 +380,9 @@ def lasso_regression(
         Coefficient vector
     """
     try:
-        from sklearn.linear_model import Lasso
-
         # Convert to numpy arrays
         import numpy as np
+        from sklearn.linear_model import Lasso
 
         A_arr = np.array([[float(x) for x in row] for row in A])
         b_arr = np.array([float(x) for x in b])
@@ -445,8 +442,8 @@ def lasso_cv_regression(
         Coefficient vector
     """
     try:
-        from sklearn.linear_model import lasso_path
         import numpy as np
+        from sklearn.linear_model import lasso_path
 
         A_arr = np.array([[float(x) for x in row] for row in A])
         b_arr = np.array([float(x) for x in b])

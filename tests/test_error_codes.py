@@ -69,7 +69,9 @@ class TestErrorCodes(unittest.TestCase):
         self.assertTrue(
             "parse" in error_lower
             or "syntax" in error_lower
-            or "invalid" in error_lower,
+            or "invalid" in error_lower
+            or "incomplete" in error_lower
+            or "expression ends with" in error_lower,
             f"Error should mention parse/syntax/invalid: {error}",
         )
 

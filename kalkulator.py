@@ -91,6 +91,7 @@ def main() -> int:
         print(f"Fatal error: {e}")
         return 1
 
+
 # python kalkulator.py --eval "a=1, x=a+1"
 # Call freeze_support early for PyInstaller compatibility (must be at module level)
 if __name__ == "__main__":

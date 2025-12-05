@@ -1,7 +1,5 @@
 import unittest
-import numpy as np
-from sklearn.linear_model import Lasso
-from sklearn.preprocessing import StandardScaler
+
 from kalkulator_pkg.function_manager import find_function_from_data
 
 

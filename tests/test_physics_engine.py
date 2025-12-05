@@ -1,5 +1,6 @@
-import unittest
 import math
+import unittest
+
 from kalkulator_pkg.function_manager import find_function_from_data
 from kalkulator_pkg.worker import evaluate_safely
 
