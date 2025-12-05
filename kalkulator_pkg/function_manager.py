@@ -1403,38 +1403,73 @@ def find_function_from_data(
             selected_indices.sort(key=lambda i: abs(coeffs[i]), reverse=True)
             selected_indices = selected_indices[:5]
         
-        if 0 < len(selected_indices) <= 5:  # Allow up to 5 terms (relaxed from 3)
+        if 0 < len(selected_indices) <= 5:  # Allow up to 5 terms
             # REFIT: Run OLS on selected features to ensure best fit
             from sklearn.linear_model import LinearRegression
             
-            X_selected = X_matrix[:, selected_indices]
-            ols = LinearRegression(fit_intercept=True)
-            ols.fit(X_selected, y_data)
+            # Iterative OLS Cleanup: Remove tiny coefficients that are likely noise
+            # This handles "Ghost Noise" (e.g. tiny sinh(t) term)
+            for _ in range(3):  # Max 3 cleanup iterations
+                X_selected = X_matrix[:, selected_indices]
+                ols = LinearRegression(fit_intercept=True)
+                ols.fit(X_selected, y_data)
+                
+                refined_coeffs = ols.coef_
+                intercept = ols.intercept_
+                
+                # Check for tiny coefficients relative to the max coefficient
+                max_coeff_abs = max(abs(c) for c in refined_coeffs) if len(refined_coeffs) > 0 else 0
+                if max_coeff_abs < 1e-12:
+                    break
+                    
+                new_indices = []
+                new_refined_coeffs = []
+                
+                # Filter out noise (coefficients < 1e-9 * max or absolute < 1e-10)
+                # This ensures we don't keep terms like 2.5e-15*sinh(t)
+                param_changed = False
+                for i, c in enumerate(refined_coeffs):
+                    if abs(c) > 1e-9 * max_coeff_abs and abs(c) > 1e-10:
+                        new_indices.append(selected_indices[i])
+                        new_refined_coeffs.append(c)
+                    else:
+                        param_changed = True
+                
+                if not param_changed:
+                    break
+                    
+                selected_indices = new_indices
+                if not selected_indices:
+                    break
             
-            # Update coefficients
+            # Calculate final coefficients after cleanup
             refined_coeffs = ols.coef_
             intercept = ols.intercept_
             
             # Reconstruct equation with refined coefficients
             equation_parts = []
             
-            if abs(intercept) > 1e-5:
-                equation_parts.append(f"{intercept:.4g}")
+            # Use higher precision (.10g) to avoid "Shrinkage" (4.903 vs 4.903325)
+            if abs(intercept) > 1e-6:
+                equation_parts.append(f"{intercept:.10g}")
             
             for i, idx in enumerate(selected_indices):
                 coeff = refined_coeffs[i]
                 name = feature_names[idx]
                 
-                # Format coefficient nicely
-                if abs(coeff - 1.0) < 1e-4:
+                # Format coefficient nicely with high precision
+                if abs(coeff - 1.0) < 1e-9:
                     term = name
-                elif abs(coeff + 1.0) < 1e-4:
+                elif abs(coeff + 1.0) < 1e-9:
                     term = f"-{name}"
                 else:
-                    term = f"{coeff:.4g}*{name}"
+                    term = f"{coeff:.10g}*{name}"
                 equation_parts.append(term)
             
-            func_str = " + ".join(equation_parts).replace("+ -", "- ")
+            if not equation_parts:
+                func_str = "0"
+            else:
+                func_str = " + ".join(equation_parts).replace("+ -", "- ")
 
             
             # Verify the fit

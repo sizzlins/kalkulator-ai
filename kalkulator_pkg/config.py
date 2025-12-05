@@ -136,6 +136,10 @@ ALLOWED_SYMPY_NAMES = {
     "exp": sp.exp,
     "Abs": sp.Abs,
     "abs": sp.Abs,  # lowercase alias for convenience
+    # Hyperbolic functions
+    "sinh": sp.sinh,
+    "cosh": sp.cosh,
+    "tanh": sp.tanh,
     # Modulo
     "Mod": sp.Mod,
     "mod": sp.Mod,  # lowercase alias for convenience
