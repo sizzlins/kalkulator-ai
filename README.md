@@ -78,10 +78,10 @@ cd kalkulator-ai
 pip install -r requirements.txt
 ```
 
-### Run the CLI
+### Run the Python file
 
 ```bash
-python -m kalkulator_pkg.cli
+python kalkulator.py
 ```
 
 ---
