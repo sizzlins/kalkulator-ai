@@ -5,8 +5,8 @@ These tests verify that simple equations are preferred over complex ones
 when both fit the data perfectly.
 """
 
-import sys
 import os
+import sys
 
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__) + "/.."))
 

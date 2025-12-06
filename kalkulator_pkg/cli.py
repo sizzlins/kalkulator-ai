@@ -3307,9 +3307,7 @@ def repl_loop(output_format: str = "human") -> None:
 
                             # Process solve requests if any
                             if solve_requests:
-                                from .function_manager import (
-                                    list_functions,
-                                )
+                                from .function_manager import list_functions
 
                                 print()  # Empty line for readability
                                 for solve_part, target_value_str in solve_requests:

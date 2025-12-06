@@ -1,12 +1,14 @@
-import sys
 import os
+import sys
 
 # Insert local project path at the BEGINNING of sys.path to override installed package
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__) + "/.."))
 print(f"DEBUG PATH: {sys.path}")
 
 import math
+
 import numpy as np
+
 import kalkulator_pkg.regression_solver
 
 print(f"Loaded regression_solver from: {kalkulator_pkg.regression_solver.__file__}")

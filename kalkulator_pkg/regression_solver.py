@@ -1,9 +1,10 @@
+import warnings
+
 import numpy as np
 import sympy as sp
+from sklearn.linear_model import LinearRegression, OrthogonalMatchingPursuit
 from sklearn.preprocessing import StandardScaler
-from sklearn.linear_model import LinearRegression
-from sklearn.linear_model import OrthogonalMatchingPursuit
-import warnings
+
 from .function_finder_advanced import generate_candidate_features, lasso_regression
 
 
@@ -230,10 +231,10 @@ def solve_regression_stage(
             if n_points <= 5 and not has_transcendental and not has_ratio:
                 # Check if it's a linear term (just a variable name like "x", "t", "m")
                 if name in param_names:
-                    scale = max(scale, 500.0)  # Huge boost for linear terms
+                    scale = max(scale, 1.0)  # Disabled (was 50.0) - Pre-checks handle linear cheats now
                 # Also boost constant term slightly
                 elif name == "1":
-                    scale = max(scale, 400.0)
+                    scale = max(scale, 1.0)
 
             # --- STRUCTURAL BOOSTING (Variable Agnostic) ---
             # Overrides for polynomial terms to prioritize simple physics shapes.

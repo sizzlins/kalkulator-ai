@@ -1,6 +1,7 @@
-import sys
-import os
 import math
+import os
+import sys
+
 import numpy as np
 
 # Add project root to path

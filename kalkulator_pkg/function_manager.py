@@ -32,8 +32,8 @@ from fractions import Fraction
 from typing import Any
 
 import sympy as sp
-from sympy import parse_expr
 from sklearn.preprocessing import StandardScaler
+from sympy import parse_expr
 
 from .config import ALLOWED_SYMPY_NAMES, TRANSFORMATIONS
 from .types import ValidationError
@@ -1406,8 +1406,8 @@ def find_function_from_data(
             y_vals = [eval_to_float(p[1]) for p in data_points]
 
             # Try y = a*x + b
-            from sklearn.linear_model import LinearRegression
             import numpy as np
+            from sklearn.linear_model import LinearRegression
 
             X_arr = np.array(X_vals).reshape(-1, 1)
             y_arr = np.array(y_vals)
@@ -1479,8 +1479,8 @@ def find_function_from_data(
             var_name = param_names[0]
 
             # Try y = A*x^2 + B
-            from sklearn.linear_model import LinearRegression
             import numpy as np
+            from sklearn.linear_model import LinearRegression
 
             X_sq_arr = np.array(X_vals).reshape(-1, 1) ** 2
             y_arr = np.array(y_vals)
@@ -1794,8 +1794,8 @@ def find_function_from_data(
 
                     if valid and len(inv_vals) == len(y_vals):
                         # Use Linear Regression to find A and B in y = A + B * (1/(x+c))
-                        from sklearn.linear_model import LinearRegression
                         import numpy as np
+                        from sklearn.linear_model import LinearRegression
 
                         X_inv_arr = np.array(inv_vals).reshape(-1, 1)
                         y_arr = np.array(y_vals)
@@ -2598,8 +2598,9 @@ def find_function_from_data(
                     X_omp[:, i] *= scale
                     omp_boosts[i] = scale
 
-            from sklearn.linear_model import OrthogonalMatchingPursuit
             import warnings
+
+            from sklearn.linear_model import OrthogonalMatchingPursuit
 
             n_nonzero = min(len(data_points) - 1, 12)  # Increased limit slightly
             if n_nonzero < 1:
