@@ -1541,47 +1541,51 @@ def find_function_from_data(
             X_vals = []
             y_vals = []
             param_name = param_names[0]
-            
+
             valid_data = True
             for p in data_points:
-                x_val = eval_to_float(p[0][0]) if isinstance(p[0], (list, tuple)) else eval_to_float(p[0])
+                x_val = (
+                    eval_to_float(p[0][0])
+                    if isinstance(p[0], (list, tuple))
+                    else eval_to_float(p[0])
+                )
                 y_val = eval_to_float(p[1])
-                
+
                 # proportional requires positive x, y (for log)
                 if x_val <= 0 or y_val <= 0:
                     valid_data = False
                     break
                 X_vals.append(math.log(x_val))
                 y_vals.append(math.log(y_val))
-            
+
             if valid_data and len(X_vals) >= 2:
                 import numpy as np
                 from sklearn.linear_model import LinearRegression
-                
+
                 X_log = np.array(X_vals).reshape(-1, 1)
                 y_log = np.array(y_vals)
-                
+
                 lr_pow = LinearRegression()
                 lr_pow.fit(X_log, y_log)
-                
+
                 # Check fit quality
                 y_pred_log = lr_pow.predict(X_log)
                 mse_log = np.mean((y_log - y_pred_log) ** 2)
-                
+
                 if mse_log < 1e-9:  # Good power law fit
                     b = lr_pow.coef_[0]  # exponent
                     log_a = lr_pow.intercept_
                     a = math.exp(log_a)  # coefficient
-                    
+
                     # Round b to nearest 0.5 or integer if close
                     b_round = round(b * 2) / 2
                     if abs(b - b_round) < 1e-4:
                         b = b_round
-                    
+
                     # Round a if close to integer
                     if abs(a - round(a)) < 1e-4:
                         a = round(a)
-                    
+
                     # Format
                     term = ""
                     if b == 1:
@@ -1590,12 +1594,12 @@ def find_function_from_data(
                         term = "1"
                     else:
                         term = f"{param_name}^{b}"
-                    
+
                     if abs(a - 1.0) < 1e-4:
                         func_str = term
                     else:
                         func_str = f"{a}*{term}"
-                        
+
                     return (True, func_str, None, None)
         except Exception:
             pass

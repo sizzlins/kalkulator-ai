@@ -1,13 +1,15 @@
-import sys
 import os
+import sys
 
 sys.path.append(os.getcwd())
 try:
-    from kalkulator_pkg.function_manager import find_function_from_data
     import numpy as np
+
+    from kalkulator_pkg.function_manager import find_function_from_data
 except ImportError:
-    from kalkulator_pkg.function_manager import find_function_from_data
     import numpy as np
+
+    from kalkulator_pkg.function_manager import find_function_from_data
 
 
 def run_test(name, data, params, expected_vals):

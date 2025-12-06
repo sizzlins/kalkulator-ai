@@ -11,6 +11,20 @@ from typing import Any
 
 import sympy as sp
 
+# Helper for Python < 3.9 compatibility
+try:
+    from math import lcm as _math_lcm 
+except ImportError:
+    def _math_lcm(*args: int) -> int:
+        if not args:
+            return 1
+        res = args[0]
+        for v in args[1:]:
+            res = abs(res * v) // gcd(res, v)
+        return res
+
+import sympy as sp
+
 from .config import VAR_NAME_RE, VERSION
 from .parser import (
     format_inequality_solution,
@@ -217,7 +231,7 @@ def find_integer_solutions_for_linear(equation, x, y):
         raise ValueError("Coefficient is not rational/integer: %r" % sympy_number)
 
     denoms = [denom_of(v) for v in (a, b, c)]
-    lcm_den = math.lcm(*denoms) if denoms else 1
+    lcm_den = _math_lcm(*denoms) if denoms else 1
 
     a_int = sp.Integer(sp.simplify(a * lcm_den))
     b_int = sp.Integer(sp.simplify(b * lcm_den))
@@ -2411,7 +2425,7 @@ def repl_loop(output_format: str = "human") -> None:
                             # Silently continue - cache hits are optional
                             pass
                     if not eva.get("ok"):
-                        error_msg = eva.get("error", "Unknown error")
+                        error_msg = str(eva.get("error", "Unknown error") or "Unknown error")
                         error_code = eva.get("error_code", "UNKNOWN_ERROR")
 
                         # Provide helpful hints based on error code

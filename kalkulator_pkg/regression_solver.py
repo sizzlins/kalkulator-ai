@@ -201,7 +201,7 @@ def solve_regression_stage(
                 f"cos({v})" for v in param_names
             ]:
                 # Pure sin(x) or cos(x) - prioritize over complex damped forms
-                scale = 5.0 # Reduced from 150.0
+                scale = 5.0  # Reduced from 150.0
 
             # --- TIER 3: POLYNOMIAL INTERACTIONS ---
             elif (
@@ -219,7 +219,7 @@ def solve_regression_stage(
             ):  # Boost x^x only
                 scale = 10.0
             elif "log" in name:  # Strong boost for Entropy (x*log(x))
-                scale = 5.0 # Reduced from 120.0
+                scale = 5.0  # Reduced from 120.0
             elif "exp" in name and (
                 "sin" in name or "cos" in name
             ):  # Damped Oscillation

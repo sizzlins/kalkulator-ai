@@ -221,8 +221,9 @@ def get_cached_eval(
         _cache_hit_tracking.pop(0)  # Remove oldest
     # Support both old format (string) and new format (dict)
     if isinstance(entry, dict):
-        return entry.get("result")
-    return entry  # Old format - just return the string
+        res = entry.get("result")
+        return str(res) if res is not None else None
+    return str(entry) if entry is not None else None  # Old format
 
 
 def get_cached_eval_with_time(

@@ -328,7 +328,7 @@ def orthogonal_matching_pursuit(
 
     # Initialize
     residual = b_arr.copy()
-    selected = []
+    selected: list[int] = []
     coefficients = np.zeros(n_features)
 
     for iteration in range(min(max_nonzero, max_iterations)):

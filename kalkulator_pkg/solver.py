@@ -1795,7 +1795,7 @@ def solve_system(raw_no_find: str, find_token: str | None) -> dict[str, Any]:
             "error_code": "TIMEOUT",
         }
     try:
-        data = json.loads(stdout_text)
+        data_untyped = json.loads(stdout_text)
     except (json.JSONDecodeError, ValueError, TypeError) as e:
         logger.warning(f"Invalid JSON from worker-solve: {e}", exc_info=True)
         return {
@@ -1803,25 +1803,44 @@ def solve_system(raw_no_find: str, find_token: str | None) -> dict[str, Any]:
             "error": f"Invalid worker-solve output: {e}.",
             "error_code": "INVALID_OUTPUT",
         }
+
+    if not isinstance(data_untyped, dict):
+        logger.warning("Worker-solve returned non-object JSON", exc_info=True)
+        return {
+            "ok": False,
+            "error": "Invalid worker-solve output: expected JSON object.",
+            "error_code": "INVALID_OUTPUT",
+        }
+    
+    data: dict[str, Any] = data_untyped
     if not data.get("ok"):
         return data
     sols_list = data.get("solutions", [])
     if not find_token:
         return {"ok": True, "type": "system", "solutions": sols_list}
-    found_vals = []
+    
+    found_vals: list[str] = []
     for sol_dict in sols_list:
-        if find_token in sol_dict:
-            found_vals.append(sol_dict[find_token])
+        v = sol_dict.get(find_token)
+        if v is None:
+            continue
+        if not isinstance(v, str):
+            v = str(v)
+        found_vals.append(v)
+        
     if not found_vals:
         return {
             "ok": False,
             "error": f"No solution found for variable {find_token}.",
             "error_code": "NO_SOLUTION",
         }
-    approx_vals = []
+    
+    approx_vals: list[str | None] = []
     for vstr in found_vals:
         try:
-            approx_vals.append(str(sp.N(sp.sympify(vstr))))
+            val_sym = sp.sympify(vstr)
+            approx_val = str(sp.N(val_sym))
+            approx_vals.append(approx_val)
         except (ValueError, TypeError, OverflowError, ArithmeticError):
             # Expected for some symbolic solutions
             approx_vals.append(None)
@@ -1873,13 +1892,14 @@ def solve_inverse_function(
         syms = list(body.free_symbols)
         sorted_syms = sorted(syms, key=lambda s: s.name)
 
-        results = {
+        results: dict[str, Any] = {
             "ok": True,
             "type": "inverse_function",
             "func_name": func_name,
             "target": str(target),
-            "domains": {},
         }
+        domains: dict[str, Any] = {}
+        results["domains"] = domains
 
         def is_truly_integer(val):
             """Check if a value is truly an integer (not symbolic like pi/2)."""
@@ -1943,7 +1963,7 @@ def solve_inverse_function(
                 return "complex"
 
         # 1. Integer Solutions - brute-force search
-        integer_solutions = []
+        integer_solutions: list[tuple[int, int] | tuple[int]] = []
 
         try:
             if len(sorted_syms) == 2:
@@ -1971,7 +1991,7 @@ def solve_inverse_function(
                         except Exception:
                             pass
 
-                integer_solutions.sort(key=lambda p: (abs(p[0]), p[0], abs(p[1]), p[1]))
+                integer_solutions.sort(key=lambda p: (abs(p[0]), p[0], abs(p[1]), p[1]) if len(p) == 2 else 0)
 
             elif len(sorted_syms) == 1:
                 sym = sorted_syms[0]
@@ -1986,19 +2006,19 @@ def solve_inverse_function(
 
         if integer_solutions:
             if len(sorted_syms) == 2:
-                results["domains"]["integers"] = {
+                domains["integers"] = {
                     "count": len(integer_solutions),
                     "solutions": [
-                        {"x": s[0], "y": s[1]} for s in integer_solutions[:20]
+                        {"x": s[0], "y": s[1]} for s in integer_solutions[:20] if len(s) == 2
                     ],
                 }
             else:
-                results["domains"]["integers"] = {
+                domains["integers"] = {
                     "count": len(integer_solutions),
                     "solutions": [{"x": s[0]} for s in integer_solutions[:20]],
                 }
         else:
-            results["domains"]["integers"] = None
+            domains["integers"] = None
 
         # 2. Get symbolic solutions and classify them
         rational_solutions = []

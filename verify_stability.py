@@ -1,7 +1,8 @@
-import sys
 import os
-import numpy as np
+import sys
 import warnings
+
+import numpy as np
 
 # Suppress warnings to check if we catch them cleanly or if they leak
 # actually, better to let them print if we want to see if we silenced them?
