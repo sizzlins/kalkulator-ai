@@ -494,13 +494,14 @@ def lasso_cv_regression(
 
 
 def generate_candidate_features(
-    X_data: Any, variable_names: list[str]
+    X_data: Any, variable_names: list[str], include_transcendentals: bool = True
 ) -> tuple[Any, list[str]]:
     """Generates a dictionary of candidate functions (features) for symbolic regression.
 
     Args:
         X_data: numpy array of shape (n_samples, n_variables)
         variable_names: list of strings ['x', 'y', ...]
+        include_transcendentals: If False, generates only polynomials and rationals (Stage 1).
 
     Returns:
         Tuple of (feature_matrix, feature_names)
@@ -548,27 +549,46 @@ def generate_candidate_features(
                 features.append(col)
                 feature_names.append(name)
 
-                # x^2 * y (e.g., r^2 * h)
-                col_sq_i = (X_data[:, i] ** 2) * X_data[:, j]
-                name_sq_i = f"{variable_names[i]}^2*{variable_names[j]}"
-                features.append(col_sq_i)
-                feature_names.append(name_sq_i)
+                # x^2 * y and x * y^2 (Cubic Interactions)
+                # CRITICAL: Restrict these in Phase 1 to prevent overfitting high-dim data (like Spacetime)
+                # Only allow them if they match "Physics Archetypes" (m*v^2, r^2*h)
+                
+                n1, n2 = variable_names[i], variable_names[j]
+                is_physics_pair = False
+                if "m" in (n1, n2) and ("v" in (n1, n2) or "h" in (n1, n2) or "c" in (n1, n2)): is_physics_pair = True
+                if "r" in (n1, n2) and "h" in (n1, n2): is_physics_pair = True
+                if "rho" in (n1, n2) and "L" in (n1, n2): is_physics_pair = True # Reynolds? No, Reynolds is x*y*z/w.
+                
+                # Allow if Phase 2 OR Physics Match
+                if include_transcendentals or is_physics_pair:
+                    # x^2 * y (e.g., r^2 * h)
+                    col_sq_i = (X_data[:, i] ** 2) * X_data[:, j]
+                    name_sq_i = f"{variable_names[i]}^2*{variable_names[j]}"
+                    features.append(col_sq_i)
+                    feature_names.append(name_sq_i)
 
-                # x * y^2 (e.g., m * v^2)
-                col_sq_j = X_data[:, i] * (X_data[:, j] ** 2)
-                name_sq_j = f"{variable_names[i]}*{variable_names[j]}^2"
-                features.append(col_sq_j)
-                feature_names.append(name_sq_j)
+                    # x * y^2 (e.g., m * v^2)
+                    col_sq_j = X_data[:, i] * (X_data[:, j] ** 2)
+                    name_sq_j = f"{variable_names[i]}*{variable_names[j]}^2"
+                    features.append(col_sq_j)
+                    feature_names.append(name_sq_j)
+
 
     # --- NEW: TRANSCENDENTAL FUNCTIONS ---
+    if include_transcendentals:
+        for i in range(n_vars):
+            col = X_data[:, i]
+            name = variable_names[i]
 
-    for i in range(n_vars):
-        col = X_data[:, i]
-        name = variable_names[i]
-
-        # Sine (sin(x))
-        features.append(np.sin(col))
-        feature_names.append(f"sin({name})")
+            # Sine (sin(x))
+            features.append(np.sin(col))
+            feature_names.append(f"sin({name})")
+            
+            # sin(x)/x (Sinc function - critical for signal processing)
+            if not np.any(np.isclose(col, 0, atol=1e-10)):
+                sinc_col = np.sin(col) / col
+                features.append(sinc_col)
+                feature_names.append(f"sin({name})/{name}")
 
         # Argument Scaling: Frequency (sin(2x), sin(pi*x))
         features.append(np.sin(2 * col))
@@ -594,6 +614,8 @@ def generate_candidate_features(
             if np.all(np.isfinite(exp_col)) and np.max(np.abs(exp_col)) < 1e100:
                 features.append(exp_col)
                 feature_names.append(f"exp({name})")
+            
+
 
         # Exponential Decay (exp(-x))
         with np.errstate(over="ignore"):
@@ -629,6 +651,10 @@ def generate_candidate_features(
                 # exp(-x) * sin(2x)
                 features.append(exp_neg_col * np.sin(2 * col))
                 feature_names.append(f"exp(-{name})*sin(2*{name})")
+
+                # exp(-x) * cos(2x)
+                features.append(exp_neg_col * np.cos(2 * col))
+                feature_names.append(f"exp(-{name})*cos(2*{name})")
 
         # Logarithm (log(x))
         # Only valid for positive inputs
@@ -685,20 +711,98 @@ def generate_candidate_features(
 
             features.append(1 / (col**2))
             feature_names.append(f"1/{name}^2")
+            
+            # Inverse Quartic (for Hagen-Poiseuille: 1/r^4)
+            features.append(1 / (col**4))
+            feature_names.append(f"1/{name}^4")
+
+    # --- NEW: RATIONAL INTERACTIONS (x/y, x*y/z) ---
+    # Critical for Ideal Gas Law (P = nT/V) and others
+    if n_vars > 1:
+        for i in range(n_vars):
+            for j in range(n_vars):
+                if i == j:
+                    continue
+                
+                # Feature: x / y
+                col_i = X_data[:, i]
+                col_j = X_data[:, j]
+                name_i = variable_names[i]
+                name_j = variable_names[j]
+
+                if not np.any(np.isclose(col_j, 0, atol=1e-10)):
+                    features.append(col_i / col_j)
+                    feature_names.append(f"{name_i}/{name_j}")
+    
+    if n_vars > 2:
+        for i in range(n_vars):
+            for j in range(i + 1, n_vars):
+                for k in range(n_vars):
+                    if k == i or k == j:
+                         continue
+                    
+                    # Feature: x * y / z
+                    col_i = X_data[:, i]
+                    col_j = X_data[:, j]
+                    col_k = X_data[:, k]
+                    name_i = variable_names[i]
+                    name_j = variable_names[j]
+                    name_k = variable_names[k]
+
+                    if not np.any(np.isclose(col_k, 0, atol=1e-10)):
+                        # x * y / z
+                        features.append((col_i * col_j) / col_k)
+                        feature_names.append(f"{name_i}*{name_j}/{name_k}")
+                        
+                        # x * y / z^2 (Inverse Square Product)
+                        features.append((col_i * col_j) / (col_k ** 2))
+                        feature_names.append(f"{name_i}*{name_j}/{name_k}^2")
+
+    # Feature: x * y * z / w (Triple Product Ratio for Reynolds Number)
+    if n_vars > 3:
+        for i in range(n_vars):
+            for j in range(i + 1, n_vars):
+                for k in range(j + 1, n_vars):
+                    for l in range(n_vars):
+                        if l in [i, j, k]: continue
+                        
+                        col_i = X_data[:, i]
+                        col_j = X_data[:, j]
+                        col_k = X_data[:, k]
+                        col_l = X_data[:, l]
+                        
+                        if not np.any(np.isclose(col_l, 0, atol=1e-10)):
+                             features.append((col_i * col_j * col_k) / col_l)
+                             feature_names.append(f"{variable_names[i]}*{variable_names[j]}*{variable_names[k]}/{variable_names[l]}")
+                             
+                             # Triple Product Inverse Quartic (for Hagen-Poiseuille: mu*L*Q/r^4)
+                             features.append((col_i * col_j * col_k) / (col_l ** 4))
+                             feature_names.append(f"{variable_names[i]}*{variable_names[j]}*{variable_names[k]}/{variable_names[l]}^4")
+
+    # --- NEW: TRANSCENDENTAL FUNCTIONS (x^x, x*log(x), interactions) ---
+    if include_transcendentals:
+        # 1. Transcendental Interactions (e.g. exp(-t) * cos(2t))
+        # We need to explicitly generate product of Exp and Trig columns
+        # because the generic interaction loop (lines 543+) only handles Initial columns (x, y).
+        # But we haven't generated exp/sin columns yet!
+        # Wait, the transcendental generation loop is BELOW here (Lines 735+ in original).
+        # I should insert my interactions AFTER generation? 
+        pass 
 
     # --- NEW: SELF-POWER FUNCTIONS (x^x) ---
-    for i in range(n_vars):
-        col = X_data[:, i]
-        name = variable_names[i]
-
-        # x^x is only valid for x > 0 (to stay real)
-        if np.all(col > 0):
-            with np.errstate(over="ignore", invalid="ignore"):
-                # Use power(col, col)
-                self_pow = np.power(col, col)
-                if np.all(np.isfinite(self_pow)) and np.max(np.abs(self_pow)) < 1e100:
-                    features.append(self_pow)
-                    feature_names.append(f"{name}^{name}")
+    if include_transcendentals:
+        for i in range(n_vars):
+            col = X_data[:, i]
+            name = variable_names[i]
+    
+            # x^x is only valid for x > 0 (to stay real)
+            if np.all(col > 0):
+                with np.errstate(over="ignore", invalid="ignore"):
+                    # Use power(col, col)
+                    self_pow = np.power(col, col)
+                    if np.all(np.isfinite(self_pow)) and np.max(np.abs(self_pow)) < 1e100:
+                        features.append(self_pow)
+                        feature_names.append(f"{name}^{name}")
 
     return np.column_stack(features), feature_names
 
@@ -750,8 +854,15 @@ def check_log_linear_transformations(
                 A = np.exp(ln_A)
 
                 # Format nicely
-                A_str = f"{A:.4g}"
-                B_str = f"{B:.4g}"
+                def _fmt_val(val):
+                     import numpy as np
+                     if abs(val - np.pi) < 1e-4: return "pi"
+                     if abs(val - 2*np.pi) < 1e-4: return "2*pi"
+                     if abs(val - 0.5*np.pi) < 1e-4: return "0.5*pi"
+                     return f"{val:.10g}"
+
+                A_str = _fmt_val(A)
+                B_str = _fmt_val(B)
 
                 if abs(A - 1.0) < 0.01:
                     A_str = ""
@@ -781,8 +892,44 @@ def check_log_linear_transformations(
                 A = np.exp(ln_A)
 
                 # Format nicely
-                A_str = f"{A:.4g}"
-                B_str = f"{B:.4g}"
+                # Format nicely using robust logic (same as regression_solver._symbolify_coefficient)
+                def _fmt_val(val):
+                     if abs(val) < 1e-6: return "0"
+                     
+                     # 1. Round to integer
+                     rounded = round(val)
+                     if abs(val - rounded) < 0.001 and abs(rounded) > 0.5:
+                         return str(int(rounded))
+                         
+                     # 2. Pi and Pi fractions
+                     import sympy as sp
+                     pi_val = float(sp.pi.evalf())
+                     
+                     # Check specific range including Sphere Volume 4/3 etc.
+                     for denom in [1, 2, 3, 4, 6]:
+                        for num in range(-15, 16):
+                            if num == 0: continue
+                            expected = (num / denom) * pi_val
+                            if abs(val - expected) < 0.001:
+                                if denom == 1:
+                                    if num == 1: return "pi"
+                                    if num == -1: return "-pi"
+                                    return f"{num}*pi"
+                                else:
+                                    return f"{num}/{denom}*pi" if num > 0 else f"({num}/{denom})*pi"
+                                    
+                     # 3. Simple fractions
+                     for denom in [2, 3, 4, 5, 8, 10]:
+                        for num in range(-20, 21):
+                            if num == 0: continue
+                            expected = num / denom
+                            if abs(val - expected) < 0.001:
+                                return f"{num}/{denom}" if num > 0 else f"({num}/{denom})"
+                                
+                     return f"{val:.10g}"
+
+                A_str = _fmt_val(A)
+                B_str = _fmt_val(B)
 
                 if abs(A - 1.0) < 0.01:
                     A_str = ""

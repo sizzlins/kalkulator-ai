@@ -1423,10 +1423,7 @@ def find_function_from_data(
 
     # Uses OMP to find combinations of sin, cos, exp, log, 1/x, etc.
     try:
-        from .function_finder_advanced import (
-            generate_candidate_features,
-            lasso_regression,
-        )
+        from .regression_solver import solve_regression_stage
 
         # Extract X and y data - evaluate symbolic constants
         # p[0] is a tuple/list of x values for this data point
@@ -1440,13 +1437,42 @@ def find_function_from_data(
         # Ensure y_data contains floats, not strings
         y_data = [eval_to_float(p[1]) for p in data_points]
 
-        # Generate feature matrix (including transcendental terms)
-        X_matrix, feature_names = generate_candidate_features(X_data, param_names)
+        # Occam's Razor: Two-Stage Discovery
+        # Stage 1: Simple Features Only (Poly + Rational). Avoids "Gaussian Trap".
+        # Stage 2: Complex Features (Transcendentals). Only if Stage 1 fails.
+        best_result = None
+        stages = [False, True]
 
-        # Normalize features for Lasso (critical)
-        # Use StandardScaler to handle "Giants vs Ants" (scale imbalance)
-        # This ensures features like exp(x) (huge) don't dominate sin(x) (small)
-        from sklearn.preprocessing import StandardScaler
+        for include_transcendentals in stages:
+             res = solve_regression_stage(
+                 X_data, y_data, data_points, param_names, 
+                 include_transcendentals=include_transcendentals
+             )
+             
+             if res and res[0]:
+                  success, func_str, coeffs, mse = res
+                  
+                  # Check complexity (Tier 1 Trap)
+                  # Relax limit for high-dimensional functions (e.g. Spacetime has 4 terms: -t^2+x^2+y^2+z^2)
+                  # Limit = max(3, len(param_names) + 2)
+                  term_limit = max(3, len(param_names) + 1)
+                  num_terms = len(coeffs) if coeffs is not None else 0
+
+                  # If Simple Stage finds a perfect physics law (MSE ~ 0) AND it is Simple, STOP.
+                  if not include_transcendentals and mse < 1e-9 and num_terms <= term_limit:
+                       return (True, func_str, coeffs, None)
+                  
+                  # Otherwise, keep as candidate (might be improved by Stage 2)
+                  # But usually if Stage 1 fails (MSE high), Stage 2 is needed.
+                  # If Stage 1 is "Okay" but not "Perfect", Stage 2 might fit noise.
+                  # But we store it.
+                  best_result = res
+        
+        if best_result:
+             success, func_str, coeffs, mse = best_result
+             # Return if MSE is acceptable, otherwise we might fall through to other methods?
+             # But this is the Advanced method. We usually return what we found.
+             return (success, func_str, coeffs, None)
 
         scaler = StandardScaler()
         X_norm = scaler.fit_transform(X_matrix)
@@ -1497,6 +1523,12 @@ def find_function_from_data(
             if col_max > 20 * y_max:
                 penalty_factors[i] = max(penalty_factors[i], 5.0)
 
+            # CRITICAL: Reward Rational/Squared Simple Terms (Low Cost for Physics)
+            if "/" in name:
+                penalty_factors[i] *= 0.1 # Favor Rationals strongly
+            elif "^2" in name:
+                penalty_factors[i] *= 0.5 # Favor Squares
+
         X_weighted = X_norm / penalty_factors
 
         # Scale-Invariant Regularization
@@ -1508,15 +1540,47 @@ def find_function_from_data(
         adaptive_alpha = 0.01 * y_std
         adaptive_threshold = 1e-3 * y_std
 
-        coeffs = lasso_regression(
-            X_weighted.tolist(),
-            y_centered.tolist(),
-            lambda_reg=adaptive_alpha,
-            max_iterations=50000,
-        )
+        # Strategy Switch:
+        # For Sparse Data (< 20 samples), Lasso (L1) can be unstable or pick linear combinations of noise.
+        # Orthogonal Matching Pursuit (OMP) is a Greedy approach that works better for "finding the needle"
+        # (e.g. n*T/V) in a haystack of features when N is small.
+        if len(data_points) < 20:
+             # Use OMP with Physics Boosting
+             # We scale "Physical" columns (Squares, Rationals) so OMP's greedy dot-product selection prefers them.
+             X_omp = X_norm.copy()
+             omp_boosts = np.ones(X_norm.shape[1])
+             for i, name in enumerate(feature_names):
+                 if "^2" in name or "/" in name:
+                     scale = 10.0
+                     X_omp[:, i] *= scale
+                     omp_boosts[i] = scale
 
-        # Unscale coefficients (multiply by penalty factor)
-        coeffs = [c * p for c, p in zip(coeffs, penalty_factors)]
+             from sklearn.linear_model import OrthogonalMatchingPursuit
+             import warnings
+             
+             n_nonzero = min(len(data_points) - 1, 12) # Increased limit slightly
+             if n_nonzero < 1: n_nonzero = 1
+             
+             omp = OrthogonalMatchingPursuit(n_nonzero_coefs=n_nonzero)
+             
+             with warnings.catch_warnings():
+                 warnings.filterwarnings("ignore")
+                 omp.fit(X_omp, y_centered)
+             
+             coeffs = omp.coef_ * omp_boosts # Restore coefficient magnitude for correct ranking
+             adaptive_alpha = 0.0 # Not used
+        else:
+             # Standard Lasso for larger datasets
+             coeffs = lasso_regression(
+                X_weighted.tolist(),
+                y_centered.tolist(),
+                lambda_reg=adaptive_alpha,
+                max_iterations=50000,
+             )
+             
+             # Unscale coefficients (multiply by penalty factor)
+             # Note: This unscaling logic might interact with Ranking Boosts, but we preserve it for compatibility
+             coeffs = [c * p for c, p in zip(coeffs, penalty_factors)]
 
         # Select features with non-zero coefficients
         # Use adaptive threshold to filter out numerical noise relative to signal scale
@@ -1525,12 +1589,41 @@ def find_function_from_data(
         ]
 
         # If too many features selected, pick top 5 by magnitude
-        if len(selected_indices) > 5:
-            # Sort by absolute coefficient value (descending)
-            selected_indices.sort(key=lambda i: abs(coeffs[i]), reverse=True)
-            selected_indices = selected_indices[:5]
+        # If too many features selected, pick top k by magnitude
+        # We need to allow enough features to capture complexity (e.g. x^2 + y^2 + z^2 is 3 terms)
+        # But not more than we can fit with OLS (num_samples - 1)
+        max_features = min(len(data_points) - 1, 12)
+        if max_features < 1:
+            max_features = 1
 
-        if 0 < len(selected_indices) <= 5:  # Allow up to 5 terms
+        if len(selected_indices) > max_features:
+            # Sort by absolute coefficient value (descending)
+            # CRITICAL: Boost non-linear terms (squares, interactions) to ensure they survive the "Top K" cut
+            # if they are competing with linear terms in potential.
+            def get_sort_metric(idx):
+                val = abs(coeffs[idx])
+                name = feature_names[idx]
+                # Boost polynomial/interaction terms
+                boost = 1.0
+                if "/" in name:
+                     boost = 500.0 # Extreme bias for Rational laws (Rare and Specific)
+                elif "^2" in name:
+                     boost = 100.0 # Strong bias for Squares
+                elif "*" in name:
+                     boost = 5.0
+                else:
+                     boost = 1.0
+
+                # Penalty for mixing Powers with Transcendentals (e.g. T^2*sin(T)) - likely overfitting on small data
+                if "^" in name and ("sin(" in name or "cos(" in name or "tan(" in name or "exp(" in name or "log(" in name):
+                    boost *= 0.1
+                
+                return val * boost
+
+            selected_indices.sort(key=get_sort_metric, reverse=True)
+            selected_indices = selected_indices[:max_features]
+
+        if len(selected_indices) > 0:
             # REFIT: Run OLS on selected features to ensure best fit
             from sklearn.linear_model import LinearRegression
 

@@ -3216,10 +3216,10 @@ def repl_loop(output_format: str = "human") -> None:
                             # Note: We used to remove * for display, but that made it unparseable
                             # The function string is already human-readable
                             print(f"{func_name}({params_str}) = {func_str}")
-                            if factored_form:
-                                print(
-                                    f"Equivalent: {func_name}({params_str}) = {factored_form}"
-                                )
+                            # if factored_form is not None:
+                            #     print(
+                            #         f"Equivalent: {func_name}({params_str}) = {factored_form}"
+                            #     )
 
                             # Warn if this is a best-fit solution (underdetermined system)
                             if is_underdetermined:
