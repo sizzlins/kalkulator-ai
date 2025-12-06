@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -100,7 +100,8 @@ class InequalityResult:
     """Result of solving an inequality."""
 
     ok: bool
-    result_type: str = "inequality"
+    ok: bool
+    result_type: str = field(default="inequality")
     error: str | None = None
     solutions: dict[str, str] | None = None
 

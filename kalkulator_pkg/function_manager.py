@@ -1252,18 +1252,18 @@ def _symbolify_coefficient(val):
             return None
 
         import sympy as sp
-        
+
         # Method 1: Check PI multiples directly (more robust for noise)
         # Check val / pi
         ratio_pi = val / sp.pi.evalf()
         simplified_pi = sp.nsimplify(ratio_pi, tolerance=1e-5, rational=True)
         # If simplified ratio is simple (e.g. 1/2, 1, 2), then val = ratio * pi
-        if simplified_pi != ratio_pi: # If it actually simplified something
-             # Check complexity of the multiplier
-             den = sp.denom(simplified_pi)
-             num = sp.numer(simplified_pi)
-             if abs(den) < 1000 and abs(num) < 1000:
-                  return f"{simplified_pi}*pi".replace("1*pi", "pi")
+        if simplified_pi != ratio_pi:  # If it actually simplified something
+            # Check complexity of the multiplier
+            den = sp.denom(simplified_pi)
+            num = sp.numer(simplified_pi)
+            if abs(den) < 1000 and abs(num) < 1000:
+                return f"{simplified_pi}*pi".replace("1*pi", "pi")
 
         return None
     except Exception:
@@ -1396,30 +1396,34 @@ def find_function_from_data(
     if n_params == 1:
         try:
             X_vals = [
-                eval_to_float(p[0][0]) if isinstance(p[0], (list, tuple)) else eval_to_float(p[0])
+                (
+                    eval_to_float(p[0][0])
+                    if isinstance(p[0], (list, tuple))
+                    else eval_to_float(p[0])
+                )
                 for p in data_points
             ]
             y_vals = [eval_to_float(p[1]) for p in data_points]
-            
+
             # Try y = a*x + b
             from sklearn.linear_model import LinearRegression
             import numpy as np
-            
+
             X_arr = np.array(X_vals).reshape(-1, 1)
             y_arr = np.array(y_vals)
-            
+
             lr = LinearRegression()
             lr.fit(X_arr, y_arr)
-            
+
             # Check if it's a perfect fit
             y_pred = lr.predict(X_arr)
             mse = np.mean((y_arr - y_pred) ** 2)
-            
+
             if mse < 1e-10:  # Perfect linear fit
                 a = lr.coef_[0]
                 b = lr.intercept_
                 var_name = param_names[0]
-                
+
                 # Format the result
                 parts = []
                 # Format slope
@@ -1434,21 +1438,25 @@ def find_function_from_data(
                             parts.append(f"{int(a_round)}*{var_name}")
                     else:
                         parts.append(f"{a:.10g}*{var_name}")
-                
+
                 # Format intercept
                 if abs(b) > 1e-10:
                     b_round = round(b)
                     if abs(b - b_round) < 1e-9:
                         if b_round > 0:
-                            parts.append(f"+ {int(b_round)}" if parts else str(int(b_round)))
+                            parts.append(
+                                f"+ {int(b_round)}" if parts else str(int(b_round))
+                            )
                         else:
-                            parts.append(f"- {abs(int(b_round))}" if parts else str(int(b_round)))
+                            parts.append(
+                                f"- {abs(int(b_round))}" if parts else str(int(b_round))
+                            )
                     else:
                         if b > 0:
                             parts.append(f"+ {b:.10g}" if parts else f"{b:.10g}")
                         else:
                             parts.append(f"- {abs(b):.10g}" if parts else f"{b:.10g}")
-                
+
                 if parts:
                     func_str = " ".join(parts)
                     return (True, func_str, None, None)
@@ -1460,30 +1468,34 @@ def find_function_from_data(
     if n_params == 1:
         try:
             X_vals = [
-                eval_to_float(p[0][0]) if isinstance(p[0], (list, tuple)) else eval_to_float(p[0])
+                (
+                    eval_to_float(p[0][0])
+                    if isinstance(p[0], (list, tuple))
+                    else eval_to_float(p[0])
+                )
                 for p in data_points
             ]
             y_vals = [eval_to_float(p[1]) for p in data_points]
             var_name = param_names[0]
-            
+
             # Try y = A*x^2 + B
             from sklearn.linear_model import LinearRegression
             import numpy as np
-            
+
             X_sq_arr = np.array(X_vals).reshape(-1, 1) ** 2
             y_arr = np.array(y_vals)
-            
+
             lr_sq = LinearRegression()
             lr_sq.fit(X_sq_arr, y_arr)
-            
+
             # Check if it's a perfect fit
             y_pred_sq = lr_sq.predict(X_sq_arr)
             mse_sq = np.mean((y_arr - y_pred_sq) ** 2)
-            
+
             if mse_sq < 1e-10:
                 a = lr_sq.coef_[0]
                 b = lr_sq.intercept_
-                
+
                 parts = []
                 # Format A*x^2
                 if abs(a) > 1e-10:
@@ -1497,21 +1509,25 @@ def find_function_from_data(
                             parts.append(f"{int(a_round)}*{var_name}^2")
                     else:
                         parts.append(f"{a:.10g}*{var_name}^2")
-                
+
                 # Format B
                 if abs(b) > 1e-10:
                     b_round = round(b)
                     if abs(b - b_round) < 1e-9:
                         if b_round > 0:
-                            parts.append(f"+ {int(b_round)}" if parts else str(int(b_round)))
+                            parts.append(
+                                f"+ {int(b_round)}" if parts else str(int(b_round))
+                            )
                         else:
-                            parts.append(f"- {abs(int(b_round))}" if parts else str(int(b_round)))
+                            parts.append(
+                                f"- {abs(int(b_round))}" if parts else str(int(b_round))
+                            )
                     else:
                         if b > 0:
                             parts.append(f"+ {b:.10g}" if parts else f"{b:.10g}")
                         else:
                             parts.append(f"- {abs(b):.10g}" if parts else f"{b:.10g}")
-                
+
                 if parts:
                     func_str = " ".join(parts)
                     return (True, func_str, None, None)
@@ -1550,26 +1566,28 @@ def find_function_from_data(
             traceback.print_exc()
             pass  # Fall back to other methods
 
-
-
     # --- NEW: PRE-CHECK - Pure Trig Fit (cos(x), sin(x)) ---
     # For single-variable, try cos(x) and sin(x) directly
     if n_params == 1 and len(data_points) >= 3:
         try:
             import numpy as np
-            
+
             X_vals = [
-                eval_to_float(p[0][0]) if isinstance(p[0], (list, tuple)) else eval_to_float(p[0])
+                (
+                    eval_to_float(p[0][0])
+                    if isinstance(p[0], (list, tuple))
+                    else eval_to_float(p[0])
+                )
                 for p in data_points
             ]
             y_vals = [eval_to_float(p[1]) for p in data_points]
             var_name = param_names[0]
-            
+
             # Test cos(x) and sin(x) with frequency sweeping
             # Try frequencies: 0.5, 1, 2, 3, 4, 5, pi
             pure_trig_freqs = [0.5, 1, 2, 3, 4, 5, np.pi]
             pure_trig_labels = ["0.5", "1", "2", "3", "4", "5", "pi"]
-            
+
             for freq, freq_label in zip(pure_trig_freqs, pure_trig_labels):
                 # Test cos(freq*x)
                 cos_vals = [np.cos(freq * x) for x in X_vals]
@@ -1579,7 +1597,7 @@ def find_function_from_data(
                         return (True, f"cos({var_name})", None, None)
                     else:
                         return (True, f"cos({freq_label}*{var_name})", None, None)
-                
+
                 # Test sin(freq*x)
                 sin_vals = [np.sin(freq * x) for x in X_vals]
                 sin_errors = [abs(s - y) for s, y in zip(sin_vals, y_vals)]
@@ -1588,13 +1606,13 @@ def find_function_from_data(
                         return (True, f"sin({var_name})", None, None)
                     else:
                         return (True, f"sin({freq_label}*{var_name})", None, None)
-            
+
             # --- DAMPED OSCILLATION FREQUENCY SWEEPING ---
             # Test exp(-x)*cos(n*x) and exp(-x)*sin(n*x) for various frequencies
             # Common frequencies: 1, 2, 3, 4, 5, 0.5, pi, 2*pi
-            frequencies = [1, 2, 3, 4, 5, 0.5, np.pi, 2*np.pi]
+            frequencies = [1, 2, 3, 4, 5, 0.5, np.pi, 2 * np.pi]
             freq_labels = ["1", "2", "3", "4", "5", "0.5", "pi", "2*pi"]
-            
+
             for freq, freq_label in zip(frequencies, freq_labels):
                 # Test exp(-x)*cos(freq*x)
                 decay_cos_vals = [np.exp(-x) * np.cos(freq * x) for x in X_vals]
@@ -1603,8 +1621,13 @@ def find_function_from_data(
                     if freq_label == "1":
                         return (True, f"exp(-{var_name})*cos({var_name})", None, None)
                     else:
-                        return (True, f"exp(-{var_name})*cos({freq_label}*{var_name})", None, None)
-                
+                        return (
+                            True,
+                            f"exp(-{var_name})*cos({freq_label}*{var_name})",
+                            None,
+                            None,
+                        )
+
                 # Test exp(-x)*sin(freq*x)
                 decay_sin_vals = [np.exp(-x) * np.sin(freq * x) for x in X_vals]
                 decay_sin_errors = [abs(d - y) for d, y in zip(decay_sin_vals, y_vals)]
@@ -1612,48 +1635,77 @@ def find_function_from_data(
                     if freq_label == "1":
                         return (True, f"exp(-{var_name})*sin({var_name})", None, None)
                     else:
-                        return (True, f"exp(-{var_name})*sin({freq_label}*{var_name})", None, None)
-                
+                        return (
+                            True,
+                            f"exp(-{var_name})*sin({freq_label}*{var_name})",
+                            None,
+                            None,
+                        )
+
                 # Test A*exp(-x)*cos(freq*x) with coefficient fitting
                 if not np.any(np.isclose(decay_cos_vals, 0, atol=1e-10)):
-                    ratios = [y / d for y, d in zip(y_vals, decay_cos_vals) if abs(d) > 1e-10]
+                    ratios = [
+                        y / d for y, d in zip(y_vals, decay_cos_vals) if abs(d) > 1e-10
+                    ]
                     if len(ratios) >= 2 and abs(max(ratios) - min(ratios)) < 1e-3:
                         coeff = sum(ratios) / len(ratios)
                         if abs(coeff - 1.0) < 1e-3:
                             if freq_label == "1":
-                                return (True, f"exp(-{var_name})*cos({var_name})", None, None)
+                                return (
+                                    True,
+                                    f"exp(-{var_name})*cos({var_name})",
+                                    None,
+                                    None,
+                                )
                             else:
-                                return (True, f"exp(-{var_name})*cos({freq_label}*{var_name})", None, None)
+                                return (
+                                    True,
+                                    f"exp(-{var_name})*cos({freq_label}*{var_name})",
+                                    None,
+                                    None,
+                                )
                         elif abs(coeff - round(coeff)) < 1e-3:
                             if freq_label == "1":
-                                return (True, f"{int(round(coeff))}*exp(-{var_name})*cos({var_name})", None, None)
+                                return (
+                                    True,
+                                    f"{int(round(coeff))}*exp(-{var_name})*cos({var_name})",
+                                    None,
+                                    None,
+                                )
                             else:
-                                return (True, f"{int(round(coeff))}*exp(-{var_name})*cos({freq_label}*{var_name})", None, None)
-            
+                                return (
+                                    True,
+                                    f"{int(round(coeff))}*exp(-{var_name})*cos({freq_label}*{var_name})",
+                                    None,
+                                    None,
+                                )
+
             # Test exp(-x^2) - Gaussian / Bell Curve
             gaussian_vals = [np.exp(-(x**2)) for x in X_vals]
             gaussian_errors = [abs(g - y) for g, y in zip(gaussian_vals, y_vals)]
-            if max(gaussian_errors) < 1e-2:  # Use slightly looser tolerance for Gaussian
+            if (
+                max(gaussian_errors) < 1e-2
+            ):  # Use slightly looser tolerance for Gaussian
                 return (True, f"exp(-{var_name}^2)", None, None)
-            
+
             # Test exp(x) - Exponential growth
             exp_vals = [np.exp(x) for x in X_vals]
             exp_errors = [abs(e - y) for e, y in zip(exp_vals, y_vals)]
             if max(exp_errors) < 1e-3:
                 return (True, f"exp({var_name})", None, None)
-            
+
             # Test exp(-x) - Exponential decay
             exp_neg_vals = [np.exp(-x) for x in X_vals]
             exp_neg_errors = [abs(e - y) for e, y in zip(exp_neg_vals, y_vals)]
             if max(exp_neg_errors) < 1e-3:
                 return (True, f"exp(-{var_name})", None, None)
-            
+
             # Test A*log(x) - Logarithmic growth
             # Only valid for positive x values
             if all(x > 0 for x in X_vals):
                 log_vals = np.array([np.log(x) for x in X_vals])
                 y_arr_local = np.array(y_vals)
-                
+
                 # Use linear regression to find y = A*log(x) (no intercept)
                 # Check if log values have enough variance
                 if np.std(log_vals) > 1e-6:
@@ -1661,51 +1713,51 @@ def find_function_from_data(
                     A = np.dot(y_arr_local, log_vals) / np.dot(log_vals, log_vals)
                     predicted = A * log_vals
                     errors = np.abs(predicted - y_arr_local)
-                    
+
                     if np.max(errors) < 1e-2:  # Good fit
                         if abs(A - round(A)) < 1e-3:
                             func_str = f"{int(round(A))}*log({var_name})"
                         else:
                             func_str = f"{A:.10g}*log({var_name})"
                         return (True, func_str, None, None)
-            
+
             # Test cosh(x) - Hyperbolic cosine (catenary)
             cosh_vals = [np.cosh(x) for x in X_vals]
             cosh_errors = [abs(c - y) for c, y in zip(cosh_vals, y_vals)]
             if max(cosh_errors) < 1e-3:
                 return (True, f"cosh({var_name})", None, None)
-            
+
             # Test sinh(x) - Hyperbolic sine
             sinh_vals = [np.sinh(x) for x in X_vals]
             sinh_errors = [abs(s - y) for s, y in zip(sinh_vals, y_vals)]
             if max(sinh_errors) < 1e-3:
                 return (True, f"sinh({var_name})", None, None)
-            
+
             # Test sigmoid(x) = 1 / (1 + exp(-x)) - Logistic Growth
             sigmoid_vals = [1 / (1 + np.exp(-x)) for x in X_vals]
             sigmoid_errors = [abs(s - y) for s, y in zip(sigmoid_vals, y_vals)]
             if max(sigmoid_errors) < 1e-3:
                 return (True, f"1/(1+exp(-{var_name}))", None, None)
-            
+
             # Test abs(x) - Absolute Value
             abs_vals = [abs(x) for x in X_vals]
             abs_errors = [abs(a - y) for a, y in zip(abs_vals, y_vals)]
             if max(abs_errors) < 1e-3:
                 return (True, f"abs({var_name})", None, None)
-            
+
             # Test Saturation: 1 - exp(-x)
             # Charging capacitor curve
             sat_vals = [1 - np.exp(-x) for x in X_vals]
             sat_errors = [abs(s - y) for s, y in zip(sat_vals, y_vals)]
             if max(sat_errors) < 1e-3:
                 return (True, f"1-exp(-{var_name})", None, None)
-            
+
             # Test x^2 - Quadratic
             sq_vals = [x**2 for x in X_vals]
             sq_errors = [abs(s - y) for s, y in zip(sq_vals, y_vals)]
             if max(sq_errors) < 1e-6:
                 return (True, f"{var_name}^2", None, None)
-            
+
             # Test A*x^2 - Scaled quadratic
             if not np.any(np.isclose(sq_vals, 0, atol=1e-10)):
                 ratios = [y / s for y, s in zip(y_vals, sq_vals) if abs(s) > 1e-10]
@@ -1715,10 +1767,15 @@ def find_function_from_data(
                         if abs(coeff - 1.0) < 1e-9:
                             return (True, f"{var_name}^2", None, None)
                         elif abs(coeff - round(coeff)) < 1e-6:
-                            return (True, f"{int(round(coeff))}*{var_name}^2", None, None)
+                            return (
+                                True,
+                                f"{int(round(coeff))}*{var_name}^2",
+                                None,
+                                None,
+                            )
                         else:
                             return (True, f"{coeff:.10g}*{var_name}^2", None, None)
-            
+
             # --- SHIFTED INVERSE DETECTION ---
             # Test y = A + B/(x+c) for common shift values
             # This catches patterns like 1/(x+1) and 1 - 1/(x+1) (Enzyme Kinetics)
@@ -1734,31 +1791,31 @@ def find_function_from_data(
                             valid = False
                             break
                         inv_vals.append(1 / denom)
-                    
+
                     if valid and len(inv_vals) == len(y_vals):
                         # Use Linear Regression to find A and B in y = A + B * (1/(x+c))
                         from sklearn.linear_model import LinearRegression
                         import numpy as np
-                        
+
                         X_inv_arr = np.array(inv_vals).reshape(-1, 1)
                         y_arr = np.array(y_vals)
-                        
+
                         lr_inv = LinearRegression()
                         lr_inv.fit(X_inv_arr, y_arr)
-                        
+
                         y_pred_inv = lr_inv.predict(X_inv_arr)
                         mse_inv = np.mean((y_arr - y_pred_inv) ** 2)
-                        
+
                         if mse_inv < 1e-10:
                             B = lr_inv.coef_[0]
                             A = lr_inv.intercept_
-                            
+
                             # Format shift string
                             if shift >= 0:
                                 shift_str = f"({var_name}+{int(shift) if shift == int(shift) else shift})"
                             else:
                                 shift_str = f"({var_name}-{int(abs(shift)) if abs(shift) == int(abs(shift)) else abs(shift)})"
-                            
+
                             parts = []
                             # Format A (Intercept)
                             if abs(A) > 1e-10:
@@ -1767,7 +1824,7 @@ def find_function_from_data(
                                     parts.append(str(int(A_round)))
                                 else:
                                     parts.append(f"{A:.10g}")
-                            
+
                             # Format B/(x+c)
                             term = ""
                             if abs(B) > 1e-10:
@@ -1782,18 +1839,18 @@ def find_function_from_data(
                                         term = f"{B_int}/{shift_str}"
                                 else:
                                     term = f"{B:.10g}/{shift_str}"
-                                
+
                                 if term:
                                     if term.startswith("-"):
                                         parts.append(f"- {term[1:]}" if parts else term)
                                     else:
                                         parts.append(f"+ {term}" if parts else term)
-                            
+
                             if parts:
                                 func_str = " ".join(parts)
                                 # Fix spacing for simple negative term
                                 if func_str.startswith("- "):
-                                     func_str = "-" + func_str[2:]
+                                    func_str = "-" + func_str[2:]
                                 return (True, func_str, None, None)
                 except Exception:
                     pass
@@ -1805,52 +1862,54 @@ def find_function_from_data(
                     # Check if domain is consistent (all positive or all negative)
                     vals_raw = [x**2 + shift for x in X_vals]
                     signs = [np.sign(v) for v in vals_raw if abs(v) > 1e-10]
-                    
-                    if not signs: continue # All zero?
+
+                    if not signs:
+                        continue  # All zero?
                     sign_factor = signs[0]
                     if not all(s == sign_factor for s in signs):
-                        continue # Mixed signs (crossing zero), can't model with simple sqrt
-                    
+                        continue  # Mixed signs (crossing zero), can't model with simple sqrt
+
                     inv_sqrt_vals = []
                     for v in vals_raw:
                         val = sign_factor * v
-                        if val < 1e-10: val = 1e-10
+                        if val < 1e-10:
+                            val = 1e-10
                         inv_sqrt_vals.append(1.0 / np.sqrt(val))
-                    
+
                     if len(inv_sqrt_vals) == len(y_vals):
                         X_pot_arr = np.array(inv_sqrt_vals).reshape(-1, 1)
                         y_arr = np.array(y_vals)
-                        
+
                         lr_pot = LinearRegression()
                         lr_pot.fit(X_pot_arr, y_arr)
                         y_pred = lr_pot.predict(X_pot_arr)
-                        mse = np.mean((y_arr - y_pred)**2)
-                        
+                        mse = np.mean((y_arr - y_pred) ** 2)
+
                         if mse < 1e-10:
                             B = lr_pot.coef_[0]
                             A = lr_pot.intercept_
-                            
+
                             # Format shift string
                             # If sign_factor is 1: sqrt(x^2 + shift)
                             # If sign_factor is -1: sqrt(-shift - x^2)
-                            
+
                             if sign_factor == 1:
                                 if shift >= 0:
                                     shift_str = f"{var_name}^2+{int(shift) if shift==int(shift) else shift}"
                                 else:
                                     shift_str = f"{var_name}^2-{int(abs(shift)) if abs(shift)==int(abs(shift)) else abs(shift)}"
-                            else: # sign_factor == -1
+                            else:  # sign_factor == -1
                                 # -shift - x^2
                                 neg_shift = -shift
                                 if neg_shift >= 0:
-                                     shift_str = f"{int(neg_shift) if neg_shift==int(neg_shift) else neg_shift}-{var_name}^2"
+                                    shift_str = f"{int(neg_shift) if neg_shift==int(neg_shift) else neg_shift}-{var_name}^2"
                                 else:
-                                     shift_str = f"-{var_name}^2-{int(abs(neg_shift)) if abs(neg_shift)==int(abs(neg_shift)) else abs(neg_shift)}"
+                                    shift_str = f"-{var_name}^2-{int(abs(neg_shift)) if abs(neg_shift)==int(abs(neg_shift)) else abs(neg_shift)}"
 
                             parts = []
                             if abs(A) > 1e-5:
                                 parts.append(f"{float(A):.10g}")
-                                
+
                             term = ""
                             if abs(B) > 1e-10:
                                 if abs(B - 1.0) < 1e-4:
@@ -1859,16 +1918,17 @@ def find_function_from_data(
                                     term = f"-1/sqrt({shift_str})"
                                 else:
                                     term = f"{float(B):.10g}/sqrt({shift_str})"
-                                    
+
                             if term:
                                 if term.startswith("-"):
-                                     parts.append(f"- {term[1:]}" if parts else term)
+                                    parts.append(f"- {term[1:]}" if parts else term)
                                 else:
-                                     parts.append(f"+ {term}" if parts else term)
-                                     
+                                    parts.append(f"+ {term}" if parts else term)
+
                             if parts:
                                 func_str = " ".join(parts)
-                                if func_str.startswith("- "): func_str = "-" + func_str[2:]
+                                if func_str.startswith("- "):
+                                    func_str = "-" + func_str[2:]
                                 return (True, func_str, None, None)
                 except Exception:
                     pass
@@ -1881,7 +1941,7 @@ def find_function_from_data(
     if n_params >= 2 and len(data_points) >= 2:
         try:
             import numpy as np
-            
+
             # Extract X and y data
             X_data = []
             for p in data_points:
@@ -1890,10 +1950,10 @@ def find_function_from_data(
                 else:
                     X_data.append([eval_to_float(p[0])])
             y_data = [eval_to_float(p[1]) for p in data_points]
-            
+
             X_arr = np.array(X_data)
             y_arr = np.array(y_data)
-            
+
             # Test 2-variable product: y = x0 * x1
             if n_params == 2:
                 product = X_arr[:, 0] * X_arr[:, 1]
@@ -1905,27 +1965,46 @@ def find_function_from_data(
                         if abs(coeff - 1.0) < 1e-9:
                             func_str = f"{param_names[0]}*{param_names[1]}"
                         elif abs(coeff - round(coeff)) < 1e-9:
-                            func_str = f"{int(round(coeff))}*{param_names[0]}*{param_names[1]}"
+                            func_str = (
+                                f"{int(round(coeff))}*{param_names[0]}*{param_names[1]}"
+                            )
                         else:
                             func_str = f"{coeff:.10g}*{param_names[0]}*{param_names[1]}"
                         return (True, func_str, None, None)
-            
+
             # Test Geometric Mean: sqrt(x * y)
             if n_params == 2:
                 product = X_arr[:, 0] * X_arr[:, 1]
-                if np.all(product >= 0) and not np.any(np.isclose(product, 0, atol=1e-10)):
+                if np.all(product >= 0) and not np.any(
+                    np.isclose(product, 0, atol=1e-10)
+                ):
                     geo_mean = np.sqrt(product)
                     # Check if y / geo_mean is constant
                     ratios = y_arr / geo_mean
                     if np.max(np.abs(ratios - ratios[0])) < 1e-6:
                         coeff = ratios[0]
                         if abs(coeff - 1.0) < 1e-9:
-                            return (True, f"sqrt({param_names[0]}*{param_names[1]})", None, None)
+                            return (
+                                True,
+                                f"sqrt({param_names[0]}*{param_names[1]})",
+                                None,
+                                None,
+                            )
                         elif abs(coeff - round(coeff)) < 1e-9:
-                            return (True, f"{int(round(coeff))}*sqrt({param_names[0]}*{param_names[1]})", None, None)
+                            return (
+                                True,
+                                f"{int(round(coeff))}*sqrt({param_names[0]}*{param_names[1]})",
+                                None,
+                                None,
+                            )
                         else:
-                            return (True, f"{coeff:.10g}*sqrt({param_names[0]}*{param_names[1]})", None, None)
-            
+                            return (
+                                True,
+                                f"{coeff:.10g}*sqrt({param_names[0]}*{param_names[1]})",
+                                None,
+                                None,
+                            )
+
             # Test Ratio: x0 / x1
             if n_params == 2:
                 # Try x0 / x1
@@ -1936,14 +2015,29 @@ def find_function_from_data(
                     if np.sum(mask) >= 1:
                         ratios = y_arr[mask] / ratio[mask]
                         if np.max(np.abs(ratios - ratios[0])) < 1e-6:
-                             if np.all(np.abs(y_arr[~mask]) < 1e-6):
-                                 coeff = ratios[0]
-                                 if abs(coeff - 1.0) < 1e-9:
-                                     return (True, f"{param_names[0]}/{param_names[1]}", None, None)
-                                 elif abs(coeff - round(coeff)) < 1e-9:
-                                     return (True, f"{int(round(coeff))}*{param_names[0]}/{param_names[1]}", None, None)
-                                 else:
-                                     return (True, f"{coeff:.10g}*{param_names[0]}/{param_names[1]}", None, None)
+                            if np.all(np.abs(y_arr[~mask]) < 1e-6):
+                                coeff = ratios[0]
+                                if abs(coeff - 1.0) < 1e-9:
+                                    return (
+                                        True,
+                                        f"{param_names[0]}/{param_names[1]}",
+                                        None,
+                                        None,
+                                    )
+                                elif abs(coeff - round(coeff)) < 1e-9:
+                                    return (
+                                        True,
+                                        f"{int(round(coeff))}*{param_names[0]}/{param_names[1]}",
+                                        None,
+                                        None,
+                                    )
+                                else:
+                                    return (
+                                        True,
+                                        f"{coeff:.10g}*{param_names[0]}/{param_names[1]}",
+                                        None,
+                                        None,
+                                    )
 
                 # Try x1 / x0
                 denom = X_arr[:, 0]
@@ -1953,15 +2047,30 @@ def find_function_from_data(
                     if np.sum(mask) >= 1:
                         ratios = y_arr[mask] / ratio[mask]
                         if np.max(np.abs(ratios - ratios[0])) < 1e-6:
-                             if np.all(np.abs(y_arr[~mask]) < 1e-6):
-                                 coeff = ratios[0]
-                                 if abs(coeff - 1.0) < 1e-9:
-                                     return (True, f"{param_names[1]}/{param_names[0]}", None, None)
-                                 elif abs(coeff - round(coeff)) < 1e-9:
-                                     return (True, f"{int(round(coeff))}*{param_names[1]}/{param_names[0]}", None, None)
-                                 else:
-                                     return (True, f"{coeff:.10g}*{param_names[1]}/{param_names[0]}", None, None)
-            
+                            if np.all(np.abs(y_arr[~mask]) < 1e-6):
+                                coeff = ratios[0]
+                                if abs(coeff - 1.0) < 1e-9:
+                                    return (
+                                        True,
+                                        f"{param_names[1]}/{param_names[0]}",
+                                        None,
+                                        None,
+                                    )
+                                elif abs(coeff - round(coeff)) < 1e-9:
+                                    return (
+                                        True,
+                                        f"{int(round(coeff))}*{param_names[1]}/{param_names[0]}",
+                                        None,
+                                        None,
+                                    )
+                                else:
+                                    return (
+                                        True,
+                                        f"{coeff:.10g}*{param_names[1]}/{param_names[0]}",
+                                        None,
+                                        None,
+                                    )
+
             # Test 3-variable product: y = x0 * x1 * x2
             if n_params >= 3:
                 product = X_arr[:, 0] * X_arr[:, 1] * X_arr[:, 2]
@@ -1971,13 +2080,15 @@ def find_function_from_data(
                     if np.max(np.abs(ratios - ratios[0])) < 1e-6:
                         coeff = ratios[0]
                         if abs(coeff - 1.0) < 1e-9:
-                            func_str = f"{param_names[0]}*{param_names[1]}*{param_names[2]}"
+                            func_str = (
+                                f"{param_names[0]}*{param_names[1]}*{param_names[2]}"
+                            )
                         elif abs(coeff - round(coeff)) < 1e-9:
                             func_str = f"{int(round(coeff))}*{param_names[0]}*{param_names[1]}*{param_names[2]}"
                         else:
                             func_str = f"{coeff:.10g}*{param_names[0]}*{param_names[1]}*{param_names[2]}"
                         return (True, func_str, None, None)
-            
+
             # Test single-variable x^2 (ghost variable detection)
             # For multi-variable data, check if y = x_i^2 for any variable
             for i in range(n_params):
@@ -1990,10 +2101,15 @@ def find_function_from_data(
                         if abs(coeff - 1.0) < 1e-9:
                             return (True, f"{var_name}^2", None, None)
                         elif abs(coeff - round(coeff)) < 1e-9:
-                            return (True, f"{int(round(coeff))}*{var_name}^2", None, None)
+                            return (
+                                True,
+                                f"{int(round(coeff))}*{var_name}^2",
+                                None,
+                                None,
+                            )
                         else:
                             return (True, f"{coeff:.10g}*{var_name}^2", None, None)
-            
+
             # Test x*y^2 interaction (Kinetic Energy pattern)
             # For 2-variable data, check if y = A * x0 * x1^2
             if n_params == 2:
@@ -2004,14 +2120,34 @@ def find_function_from_data(
                     if np.max(np.abs(ratios - ratios[0])) < 1e-3:
                         coeff = ratios[0]
                         if abs(coeff - 0.5) < 1e-3:  # Special case for kinetic energy
-                            return (True, f"1/2*{param_names[0]}*{param_names[1]}^2", None, None)
+                            return (
+                                True,
+                                f"1/2*{param_names[0]}*{param_names[1]}^2",
+                                None,
+                                None,
+                            )
                         elif abs(coeff - 1.0) < 1e-3:
-                            return (True, f"{param_names[0]}*{param_names[1]}^2", None, None)
+                            return (
+                                True,
+                                f"{param_names[0]}*{param_names[1]}^2",
+                                None,
+                                None,
+                            )
                         elif abs(coeff - round(coeff)) < 1e-3:
-                            return (True, f"{int(round(coeff))}*{param_names[0]}*{param_names[1]}^2", None, None)
+                            return (
+                                True,
+                                f"{int(round(coeff))}*{param_names[0]}*{param_names[1]}^2",
+                                None,
+                                None,
+                            )
                         else:
-                            return (True, f"{coeff:.10g}*{param_names[0]}*{param_names[1]}^2", None, None)
-                
+                            return (
+                                True,
+                                f"{coeff:.10g}*{param_names[0]}*{param_names[1]}^2",
+                                None,
+                                None,
+                            )
+
                 # Try x0^2 * x1
                 interaction2 = (X_arr[:, 0] ** 2) * X_arr[:, 1]
                 if not np.any(np.isclose(interaction2, 0, atol=1e-10)):
@@ -2019,19 +2155,39 @@ def find_function_from_data(
                     if np.max(np.abs(ratios - ratios[0])) < 1e-3:
                         coeff = ratios[0]
                         if abs(coeff - 0.5) < 1e-3:
-                            return (True, f"1/2*{param_names[0]}^2*{param_names[1]}", None, None)
+                            return (
+                                True,
+                                f"1/2*{param_names[0]}^2*{param_names[1]}",
+                                None,
+                                None,
+                            )
                         elif abs(coeff - 1.0) < 1e-3:
-                            return (True, f"{param_names[0]}^2*{param_names[1]}", None, None)
+                            return (
+                                True,
+                                f"{param_names[0]}^2*{param_names[1]}",
+                                None,
+                                None,
+                            )
                         elif abs(coeff - round(coeff)) < 1e-3:
-                            return (True, f"{int(round(coeff))}*{param_names[0]}^2*{param_names[1]}", None, None)
+                            return (
+                                True,
+                                f"{int(round(coeff))}*{param_names[0]}^2*{param_names[1]}",
+                                None,
+                                None,
+                            )
                         else:
-                            return (True, f"{coeff:.10g}*{param_names[0]}^2*{param_names[1]}", None, None)
-            
+                            return (
+                                True,
+                                f"{coeff:.10g}*{param_names[0]}^2*{param_names[1]}",
+                                None,
+                                None,
+                            )
+
             # Test 2-variable Physics Patterns (Field, Hyp, Diff, Res)
             if n_params == 2:
                 x0 = X_arr[:, 0]
                 x1 = X_arr[:, 1]
-                
+
                 # 1. Field Pattern: x/y^2 (Coulomb 2D)
                 # Try x0/x1^2
                 denom = x1**2
@@ -2041,12 +2197,22 @@ def find_function_from_data(
                     if np.sum(mask) >= 1:
                         ratios = y_arr[mask] / term[mask]
                         if np.max(np.abs(ratios - ratios[0])) < 1e-3:
-                             if np.all(np.abs(y_arr[~mask]) < 1e-3):
-                                 coeff = ratios[0]
-                                 if abs(coeff - 1.0) < 1e-6:
-                                     return (True, f"{param_names[0]}/{param_names[1]}^2", None, None)
-                                 else:
-                                     return (True, f"{coeff:.10g}*{param_names[0]}/{param_names[1]}^2", None, None)
+                            if np.all(np.abs(y_arr[~mask]) < 1e-3):
+                                coeff = ratios[0]
+                                if abs(coeff - 1.0) < 1e-6:
+                                    return (
+                                        True,
+                                        f"{param_names[0]}/{param_names[1]}^2",
+                                        None,
+                                        None,
+                                    )
+                                else:
+                                    return (
+                                        True,
+                                        f"{coeff:.10g}*{param_names[0]}/{param_names[1]}^2",
+                                        None,
+                                        None,
+                                    )
                 # Try x1/x0^2
                 denom = x0**2
                 if not np.any(np.isclose(denom, 0, atol=1e-10)):
@@ -2055,12 +2221,22 @@ def find_function_from_data(
                     if np.sum(mask) >= 1:
                         ratios = y_arr[mask] / term[mask]
                         if np.max(np.abs(ratios - ratios[0])) < 1e-3:
-                             if np.all(np.abs(y_arr[~mask]) < 1e-3):
-                                 coeff = ratios[0]
-                                 if abs(coeff - 1.0) < 1e-6:
-                                     return (True, f"{param_names[1]}/{param_names[0]}^2", None, None)
-                                 else:
-                                     return (True, f"{coeff:.10g}*{param_names[1]}/{param_names[0]}^2", None, None)
+                            if np.all(np.abs(y_arr[~mask]) < 1e-3):
+                                coeff = ratios[0]
+                                if abs(coeff - 1.0) < 1e-6:
+                                    return (
+                                        True,
+                                        f"{param_names[1]}/{param_names[0]}^2",
+                                        None,
+                                        None,
+                                    )
+                                else:
+                                    return (
+                                        True,
+                                        f"{coeff:.10g}*{param_names[1]}/{param_names[0]}^2",
+                                        None,
+                                        None,
+                                    )
 
                 # 2. Euclidean Distance: sqrt(x^2 + y^2) (Pythagoras)
                 term = np.sqrt(x0**2 + x1**2)
@@ -2068,12 +2244,22 @@ def find_function_from_data(
                 if np.sum(mask) >= 1:
                     ratios = y_arr[mask] / term[mask]
                     if np.max(np.abs(ratios - ratios[0])) < 1e-3:
-                         if np.all(np.abs(y_arr[~mask]) < 1e-3):
-                             coeff = ratios[0]
-                             if abs(coeff - 1.0) < 1e-6:
-                                 return (True, f"sqrt({param_names[0]}^2+{param_names[1]}^2)", None, None)
-                             else:
-                                 return (True, f"{coeff:.10g}*sqrt({param_names[0]}^2+{param_names[1]}^2)", None, None)
+                        if np.all(np.abs(y_arr[~mask]) < 1e-3):
+                            coeff = ratios[0]
+                            if abs(coeff - 1.0) < 1e-6:
+                                return (
+                                    True,
+                                    f"sqrt({param_names[0]}^2+{param_names[1]}^2)",
+                                    None,
+                                    None,
+                                )
+                            else:
+                                return (
+                                    True,
+                                    f"{coeff:.10g}*sqrt({param_names[0]}^2+{param_names[1]}^2)",
+                                    None,
+                                    None,
+                                )
 
                 # 3. Difference of Squares: x^2 - y^2
                 # (Already fixed in previous step, checking next...)
@@ -2081,82 +2267,134 @@ def find_function_from_data(
                 term = x0**2 - x1**2
                 mask = np.abs(term) > 1e-10
                 if np.sum(mask) >= 1:
-                     ratios = y_arr[mask] / term[mask]
-                     if np.max(np.abs(ratios - ratios[0])) < 1e-3:
-                         if np.all(np.abs(y_arr[~mask]) < 1e-3):
-                             coeff = ratios[0]
-                             if abs(coeff - 1.0) < 1e-6:
-                                 return (True, f"{param_names[0]}^2-{param_names[1]}^2", None, None)
-                             else:
-                                 return (True, f"{coeff:.10g}*({param_names[0]}^2-{param_names[1]}^2)", None, None)
-                
+                    ratios = y_arr[mask] / term[mask]
+                    if np.max(np.abs(ratios - ratios[0])) < 1e-3:
+                        if np.all(np.abs(y_arr[~mask]) < 1e-3):
+                            coeff = ratios[0]
+                            if abs(coeff - 1.0) < 1e-6:
+                                return (
+                                    True,
+                                    f"{param_names[0]}^2-{param_names[1]}^2",
+                                    None,
+                                    None,
+                                )
+                            else:
+                                return (
+                                    True,
+                                    f"{coeff:.10g}*({param_names[0]}^2-{param_names[1]}^2)",
+                                    None,
+                                    None,
+                                )
+
                 # Try x1^2 - x0^2
                 term = x1**2 - x0**2
                 mask = np.abs(term) > 1e-10
                 if np.sum(mask) >= 1:
-                     ratios = y_arr[mask] / term[mask]
-                     if np.max(np.abs(ratios - ratios[0])) < 1e-3:
-                         if np.all(np.abs(y_arr[~mask]) < 1e-3):
-                             coeff = ratios[0]
-                             if abs(coeff - 1.0) < 1e-6:
-                                 return (True, f"{param_names[1]}^2-{param_names[0]}^2", None, None)
-                             else:
-                                 return (True, f"{coeff:.10g}*({param_names[1]}^2-{param_names[0]}^2)", None, None)
+                    ratios = y_arr[mask] / term[mask]
+                    if np.max(np.abs(ratios - ratios[0])) < 1e-3:
+                        if np.all(np.abs(y_arr[~mask]) < 1e-3):
+                            coeff = ratios[0]
+                            if abs(coeff - 1.0) < 1e-6:
+                                return (
+                                    True,
+                                    f"{param_names[1]}^2-{param_names[0]}^2",
+                                    None,
+                                    None,
+                                )
+                            else:
+                                return (
+                                    True,
+                                    f"{coeff:.10g}*({param_names[1]}^2-{param_names[0]}^2)",
+                                    None,
+                                    None,
+                                )
 
                 # 4. Resistors / Harmonic: x*y/(x+y)
                 sum_xy = x0 + x1
                 if not np.any(np.isclose(sum_xy, 0, atol=1e-10)):
-                     term = (x0 * x1) / sum_xy
-                     mask = np.abs(term) > 1e-10
-                     if np.sum(mask) >= 1:
-                         ratios = y_arr[mask] / term[mask]
-                         if np.max(np.abs(ratios - ratios[0])) < 1e-3:
-                             if np.all(np.abs(y_arr[~mask]) < 1e-3):
-                                 coeff = ratios[0]
-                                 if abs(coeff - 1.0) < 1e-6:
-                                     return (True, f"{param_names[0]}*{param_names[1]}/({param_names[0]}+{param_names[1]})", None, None)
-                                 else:
-                                     return (True, f"{coeff:.10g}*{param_names[0]}*{param_names[1]}/({param_names[0]}+{param_names[1]})", None, None)
-            
+                    term = (x0 * x1) / sum_xy
+                    mask = np.abs(term) > 1e-10
+                    if np.sum(mask) >= 1:
+                        ratios = y_arr[mask] / term[mask]
+                        if np.max(np.abs(ratios - ratios[0])) < 1e-3:
+                            if np.all(np.abs(y_arr[~mask]) < 1e-3):
+                                coeff = ratios[0]
+                                if abs(coeff - 1.0) < 1e-6:
+                                    return (
+                                        True,
+                                        f"{param_names[0]}*{param_names[1]}/({param_names[0]}+{param_names[1]})",
+                                        None,
+                                        None,
+                                    )
+                                else:
+                                    return (
+                                        True,
+                                        f"{coeff:.10g}*{param_names[0]}*{param_names[1]}/({param_names[0]}+{param_names[1]})",
+                                        None,
+                                        None,
+                                    )
+
             # Test Gravity / Coulomb: x*y/z^2 and Ideal Gas: x*y/z
             if n_params >= 3:
-                 from itertools import permutations
-                 indices = list(range(n_params))
-                 
-                 for i, j, k in permutations(indices, 3):
-                      # Avoid redundant symmetric checks (only check i < j for numerator)
-                      if i > j: continue 
+                from itertools import permutations
 
-                      # Term 1: x_i * x_j / x_k^2 (Gravity)
-                      denom_sq = X_arr[:, k]**2
-                      if not np.any(np.isclose(denom_sq, 0, atol=1e-10)):
-                           term_grav = (X_arr[:, i] * X_arr[:, j]) / denom_sq
-                           mask = np.abs(term_grav) > 1e-10
-                           if np.sum(mask) >= 1:
-                               ratios = y_arr[mask] / term_grav[mask]
-                               if np.max(np.abs(ratios - ratios[0])) < 1e-3:
-                                   if np.all(np.abs(y_arr[~mask]) < 1e-3):
-                                        coeff = ratios[0]
-                                        if abs(coeff - 1.0) < 1e-6:
-                                             return (True, f"{param_names[i]}*{param_names[j]}/{param_names[k]}^2", None, None)
-                                        else:
-                                             return (True, f"{coeff:.10g}*{param_names[i]}*{param_names[j]}/{param_names[k]}^2", None, None)
+                indices = list(range(n_params))
 
-                      # Term 2: x_i * x_j / x_k (Ideal Gas)
-                      denom = X_arr[:, k]
-                      if not np.any(np.isclose(denom, 0, atol=1e-10)):
-                           term_gas = (X_arr[:, i] * X_arr[:, j]) / denom
-                           mask = np.abs(term_gas) > 1e-10
-                           if np.sum(mask) >= 1:
-                               ratios = y_arr[mask] / term_gas[mask]
-                               if np.max(np.abs(ratios - ratios[0])) < 1e-3:
-                                   if np.all(np.abs(y_arr[~mask]) < 1e-3):
-                                        coeff = ratios[0]
-                                        if abs(coeff - 1.0) < 1e-6:
-                                             return (True, f"{param_names[i]}*{param_names[j]}/{param_names[k]}", None, None)
-                                        else:
-                                             return (True, f"{coeff:.10g}*{param_names[i]}*{param_names[j]}/{param_names[k]}", None, None)
-            
+                for i, j, k in permutations(indices, 3):
+                    # Avoid redundant symmetric checks (only check i < j for numerator)
+                    if i > j:
+                        continue
+
+                    # Term 1: x_i * x_j / x_k^2 (Gravity)
+                    denom_sq = X_arr[:, k] ** 2
+                    if not np.any(np.isclose(denom_sq, 0, atol=1e-10)):
+                        term_grav = (X_arr[:, i] * X_arr[:, j]) / denom_sq
+                        mask = np.abs(term_grav) > 1e-10
+                        if np.sum(mask) >= 1:
+                            ratios = y_arr[mask] / term_grav[mask]
+                            if np.max(np.abs(ratios - ratios[0])) < 1e-3:
+                                if np.all(np.abs(y_arr[~mask]) < 1e-3):
+                                    coeff = ratios[0]
+                                    if abs(coeff - 1.0) < 1e-6:
+                                        return (
+                                            True,
+                                            f"{param_names[i]}*{param_names[j]}/{param_names[k]}^2",
+                                            None,
+                                            None,
+                                        )
+                                    else:
+                                        return (
+                                            True,
+                                            f"{coeff:.10g}*{param_names[i]}*{param_names[j]}/{param_names[k]}^2",
+                                            None,
+                                            None,
+                                        )
+
+                    # Term 2: x_i * x_j / x_k (Ideal Gas)
+                    denom = X_arr[:, k]
+                    if not np.any(np.isclose(denom, 0, atol=1e-10)):
+                        term_gas = (X_arr[:, i] * X_arr[:, j]) / denom
+                        mask = np.abs(term_gas) > 1e-10
+                        if np.sum(mask) >= 1:
+                            ratios = y_arr[mask] / term_gas[mask]
+                            if np.max(np.abs(ratios - ratios[0])) < 1e-3:
+                                if np.all(np.abs(y_arr[~mask]) < 1e-3):
+                                    coeff = ratios[0]
+                                    if abs(coeff - 1.0) < 1e-6:
+                                        return (
+                                            True,
+                                            f"{param_names[i]}*{param_names[j]}/{param_names[k]}",
+                                            None,
+                                            None,
+                                        )
+                                    else:
+                                        return (
+                                            True,
+                                            f"{coeff:.10g}*{param_names[i]}*{param_names[j]}/{param_names[k]}",
+                                            None,
+                                            None,
+                                        )
+
         except Exception:
             pass  # Fall through to other methods
 
@@ -2165,14 +2403,18 @@ def find_function_from_data(
     if n_params == 1 and len(data_points) >= 3:
         try:
             import numpy as np
-            
+
             X_vals = [
-                eval_to_float(p[0][0]) if isinstance(p[0], (list, tuple)) else eval_to_float(p[0])
+                (
+                    eval_to_float(p[0][0])
+                    if isinstance(p[0], (list, tuple))
+                    else eval_to_float(p[0])
+                )
                 for p in data_points
             ]
             y_vals = [eval_to_float(p[1]) for p in data_points]
             var_name = param_names[0]
-            
+
             shift_values = [1, -1, 2, -2, 0.5, -0.5]
             for shift in shift_values:
                 # Test (x + shift)^2
@@ -2180,24 +2422,41 @@ def find_function_from_data(
                 errors = [abs(s - y) for s, y in zip(shifted_sq_vals, y_vals)]
                 if max(errors) < 1e-3:
                     if shift >= 0:
-                        return (True, f"({var_name}+{int(shift) if shift == int(shift) else shift})^2", None, None)
+                        return (
+                            True,
+                            f"({var_name}+{int(shift) if shift == int(shift) else shift})^2",
+                            None,
+                            None,
+                        )
                     else:
-                        return (True, f"({var_name}-{int(abs(shift)) if abs(shift) == int(abs(shift)) else abs(shift)})^2", None, None)
-                
+                        return (
+                            True,
+                            f"({var_name}-{int(abs(shift)) if abs(shift) == int(abs(shift)) else abs(shift)})^2",
+                            None,
+                            None,
+                        )
+
                 # Test A*(x + shift)^2 with coefficient
                 if not np.any(np.isclose(shifted_sq_vals, 0, atol=1e-10)):
-                    ratios = [y / s for y, s in zip(y_vals, shifted_sq_vals) if abs(s) > 1e-10]
+                    ratios = [
+                        y / s for y, s in zip(y_vals, shifted_sq_vals) if abs(s) > 1e-10
+                    ]
                     if len(ratios) >= 2 and abs(max(ratios) - min(ratios)) < 1e-3:
                         coeff = sum(ratios) / len(ratios)
                         if shift >= 0:
                             shift_str = f"({var_name}+{int(shift) if shift == int(shift) else shift})"
                         else:
                             shift_str = f"({var_name}-{int(abs(shift)) if abs(shift) == int(abs(shift)) else abs(shift)})"
-                        
+
                         if abs(coeff - 1.0) < 1e-3:
                             return (True, f"{shift_str}^2", None, None)
                         elif abs(coeff - round(coeff)) < 1e-3:
-                            return (True, f"{int(round(coeff))}*{shift_str}^2", None, None)
+                            return (
+                                True,
+                                f"{int(round(coeff))}*{shift_str}^2",
+                                None,
+                                None,
+                            )
                         else:
                             return (True, f"{coeff:.10g}*{shift_str}^2", None, None)
         except Exception:
@@ -2226,29 +2485,34 @@ def find_function_from_data(
         stages = [False, True]  # Re-enabled Phase 2
 
         for include_transcendentals in stages:
-             res = solve_regression_stage(
-                 X_data, y_data, data_points, param_names, 
-                 include_transcendentals=include_transcendentals
-             )
-             
-             if res and res[0]:
-                  success, func_str, coeffs, mse = res
-                  
-                  # Calculate R² to determine if Phase 1 is "good enough"
-                  y_var = sum((y - sum(y_data)/len(y_data))**2 for y in y_data) / len(y_data)
-                  r_squared = 1 - (mse / y_var) if y_var > 1e-10 else 0.0
-                  
-                  # If Simple Stage finds a GOOD fit (R² > 0.99), STOP.
-                  # This prevents Phase 2 transcendentals from overfitting.
-                  if not include_transcendentals and r_squared > 0.99:
-                       return (True, func_str, coeffs, None)
-                  
-                  # Otherwise, keep as candidate
-                  best_result = res
-        
+            res = solve_regression_stage(
+                X_data,
+                y_data,
+                data_points,
+                param_names,
+                include_transcendentals=include_transcendentals,
+            )
+
+            if res and res[0]:
+                success, func_str, coeffs, mse = res
+
+                # Calculate R² to determine if Phase 1 is "good enough"
+                y_var = sum((y - sum(y_data) / len(y_data)) ** 2 for y in y_data) / len(
+                    y_data
+                )
+                r_squared = 1 - (mse / y_var) if y_var > 1e-10 else 0.0
+
+                # If Simple Stage finds a GOOD fit (R² > 0.99), STOP.
+                # This prevents Phase 2 transcendentals from overfitting.
+                if not include_transcendentals and r_squared > 0.99:
+                    return (True, func_str, coeffs, None)
+
+                # Otherwise, keep as candidate
+                best_result = res
+
         if best_result:
-             success, func_str, coeffs, mse = best_result
-             return (success, func_str, coeffs, None)
+            success, func_str, coeffs, mse = best_result
+            return (success, func_str, coeffs, None)
 
         print("DEBUG: Advanced Solver failed to find a model.", file=sys.stderr)
         return (False, None, None, None)
@@ -2304,9 +2568,9 @@ def find_function_from_data(
 
             # CRITICAL: Reward Rational/Squared Simple Terms (Low Cost for Physics)
             if "/" in name:
-                penalty_factors[i] *= 0.1 # Favor Rationals strongly
+                penalty_factors[i] *= 0.1  # Favor Rationals strongly
             elif "^2" in name:
-                penalty_factors[i] *= 0.5 # Favor Squares
+                penalty_factors[i] *= 0.5  # Favor Squares
 
         X_weighted = X_norm / penalty_factors
 
@@ -2324,42 +2588,45 @@ def find_function_from_data(
         # Orthogonal Matching Pursuit (OMP) is a Greedy approach that works better for "finding the needle"
         # (e.g. n*T/V) in a haystack of features when N is small.
         if len(data_points) < 20:
-             # Use OMP with Physics Boosting
-             # We scale "Physical" columns (Squares, Rationals) so OMP's greedy dot-product selection prefers them.
-             X_omp = X_norm.copy()
-             omp_boosts = np.ones(X_norm.shape[1])
-             for i, name in enumerate(feature_names):
-                 if "^2" in name or "/" in name:
-                     scale = 10.0
-                     X_omp[:, i] *= scale
-                     omp_boosts[i] = scale
+            # Use OMP with Physics Boosting
+            # We scale "Physical" columns (Squares, Rationals) so OMP's greedy dot-product selection prefers them.
+            X_omp = X_norm.copy()
+            omp_boosts = np.ones(X_norm.shape[1])
+            for i, name in enumerate(feature_names):
+                if "^2" in name or "/" in name:
+                    scale = 10.0
+                    X_omp[:, i] *= scale
+                    omp_boosts[i] = scale
 
-             from sklearn.linear_model import OrthogonalMatchingPursuit
-             import warnings
-             
-             n_nonzero = min(len(data_points) - 1, 12) # Increased limit slightly
-             if n_nonzero < 1: n_nonzero = 1
-             
-             omp = OrthogonalMatchingPursuit(n_nonzero_coefs=n_nonzero)
-             
-             with warnings.catch_warnings():
-                 warnings.filterwarnings("ignore")
-                 omp.fit(X_omp, y_centered)
-             
-             coeffs = omp.coef_ * omp_boosts # Restore coefficient magnitude for correct ranking
-             adaptive_alpha = 0.0 # Not used
+            from sklearn.linear_model import OrthogonalMatchingPursuit
+            import warnings
+
+            n_nonzero = min(len(data_points) - 1, 12)  # Increased limit slightly
+            if n_nonzero < 1:
+                n_nonzero = 1
+
+            omp = OrthogonalMatchingPursuit(n_nonzero_coefs=n_nonzero)
+
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore")
+                omp.fit(X_omp, y_centered)
+
+            coeffs = (
+                omp.coef_ * omp_boosts
+            )  # Restore coefficient magnitude for correct ranking
+            adaptive_alpha = 0.0  # Not used
         else:
-             # Standard Lasso for larger datasets
-             coeffs = lasso_regression(
+            # Standard Lasso for larger datasets
+            coeffs = lasso_regression(
                 X_weighted.tolist(),
                 y_centered.tolist(),
                 lambda_reg=adaptive_alpha,
                 max_iterations=50000,
-             )
-             
-             # Unscale coefficients (multiply by penalty factor)
-             # Note: This unscaling logic might interact with Ranking Boosts, but we preserve it for compatibility
-             coeffs = [c * p for c, p in zip(coeffs, penalty_factors)]
+            )
+
+            # Unscale coefficients (multiply by penalty factor)
+            # Note: This unscaling logic might interact with Ranking Boosts, but we preserve it for compatibility
+            coeffs = [c * p for c, p in zip(coeffs, penalty_factors)]
 
         # Select features with non-zero coefficients
         # Use adaptive threshold to filter out numerical noise relative to signal scale
@@ -2385,18 +2652,24 @@ def find_function_from_data(
                 # Boost polynomial/interaction terms
                 boost = 1.0
                 if "/" in name:
-                     boost = 500.0 # Extreme bias for Rational laws (Rare and Specific)
+                    boost = 500.0  # Extreme bias for Rational laws (Rare and Specific)
                 elif "^2" in name:
-                     boost = 100.0 # Strong bias for Squares
+                    boost = 100.0  # Strong bias for Squares
                 elif "*" in name:
-                     boost = 5.0
+                    boost = 5.0
                 else:
-                     boost = 1.0
+                    boost = 1.0
 
                 # Penalty for mixing Powers with Transcendentals (e.g. T^2*sin(T)) - likely overfitting on small data
-                if "^" in name and ("sin(" in name or "cos(" in name or "tan(" in name or "exp(" in name or "log(" in name):
+                if "^" in name and (
+                    "sin(" in name
+                    or "cos(" in name
+                    or "tan(" in name
+                    or "exp(" in name
+                    or "log(" in name
+                ):
                     boost *= 0.1
-                
+
                 return val * boost
 
             selected_indices.sort(key=get_sort_metric, reverse=True)
@@ -2467,9 +2740,9 @@ def find_function_from_data(
                 # Format coefficient nicely with high precision
                 # Try symbolic conversion first
                 sym_coeff = _symbolify_coefficient(coeff)
-                
+
                 if sym_coeff:
-                     equation_parts.append(f"{sym_coeff}*{name}")
+                    equation_parts.append(f"{sym_coeff}*{name}")
                 elif abs(coeff - 1.0) < 1e-9:
                     term = name
                     equation_parts.append(term)

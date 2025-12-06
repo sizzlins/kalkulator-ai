@@ -1,13 +1,17 @@
-
 import sys
 import os
+
 sys.path.append(os.path.abspath(os.path.dirname(__file__) + "/.."))
 
 from kalkulator_pkg.function_manager import find_function_from_data
 
 # Entropy (S = -5 x log(x))
 data_S = [
-    ([1], 0), ([2.71828], -13.5914), ([2], -6.93147), ([10], -115.129), ([0.5], 1.73286)
+    ([1], 0),
+    ([2.71828], -13.5914),
+    ([2], -6.93147),
+    ([10], -115.129),
+    ([0.5], 1.73286),
 ]
 success, func_str, coeffs, mse = find_function_from_data(data_S, ["x"])
 print(f"Entropy Result: {func_str}")

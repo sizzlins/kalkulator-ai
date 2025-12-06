@@ -2,6 +2,7 @@ import subprocess
 import re
 import sys
 
+
 def run_test(name, command_input):
     print(f"\n--- {name} ---")
     try:
@@ -12,40 +13,47 @@ def run_test(name, command_input):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            cwd="c:\\Users\\LOQ\\PycharmProjects\\kalkulator-ai"
+            cwd="c:\\Users\\LOQ\\PycharmProjects\\kalkulator-ai",
         )
         stdout, stderr = process.communicate(input=command_input, timeout=10)
-        
+
         # Extract Result
         match = re.search(r"Result: (.*)", stdout)
         if match:
             result = match.group(1).strip()
             print(f"Result: {result}")
-            
+
             # Logic for specific checks
             if name == "Coulomb":
-               # Expect q1*q2/r^2 (Inverse Square)
-               res_clean = result.replace(" ", "")
-               if "/r^2" in res_clean and ("q1*q2" in res_clean or "q2*q1" in res_clean):
-                   print("STATUS: PASS")
-                   return True
+                # Expect q1*q2/r^2 (Inverse Square)
+                res_clean = result.replace(" ", "")
+                if "/r^2" in res_clean and (
+                    "q1*q2" in res_clean or "q2*q1" in res_clean
+                ):
+                    print("STATUS: PASS")
+                    return True
             elif name == "MechEnergy":
-               # Expect m*v^2 (Interaction) beating m^2
-               res_clean = result.replace(" ", "")
-               if "v^2" in res_clean and "m^2" not in res_clean:
-                   print("STATUS: PASS")
-                   return True
+                # Expect m*v^2 (Interaction) beating m^2
+                res_clean = result.replace(" ", "")
+                if "v^2" in res_clean and "m^2" not in res_clean:
+                    print("STATUS: PASS")
+                    return True
             elif name == "Spacetime":
-               # Expect squares (-A^2 + B^2...)
-               # Ensure NO interactions like A*B^2
-               res_clean = result.replace(" ", "")
-               # Check for squares
-               has_squares = "A^2" in res_clean and "B^2" in res_clean and "C^2" in res_clean and "D^2" in res_clean
-               # Check for interactions (should NOT exist, except valid squares)
-               if has_squares and "A*B" not in res_clean and "B*C" not in res_clean: 
-                   print("STATUS: PASS")
-                   return True
-                
+                # Expect squares (-A^2 + B^2...)
+                # Ensure NO interactions like A*B^2
+                res_clean = result.replace(" ", "")
+                # Check for squares
+                has_squares = (
+                    "A^2" in res_clean
+                    and "B^2" in res_clean
+                    and "C^2" in res_clean
+                    and "D^2" in res_clean
+                )
+                # Check for interactions (should NOT exist, except valid squares)
+                if has_squares and "A*B" not in res_clean and "B*C" not in res_clean:
+                    print("STATUS: PASS")
+                    return True
+
             print("STATUS: FAIL")
             return False
         else:
@@ -57,6 +65,7 @@ def run_test(name, command_input):
     except Exception as e:
         print(f"Error: {e}")
         return False
+
 
 # 1. Coulomb
 coulomb_input = "F(1,1,1)=9000.0\nF(1,1,2)=2250.0\nF(1,1,3)=1000.0\nF(2,1,1)=18000.0\nF(2,2,2)=9000.0\nF(5,4,10)=1800.0\nF(2,5,10)=900.0\nF(1,1,10)=90.0\nF(3,3,3)=9000.0\nF(10,10,1)=900000.0\nF(1,1,0.5)=36000.0\nF(4,4,4)=9000.0\nF(2,8,4)=9000.0\nF(5,5,25)=72.0\nF(10,2,100)=18.0\nfind F(q1,q2,r)\nexit\n"

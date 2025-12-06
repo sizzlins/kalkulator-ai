@@ -1,5 +1,7 @@
 """Kalkulator package: modularized components for parser, solver, worker, and CLI."""
 
+__version__ = "1.0.0"
+
 __all__ = [
     "config",
     "parser",

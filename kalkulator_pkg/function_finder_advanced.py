@@ -553,7 +553,7 @@ def generate_candidate_features(
                 # x^2 * y and x * y^2 (Cubic Interactions)
                 # Allow universally for Phase 1 to enable "Blindfold Physics" (variable agnostic)
                 # OMP Structural Boosting will handle overfitting.
-                
+
                 # x^2 * y (e.g., r^2 * h)
                 col_sq_i = (X_data[:, i] ** 2) * X_data[:, j]
                 name_sq_i = f"{variable_names[i]}^2*{variable_names[j]}"
@@ -573,10 +573,11 @@ def generate_candidate_features(
                 for k in range(j + 1, n_vars):
                     # x * y * z
                     col = X_data[:, i] * X_data[:, j] * X_data[:, k]
-                    name = f"{variable_names[i]}*{variable_names[j]}*{variable_names[k]}"
+                    name = (
+                        f"{variable_names[i]}*{variable_names[j]}*{variable_names[k]}"
+                    )
                     features.append(col)
                     feature_names.append(name)
-
 
     # --- NEW: TRANSCENDENTAL FUNCTIONS ---
     if include_transcendentals:
@@ -587,7 +588,7 @@ def generate_candidate_features(
             # Sine (sin(x))
             features.append(np.sin(col))
             feature_names.append(f"sin({name})")
-            
+
             # sin(x)/x (Sinc function - critical for signal processing)
             if not np.any(np.isclose(col, 0, atol=1e-10)):
                 sinc_col = np.sin(col) / col
@@ -618,8 +619,6 @@ def generate_candidate_features(
             if np.all(np.isfinite(exp_col)) and np.max(np.abs(exp_col)) < 1e100:
                 features.append(exp_col)
                 feature_names.append(f"exp({name})")
-            
-
 
         # Exponential Decay (exp(-x))
         with np.errstate(over="ignore"):
@@ -715,7 +714,7 @@ def generate_candidate_features(
 
             features.append(1 / (col**2))
             feature_names.append(f"1/{name}^2")
-            
+
             # Inverse Quartic (for Hagen-Poiseuille: 1/r^4)
             features.append(1 / (col**4))
             feature_names.append(f"1/{name}^4")
@@ -727,7 +726,7 @@ def generate_candidate_features(
             for j in range(n_vars):
                 if i == j:
                     continue
-                
+
                 # Feature: x / y
                 col_i = X_data[:, i]
                 col_j = X_data[:, j]
@@ -737,14 +736,14 @@ def generate_candidate_features(
                 if not np.any(np.isclose(col_j, 0, atol=1e-10)):
                     features.append(col_i / col_j)
                     feature_names.append(f"{name_i}/{name_j}")
-    
+
     if n_vars > 2:
         for i in range(n_vars):
             for j in range(i + 1, n_vars):
                 for k in range(n_vars):
                     if k == i or k == j:
-                         continue
-                    
+                        continue
+
                     # Feature: x * y / z
                     col_i = X_data[:, i]
                     col_j = X_data[:, j]
@@ -759,9 +758,9 @@ def generate_candidate_features(
                         name_new = f"{name_i}*{name_j}/{name_k}"
                         feature_names.append(name_new)
                         # print(f"DEBUG GEN: {name_new}", flush=True)
-                        
+
                         # x * y / z^2 (Inverse Square Product)
-                        features.append((col_i * col_j) / (col_k ** 2))
+                        features.append((col_i * col_j) / (col_k**2))
                         feature_names.append(f"{name_i}*{name_j}/{name_k}^2")
                         # print(f"DEBUG GEN: {name_i}*{name_j}/{name_k}^2", flush=True)
 
@@ -771,20 +770,25 @@ def generate_candidate_features(
             for j in range(i + 1, n_vars):
                 for k in range(j + 1, n_vars):
                     for l in range(n_vars):
-                        if l in [i, j, k]: continue
-                        
+                        if l in [i, j, k]:
+                            continue
+
                         col_i = X_data[:, i]
                         col_j = X_data[:, j]
                         col_k = X_data[:, k]
                         col_l = X_data[:, l]
-                        
+
                         if not np.any(np.isclose(col_l, 0, atol=1e-10)):
-                             features.append((col_i * col_j * col_k) / col_l)
-                             feature_names.append(f"{variable_names[i]}*{variable_names[j]}*{variable_names[k]}/{variable_names[l]}")
-                             
-                             # Triple Product Inverse Quartic (for Hagen-Poiseuille: mu*L*Q/r^4)
-                             features.append((col_i * col_j * col_k) / (col_l ** 4))
-                             feature_names.append(f"{variable_names[i]}*{variable_names[j]}*{variable_names[k]}/{variable_names[l]}^4")
+                            features.append((col_i * col_j * col_k) / col_l)
+                            feature_names.append(
+                                f"{variable_names[i]}*{variable_names[j]}*{variable_names[k]}/{variable_names[l]}"
+                            )
+
+                            # Triple Product Inverse Quartic (for Hagen-Poiseuille: mu*L*Q/r^4)
+                            features.append((col_i * col_j * col_k) / (col_l**4))
+                            feature_names.append(
+                                f"{variable_names[i]}*{variable_names[j]}*{variable_names[k]}/{variable_names[l]}^4"
+                            )
 
     # --- NEW: TRANSCENDENTAL FUNCTIONS (x^x, x*log(x), interactions) ---
     if include_transcendentals:
@@ -793,21 +797,24 @@ def generate_candidate_features(
         # because the generic interaction loop (lines 543+) only handles Initial columns (x, y).
         # But we haven't generated exp/sin columns yet!
         # Wait, the transcendental generation loop is BELOW here (Lines 735+ in original).
-        # I should insert my interactions AFTER generation? 
-        pass 
+        # I should insert my interactions AFTER generation?
+        pass
 
     # --- NEW: SELF-POWER FUNCTIONS (x^x) ---
     if include_transcendentals:
         for i in range(n_vars):
             col = X_data[:, i]
             name = variable_names[i]
-    
+
             # x^x is only valid for x > 0 (to stay real)
             if np.all(col > 0):
                 with np.errstate(over="ignore", invalid="ignore"):
                     # Use power(col, col)
                     self_pow = np.power(col, col)
-                    if np.all(np.isfinite(self_pow)) and np.max(np.abs(self_pow)) < 1e100:
+                    if (
+                        np.all(np.isfinite(self_pow))
+                        and np.max(np.abs(self_pow)) < 1e100
+                    ):
                         features.append(self_pow)
                         feature_names.append(f"{name}^{name}")
 
@@ -862,11 +869,15 @@ def check_log_linear_transformations(
 
                 # Format nicely
                 def _fmt_val(val):
-                     import numpy as np
-                     if abs(val - np.pi) < 1e-4: return "pi"
-                     if abs(val - 2*np.pi) < 1e-4: return "2*pi"
-                     if abs(val - 0.5*np.pi) < 1e-4: return "0.5*pi"
-                     return f"{val:.10g}"
+                    import numpy as np
+
+                    if abs(val - np.pi) < 1e-4:
+                        return "pi"
+                    if abs(val - 2 * np.pi) < 1e-4:
+                        return "2*pi"
+                    if abs(val - 0.5 * np.pi) < 1e-4:
+                        return "0.5*pi"
+                    return f"{val:.10g}"
 
                 A_str = _fmt_val(A)
                 B_str = _fmt_val(B)
@@ -901,39 +912,51 @@ def check_log_linear_transformations(
                 # Format nicely
                 # Format nicely using robust logic (same as regression_solver._symbolify_coefficient)
                 def _fmt_val(val):
-                     if abs(val) < 1e-6: return "0"
-                     
-                     # 1. Round to integer
-                     rounded = round(val)
-                     if abs(val - rounded) < 0.001 and abs(rounded) > 0.5:
-                         return str(int(rounded))
-                         
-                     # 2. Pi and Pi fractions
-                     import sympy as sp
-                     pi_val = float(sp.pi.evalf())
-                     
-                     # Check specific range including Sphere Volume 4/3 etc.
-                     for denom in [1, 2, 3, 4, 6]:
+                    if abs(val) < 1e-6:
+                        return "0"
+
+                    # 1. Round to integer
+                    rounded = round(val)
+                    if abs(val - rounded) < 0.001 and abs(rounded) > 0.5:
+                        return str(int(rounded))
+
+                    # 2. Pi and Pi fractions
+                    import sympy as sp
+
+                    pi_val = float(sp.pi.evalf())
+
+                    # Check specific range including Sphere Volume 4/3 etc.
+                    for denom in [1, 2, 3, 4, 6]:
                         for num in range(-15, 16):
-                            if num == 0: continue
+                            if num == 0:
+                                continue
                             expected = (num / denom) * pi_val
                             if abs(val - expected) < 0.001:
                                 if denom == 1:
-                                    if num == 1: return "pi"
-                                    if num == -1: return "-pi"
+                                    if num == 1:
+                                        return "pi"
+                                    if num == -1:
+                                        return "-pi"
                                     return f"{num}*pi"
                                 else:
-                                    return f"{num}/{denom}*pi" if num > 0 else f"({num}/{denom})*pi"
-                                    
-                     # 3. Simple fractions
-                     for denom in [2, 3, 4, 5, 8, 10]:
+                                    return (
+                                        f"{num}/{denom}*pi"
+                                        if num > 0
+                                        else f"({num}/{denom})*pi"
+                                    )
+
+                    # 3. Simple fractions
+                    for denom in [2, 3, 4, 5, 8, 10]:
                         for num in range(-20, 21):
-                            if num == 0: continue
+                            if num == 0:
+                                continue
                             expected = num / denom
                             if abs(val - expected) < 0.001:
-                                return f"{num}/{denom}" if num > 0 else f"({num}/{denom})"
-                                
-                     return f"{val:.10g}"
+                                return (
+                                    f"{num}/{denom}" if num > 0 else f"({num}/{denom})"
+                                )
+
+                    return f"{val:.10g}"
 
                 A_str = _fmt_val(A)
                 B_str = _fmt_val(B)
