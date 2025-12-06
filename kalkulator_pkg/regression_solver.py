@@ -123,47 +123,93 @@ def solve_regression_stage(X_data, y_data, data_points, param_names, include_tra
          omp_boosts = np.ones(X_norm.shape[1])
          for i, name in enumerate(feature_names):
              scale = 1.0
-             if "/" in name and name.count("*") >= 2 and "^4" in name: # Triple Product Inverse Quartic (mu*L*Q/r^4)
+             
+             # --- TIER 0: TRIPLE PRODUCTS (Highest Priority for m*g*h) ---
+             # Count asterisks to detect triple products like "m*g*h"
+             asterisk_count = name.count("*")
+             has_power = "^" in name
+             has_transcendental = "sin" in name or "cos" in name or "exp" in name or "log" in name or "sinh" in name or "cosh" in name
+             has_ratio = "/" in name
+             
+             if asterisk_count == 2 and not has_power and not has_transcendental and not has_ratio:
+                 # Pure triple product like m*g*h
+                 scale = 300.0
+             elif asterisk_count == 1 and not has_power and not has_transcendental and not has_ratio:
+                 # Pure double product like I*R, m*a
+                 scale = 200.0
+             
+             # --- TIER 1: RATIONAL PRODUCTS (A*B/C, Coulomb) ---
+             elif "/" in name and name.count("*") >= 2 and "^4" in name: # Triple Product Inverse Quartic (mu*L*Q/r^4)
                  scale = 100.0
              elif "/" in name and name.count("*") >= 2: # Triple Product Ratio (rho*u*L/mu)
-                 scale = 50.0
+                 scale = 100.0
              elif "sin(" in name and "/" in name: # Sinc function (sin(x)/x)
-                 scale = 50.0
+                 scale = 60.0
              elif "^4" in name and "/" in name: # Inverse Quartic (1/r^4)
-                 scale = 50.0
-             elif "^2" in name and "*" in name and "exp" not in name and "/" not in name: # Poly Interactions (r^2*h) - conservative
-                 scale = 15.0
-             elif "^2" in name and "exp" not in name:
-                 scale = 10.0
+                 scale = 100.0
+             elif "/" in name and "*" in name: # Generalized Ratio (A*B/C or A*B/C^2) - CHECK FIRST before generic ^2
+                 if "^2" in name: # Inverse Square Ratio (A*B/C^2) - COULOMB
+                     scale = 150.0
+                 else:
+                     scale = 120.0
              elif "/" in name:
+                 scale = 10.0
+             
+             # --- TIER 2: PURE TRIG (Higher than damped oscillation) ---
+             elif name in [f"sin({v})" for v in param_names] or name in [f"cos({v})" for v in param_names]:
+                 # Pure sin(x) or cos(x) - prioritize over complex damped forms
+                 scale = 150.0
+             
+             # --- TIER 3: POLYNOMIAL INTERACTIONS ---
+             elif "^2" in name and "*" in name and "exp" not in name: # Poly Interactions (r^2*h) - conservative
+                 scale = 15.0 # Will be overridden by Structural Boosting below
+             elif "^2" in name and "exp" not in name:
                  scale = 10.0
              elif "^" in name and "(" not in name and "^2" not in name and "^3" not in name and "^4" not in name: # Boost x^x only
                  scale = 10.0
              elif "log" in name: # Strong boost for Entropy (x*log(x))
-                 scale = 50.0
+                 scale = 120.0
              elif "exp" in name and ("sin" in name or "cos" in name): # Damped Oscillation
-                 scale = 10.0
+                 scale = 80.0 # Lower than pure trig
              
-             # --- PHYSICS ARCHETYPE HEURISTICS ---
-             # Detect interactions based on variable names (e.g., m*v^2 for Kinetic Energy)
-             # This avoids boosting broad patterns like x*y^2 unless variables match physics laws.
-             
-             # 1. Kinetic Energy (m, v -> m*v^2)
-             if "m" in param_names and "v" in param_names:
-                 if name == "m*v^2" or name == "v^2*m":
-                     scale = 100.0 # Huge boost for Kinetic Energy Term
-             
-             # 2. Potential Energy (m, h -> m*h OR m*g*h)
-             if "m" in param_names and "h" in param_names:
-                 if name == "m*h" or name == "h*m":
-                     scale = 80.0 # Boost for Potential Energy Term
-             
-             # 3. Geometry (r -> r^2, r^3)
-             if "r" in param_names:
-                 if name == "r^2" or name == "r^3":
-                     scale = 20.0
+             # --- TIER 4: OCCAM'S RAZOR - LINEAR TERMS FOR SPARSE DATA ---
+             # For very sparse data (<=5 points), strongly prefer linear terms
+             n_points = len(data_points)
+             if n_points <= 5 and not has_transcendental and not has_ratio:
+                 # Check if it's a linear term (just a variable name like "x", "t", "m")
+                 if name in param_names:
+                     scale = max(scale, 500.0)  # Huge boost for linear terms
+                 # Also boost constant term slightly
+                 elif name == "1":
+                     scale = max(scale, 400.0)
+            
+             # --- STRUCTURAL BOOSTING (Variable Agnostic) ---
+             # Overrides for polynomial terms to prioritize simple physics shapes.
+             # Applies to non-transcendental, non-rational terms.
+             is_transcendental = "sin" in name or "cos" in name or "exp" in name or "log" in name
+             if not is_transcendental and "/" not in name:
+                 # Estimate Degree
+                 # Count variables (splitting by *)
+                 vars_in_term = name.split("*")
+                 degree = 0
+                 for v in vars_in_term:
+                     if "^" in v:
+                         if "^2" in v: degree += 2
+                         elif "^3" in v: degree += 3
+                         else: degree += 4 # High degree
+                 # Apply Boosts - Squares > Interactions (prevents Spacetime leakage)
+                 if degree == 2:
+                     if "*" not in name: # Pure Degree 2 (x^2) - SPACETIME PRIORITY
+                         scale = max(scale, 120.0)
+                     else: # Interaction Degree 2 (x*y)
+                         scale = max(scale, 100.0)
+                 elif degree == 3: 
+                     # Tier 3: Penalty Box
+                     scale = max(scale, 90.0)
+                 # Degree 1 (Linear) left at default (or previous scale)
              
              if scale > 1.0:
+                 # if scale >= 30.0: print(f"DEBUG BOOST: name={name}, scale={scale}", flush=True)
                  X_omp[:, i] *= scale
                  omp_boosts[i] = scale
          
@@ -242,6 +288,11 @@ def solve_regression_stage(X_data, y_data, data_points, param_names, include_tra
 
     refined_coeffs = ols.coef_
     intercept = ols.intercept_
+    
+    # Zero Snap: If intercept is tiny relative to y_mean, snap to zero
+    y_mean = np.mean(y_data)
+    if abs(intercept) < 0.01 * abs(y_mean) or abs(intercept) < 1.0:
+        intercept = 0.0
     
     equation_parts = []
     sym_intercept = _symbolify_coefficient(intercept)

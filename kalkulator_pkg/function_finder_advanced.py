@@ -550,28 +550,32 @@ def generate_candidate_features(
                 feature_names.append(name)
 
                 # x^2 * y and x * y^2 (Cubic Interactions)
-                # CRITICAL: Restrict these in Phase 1 to prevent overfitting high-dim data (like Spacetime)
-                # Only allow them if they match "Physics Archetypes" (m*v^2, r^2*h)
+                # x^2 * y and x * y^2 (Cubic Interactions)
+                # Allow universally for Phase 1 to enable "Blindfold Physics" (variable agnostic)
+                # OMP Structural Boosting will handle overfitting.
                 
-                n1, n2 = variable_names[i], variable_names[j]
-                is_physics_pair = False
-                if "m" in (n1, n2) and ("v" in (n1, n2) or "h" in (n1, n2) or "c" in (n1, n2)): is_physics_pair = True
-                if "r" in (n1, n2) and "h" in (n1, n2): is_physics_pair = True
-                if "rho" in (n1, n2) and "L" in (n1, n2): is_physics_pair = True # Reynolds? No, Reynolds is x*y*z/w.
-                
-                # Allow if Phase 2 OR Physics Match
-                if include_transcendentals or is_physics_pair:
-                    # x^2 * y (e.g., r^2 * h)
-                    col_sq_i = (X_data[:, i] ** 2) * X_data[:, j]
-                    name_sq_i = f"{variable_names[i]}^2*{variable_names[j]}"
-                    features.append(col_sq_i)
-                    feature_names.append(name_sq_i)
+                # x^2 * y (e.g., r^2 * h)
+                col_sq_i = (X_data[:, i] ** 2) * X_data[:, j]
+                name_sq_i = f"{variable_names[i]}^2*{variable_names[j]}"
+                features.append(col_sq_i)
+                feature_names.append(name_sq_i)
 
-                    # x * y^2 (e.g., m * v^2)
-                    col_sq_j = X_data[:, i] * (X_data[:, j] ** 2)
-                    name_sq_j = f"{variable_names[i]}*{variable_names[j]}^2"
-                    features.append(col_sq_j)
-                    feature_names.append(name_sq_j)
+                # x * y^2 (e.g., m * v^2)
+                col_sq_j = X_data[:, i] * (X_data[:, j] ** 2)
+                name_sq_j = f"{variable_names[i]}*{variable_names[j]}^2"
+                features.append(col_sq_j)
+                feature_names.append(name_sq_j)
+
+    # 3b. Triple Interactions (x*y*z) - CRITICAL for physics like m*g*h, E=mc^2*t
+    if n_vars >= 3:
+        for i in range(n_vars):
+            for j in range(i + 1, n_vars):
+                for k in range(j + 1, n_vars):
+                    # x * y * z
+                    col = X_data[:, i] * X_data[:, j] * X_data[:, k]
+                    name = f"{variable_names[i]}*{variable_names[j]}*{variable_names[k]}"
+                    features.append(col)
+                    feature_names.append(name)
 
 
     # --- NEW: TRANSCENDENTAL FUNCTIONS ---
@@ -752,11 +756,14 @@ def generate_candidate_features(
                     if not np.any(np.isclose(col_k, 0, atol=1e-10)):
                         # x * y / z
                         features.append((col_i * col_j) / col_k)
-                        feature_names.append(f"{name_i}*{name_j}/{name_k}")
+                        name_new = f"{name_i}*{name_j}/{name_k}"
+                        feature_names.append(name_new)
+                        # print(f"DEBUG GEN: {name_new}", flush=True)
                         
                         # x * y / z^2 (Inverse Square Product)
                         features.append((col_i * col_j) / (col_k ** 2))
                         feature_names.append(f"{name_i}*{name_j}/{name_k}^2")
+                        # print(f"DEBUG GEN: {name_i}*{name_j}/{name_k}^2", flush=True)
 
     # Feature: x * y * z / w (Triple Product Ratio for Reynolds Number)
     if n_vars > 3:

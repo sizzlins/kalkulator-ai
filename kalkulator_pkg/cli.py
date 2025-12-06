@@ -5040,7 +5040,7 @@ def repl_loop(output_format: str = "human") -> None:
         try:
             from .function_manager import define_function, parse_function_definition
 
-            # Check if this looks like a function finding pattern (numeric args) vs definition (parameter names)
+            # Check if thisq(1)=1, sq(4)=2, sq(16)=4, find sq(x)s looks like a function finding pattern (numeric args) vs definition (parameter names)
             func_finding_pattern = r"([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]+\)\s*=\s*[^,]+"
             if re.search(func_finding_pattern, raw):
                 # Check if arguments are numeric (function finding) vs parameter names (function definition)

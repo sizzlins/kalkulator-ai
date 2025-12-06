@@ -33,6 +33,7 @@ from typing import Any
 
 import sympy as sp
 from sympy import parse_expr
+from sklearn.preprocessing import StandardScaler
 
 from .config import ALLOWED_SYMPY_NAMES, TRANSFORMATIONS
 from .types import ValidationError
@@ -1389,6 +1390,134 @@ def find_function_from_data(
         value = data_points[0][1]
         return (True, str(value), None, None)
 
+    # --- NEW: PRE-CHECK - Linear Fit (Occam's Razor for sparse data) ---
+    # Moved to TOP PRIORITY to prevent log-linear checks from claiming imperfect exponential fits
+    # For single-variable, always check for perfect linear fit first.
+    if n_params == 1:
+        try:
+            X_vals = [
+                eval_to_float(p[0][0]) if isinstance(p[0], (list, tuple)) else eval_to_float(p[0])
+                for p in data_points
+            ]
+            y_vals = [eval_to_float(p[1]) for p in data_points]
+            
+            # Try y = a*x + b
+            from sklearn.linear_model import LinearRegression
+            import numpy as np
+            
+            X_arr = np.array(X_vals).reshape(-1, 1)
+            y_arr = np.array(y_vals)
+            
+            lr = LinearRegression()
+            lr.fit(X_arr, y_arr)
+            
+            # Check if it's a perfect fit
+            y_pred = lr.predict(X_arr)
+            mse = np.mean((y_arr - y_pred) ** 2)
+            
+            if mse < 1e-10:  # Perfect linear fit
+                a = lr.coef_[0]
+                b = lr.intercept_
+                var_name = param_names[0]
+                
+                # Format the result
+                parts = []
+                # Format slope
+                if abs(a) > 1e-10:
+                    a_round = round(a)
+                    if abs(a - a_round) < 1e-9 and a_round != 0:
+                        if a_round == 1:
+                            parts.append(var_name)
+                        elif a_round == -1:
+                            parts.append(f"-{var_name}")
+                        else:
+                            parts.append(f"{int(a_round)}*{var_name}")
+                    else:
+                        parts.append(f"{a:.10g}*{var_name}")
+                
+                # Format intercept
+                if abs(b) > 1e-10:
+                    b_round = round(b)
+                    if abs(b - b_round) < 1e-9:
+                        if b_round > 0:
+                            parts.append(f"+ {int(b_round)}" if parts else str(int(b_round)))
+                        else:
+                            parts.append(f"- {abs(int(b_round))}" if parts else str(int(b_round)))
+                    else:
+                        if b > 0:
+                            parts.append(f"+ {b:.10g}" if parts else f"{b:.10g}")
+                        else:
+                            parts.append(f"- {abs(b):.10g}" if parts else f"{b:.10g}")
+                
+                if parts:
+                    func_str = " ".join(parts)
+                    return (True, func_str, None, None)
+        except Exception:
+            pass  # Fall through to other methods
+
+    # --- NEW: PRE-CHECK - Quadratic Shift Fit (A*x^2 + B) ---
+    # For sparse single-variable data, regression often prefers linear if boost is high.
+    if n_params == 1:
+        try:
+            X_vals = [
+                eval_to_float(p[0][0]) if isinstance(p[0], (list, tuple)) else eval_to_float(p[0])
+                for p in data_points
+            ]
+            y_vals = [eval_to_float(p[1]) for p in data_points]
+            var_name = param_names[0]
+            
+            # Try y = A*x^2 + B
+            from sklearn.linear_model import LinearRegression
+            import numpy as np
+            
+            X_sq_arr = np.array(X_vals).reshape(-1, 1) ** 2
+            y_arr = np.array(y_vals)
+            
+            lr_sq = LinearRegression()
+            lr_sq.fit(X_sq_arr, y_arr)
+            
+            # Check if it's a perfect fit
+            y_pred_sq = lr_sq.predict(X_sq_arr)
+            mse_sq = np.mean((y_arr - y_pred_sq) ** 2)
+            
+            if mse_sq < 1e-10:
+                a = lr_sq.coef_[0]
+                b = lr_sq.intercept_
+                
+                parts = []
+                # Format A*x^2
+                if abs(a) > 1e-10:
+                    a_round = round(a)
+                    if abs(a - a_round) < 1e-9 and a_round != 0:
+                        if a_round == 1:
+                            parts.append(f"{var_name}^2")
+                        elif a_round == -1:
+                            parts.append(f"-{var_name}^2")
+                        else:
+                            parts.append(f"{int(a_round)}*{var_name}^2")
+                    else:
+                        parts.append(f"{a:.10g}*{var_name}^2")
+                
+                # Format B
+                if abs(b) > 1e-10:
+                    b_round = round(b)
+                    if abs(b - b_round) < 1e-9:
+                        if b_round > 0:
+                            parts.append(f"+ {int(b_round)}" if parts else str(int(b_round)))
+                        else:
+                            parts.append(f"- {abs(int(b_round))}" if parts else str(int(b_round)))
+                    else:
+                        if b > 0:
+                            parts.append(f"+ {b:.10g}" if parts else f"{b:.10g}")
+                        else:
+                            parts.append(f"- {abs(b):.10g}" if parts else f"{b:.10g}")
+                
+                if parts:
+                    func_str = " ".join(parts)
+                    return (True, func_str, None, None)
+        except Exception:
+            pass  # Fall through to other methods
+
     # --- NEW: FAST PATH - Log-Linear Checks (Exponential & Power Laws) ---
     # Check for simple relationships like y = A*e^(Bx) or y = A*x^B
     if n_params == 1:
@@ -1421,6 +1550,659 @@ def find_function_from_data(
             traceback.print_exc()
             pass  # Fall back to other methods
 
+
+
+    # --- NEW: PRE-CHECK - Pure Trig Fit (cos(x), sin(x)) ---
+    # For single-variable, try cos(x) and sin(x) directly
+    if n_params == 1 and len(data_points) >= 3:
+        try:
+            import numpy as np
+            
+            X_vals = [
+                eval_to_float(p[0][0]) if isinstance(p[0], (list, tuple)) else eval_to_float(p[0])
+                for p in data_points
+            ]
+            y_vals = [eval_to_float(p[1]) for p in data_points]
+            var_name = param_names[0]
+            
+            # Test cos(x) and sin(x) with frequency sweeping
+            # Try frequencies: 0.5, 1, 2, 3, 4, 5, pi
+            pure_trig_freqs = [0.5, 1, 2, 3, 4, 5, np.pi]
+            pure_trig_labels = ["0.5", "1", "2", "3", "4", "5", "pi"]
+            
+            for freq, freq_label in zip(pure_trig_freqs, pure_trig_labels):
+                # Test cos(freq*x)
+                cos_vals = [np.cos(freq * x) for x in X_vals]
+                cos_errors = [abs(c - y) for c, y in zip(cos_vals, y_vals)]
+                if max(cos_errors) < 1e-3:
+                    if freq_label == "1":
+                        return (True, f"cos({var_name})", None, None)
+                    else:
+                        return (True, f"cos({freq_label}*{var_name})", None, None)
+                
+                # Test sin(freq*x)
+                sin_vals = [np.sin(freq * x) for x in X_vals]
+                sin_errors = [abs(s - y) for s, y in zip(sin_vals, y_vals)]
+                if max(sin_errors) < 1e-3:
+                    if freq_label == "1":
+                        return (True, f"sin({var_name})", None, None)
+                    else:
+                        return (True, f"sin({freq_label}*{var_name})", None, None)
+            
+            # --- DAMPED OSCILLATION FREQUENCY SWEEPING ---
+            # Test exp(-x)*cos(n*x) and exp(-x)*sin(n*x) for various frequencies
+            # Common frequencies: 1, 2, 3, 4, 5, 0.5, pi, 2*pi
+            frequencies = [1, 2, 3, 4, 5, 0.5, np.pi, 2*np.pi]
+            freq_labels = ["1", "2", "3", "4", "5", "0.5", "pi", "2*pi"]
+            
+            for freq, freq_label in zip(frequencies, freq_labels):
+                # Test exp(-x)*cos(freq*x)
+                decay_cos_vals = [np.exp(-x) * np.cos(freq * x) for x in X_vals]
+                decay_cos_errors = [abs(d - y) for d, y in zip(decay_cos_vals, y_vals)]
+                if max(decay_cos_errors) < 1e-3:
+                    if freq_label == "1":
+                        return (True, f"exp(-{var_name})*cos({var_name})", None, None)
+                    else:
+                        return (True, f"exp(-{var_name})*cos({freq_label}*{var_name})", None, None)
+                
+                # Test exp(-x)*sin(freq*x)
+                decay_sin_vals = [np.exp(-x) * np.sin(freq * x) for x in X_vals]
+                decay_sin_errors = [abs(d - y) for d, y in zip(decay_sin_vals, y_vals)]
+                if max(decay_sin_errors) < 1e-3:
+                    if freq_label == "1":
+                        return (True, f"exp(-{var_name})*sin({var_name})", None, None)
+                    else:
+                        return (True, f"exp(-{var_name})*sin({freq_label}*{var_name})", None, None)
+                
+                # Test A*exp(-x)*cos(freq*x) with coefficient fitting
+                if not np.any(np.isclose(decay_cos_vals, 0, atol=1e-10)):
+                    ratios = [y / d for y, d in zip(y_vals, decay_cos_vals) if abs(d) > 1e-10]
+                    if len(ratios) >= 2 and abs(max(ratios) - min(ratios)) < 1e-3:
+                        coeff = sum(ratios) / len(ratios)
+                        if abs(coeff - 1.0) < 1e-3:
+                            if freq_label == "1":
+                                return (True, f"exp(-{var_name})*cos({var_name})", None, None)
+                            else:
+                                return (True, f"exp(-{var_name})*cos({freq_label}*{var_name})", None, None)
+                        elif abs(coeff - round(coeff)) < 1e-3:
+                            if freq_label == "1":
+                                return (True, f"{int(round(coeff))}*exp(-{var_name})*cos({var_name})", None, None)
+                            else:
+                                return (True, f"{int(round(coeff))}*exp(-{var_name})*cos({freq_label}*{var_name})", None, None)
+            
+            # Test exp(-x^2) - Gaussian / Bell Curve
+            gaussian_vals = [np.exp(-(x**2)) for x in X_vals]
+            gaussian_errors = [abs(g - y) for g, y in zip(gaussian_vals, y_vals)]
+            if max(gaussian_errors) < 1e-2:  # Use slightly looser tolerance for Gaussian
+                return (True, f"exp(-{var_name}^2)", None, None)
+            
+            # Test exp(x) - Exponential growth
+            exp_vals = [np.exp(x) for x in X_vals]
+            exp_errors = [abs(e - y) for e, y in zip(exp_vals, y_vals)]
+            if max(exp_errors) < 1e-3:
+                return (True, f"exp({var_name})", None, None)
+            
+            # Test exp(-x) - Exponential decay
+            exp_neg_vals = [np.exp(-x) for x in X_vals]
+            exp_neg_errors = [abs(e - y) for e, y in zip(exp_neg_vals, y_vals)]
+            if max(exp_neg_errors) < 1e-3:
+                return (True, f"exp(-{var_name})", None, None)
+            
+            # Test A*log(x) - Logarithmic growth
+            # Only valid for positive x values
+            if all(x > 0 for x in X_vals):
+                log_vals = np.array([np.log(x) for x in X_vals])
+                y_arr_local = np.array(y_vals)
+                
+                # Use linear regression to find y = A*log(x) (no intercept)
+                # Check if log values have enough variance
+                if np.std(log_vals) > 1e-6:
+                    # Compute A = sum(y*log(x)) / sum(log(x)^2)
+                    A = np.dot(y_arr_local, log_vals) / np.dot(log_vals, log_vals)
+                    predicted = A * log_vals
+                    errors = np.abs(predicted - y_arr_local)
+                    
+                    if np.max(errors) < 1e-2:  # Good fit
+                        if abs(A - round(A)) < 1e-3:
+                            func_str = f"{int(round(A))}*log({var_name})"
+                        else:
+                            func_str = f"{A:.10g}*log({var_name})"
+                        return (True, func_str, None, None)
+            
+            # Test cosh(x) - Hyperbolic cosine (catenary)
+            cosh_vals = [np.cosh(x) for x in X_vals]
+            cosh_errors = [abs(c - y) for c, y in zip(cosh_vals, y_vals)]
+            if max(cosh_errors) < 1e-3:
+                return (True, f"cosh({var_name})", None, None)
+            
+            # Test sinh(x) - Hyperbolic sine
+            sinh_vals = [np.sinh(x) for x in X_vals]
+            sinh_errors = [abs(s - y) for s, y in zip(sinh_vals, y_vals)]
+            if max(sinh_errors) < 1e-3:
+                return (True, f"sinh({var_name})", None, None)
+            
+            # Test sigmoid(x) = 1 / (1 + exp(-x)) - Logistic Growth
+            sigmoid_vals = [1 / (1 + np.exp(-x)) for x in X_vals]
+            sigmoid_errors = [abs(s - y) for s, y in zip(sigmoid_vals, y_vals)]
+            if max(sigmoid_errors) < 1e-3:
+                return (True, f"1/(1+exp(-{var_name}))", None, None)
+            
+            # Test abs(x) - Absolute Value
+            abs_vals = [abs(x) for x in X_vals]
+            abs_errors = [abs(a - y) for a, y in zip(abs_vals, y_vals)]
+            if max(abs_errors) < 1e-3:
+                return (True, f"abs({var_name})", None, None)
+            
+            # Test Saturation: 1 - exp(-x)
+            # Charging capacitor curve
+            sat_vals = [1 - np.exp(-x) for x in X_vals]
+            sat_errors = [abs(s - y) for s, y in zip(sat_vals, y_vals)]
+            if max(sat_errors) < 1e-3:
+                return (True, f"1-exp(-{var_name})", None, None)
+            
+            # Test x^2 - Quadratic
+            sq_vals = [x**2 for x in X_vals]
+            sq_errors = [abs(s - y) for s, y in zip(sq_vals, y_vals)]
+            if max(sq_errors) < 1e-6:
+                return (True, f"{var_name}^2", None, None)
+            
+            # Test A*x^2 - Scaled quadratic
+            if not np.any(np.isclose(sq_vals, 0, atol=1e-10)):
+                ratios = [y / s for y, s in zip(y_vals, sq_vals) if abs(s) > 1e-10]
+                if len(ratios) >= 2:
+                    if abs(max(ratios) - min(ratios)) < 1e-6:
+                        coeff = sum(ratios) / len(ratios)
+                        if abs(coeff - 1.0) < 1e-9:
+                            return (True, f"{var_name}^2", None, None)
+                        elif abs(coeff - round(coeff)) < 1e-6:
+                            return (True, f"{int(round(coeff))}*{var_name}^2", None, None)
+                        else:
+                            return (True, f"{coeff:.10g}*{var_name}^2", None, None)
+            
+            # --- SHIFTED INVERSE DETECTION ---
+            # Test y = A + B/(x+c) for common shift values
+            # This catches patterns like 1/(x+1) and 1 - 1/(x+1) (Enzyme Kinetics)
+            shift_values = [1, -1, 2, -2, 0.5, -0.5]
+            for shift in shift_values:
+                try:
+                    # Compute 1/(x+shift) for each x value
+                    inv_vals = []
+                    valid = True
+                    for x in X_vals:
+                        denom = x + shift
+                        if abs(denom) < 1e-10:  # Avoid division by zero
+                            valid = False
+                            break
+                        inv_vals.append(1 / denom)
+                    
+                    if valid and len(inv_vals) == len(y_vals):
+                        # Use Linear Regression to find A and B in y = A + B * (1/(x+c))
+                        from sklearn.linear_model import LinearRegression
+                        import numpy as np
+                        
+                        X_inv_arr = np.array(inv_vals).reshape(-1, 1)
+                        y_arr = np.array(y_vals)
+                        
+                        lr_inv = LinearRegression()
+                        lr_inv.fit(X_inv_arr, y_arr)
+                        
+                        y_pred_inv = lr_inv.predict(X_inv_arr)
+                        mse_inv = np.mean((y_arr - y_pred_inv) ** 2)
+                        
+                        if mse_inv < 1e-10:
+                            B = lr_inv.coef_[0]
+                            A = lr_inv.intercept_
+                            
+                            # Format shift string
+                            if shift >= 0:
+                                shift_str = f"({var_name}+{int(shift) if shift == int(shift) else shift})"
+                            else:
+                                shift_str = f"({var_name}-{int(abs(shift)) if abs(shift) == int(abs(shift)) else abs(shift)})"
+                            
+                            parts = []
+                            # Format A (Intercept)
+                            if abs(A) > 1e-10:
+                                A_round = round(A)
+                                if abs(A - A_round) < 1e-9:
+                                    parts.append(str(int(A_round)))
+                                else:
+                                    parts.append(f"{A:.10g}")
+                            
+                            # Format B/(x+c)
+                            term = ""
+                            if abs(B) > 1e-10:
+                                B_round = round(B)
+                                if abs(B - B_round) < 1e-9:
+                                    B_int = int(B_round)
+                                    if B_int == 1:
+                                        term = f"1/{shift_str}"
+                                    elif B_int == -1:
+                                        term = f"-1/{shift_str}"
+                                    else:
+                                        term = f"{B_int}/{shift_str}"
+                                else:
+                                    term = f"{B:.10g}/{shift_str}"
+                                
+                                if term:
+                                    if term.startswith("-"):
+                                        parts.append(f"- {term[1:]}" if parts else term)
+                                    else:
+                                        parts.append(f"+ {term}" if parts else term)
+                            
+                            if parts:
+                                func_str = " ".join(parts)
+                                # Fix spacing for simple negative term
+                                if func_str.startswith("- "):
+                                     func_str = "-" + func_str[2:]
+                                return (True, func_str, None, None)
+                except Exception:
+                    pass
+
+            # --- POTENTIAL FIELD DETECTION (1/sqrt(x^2+c)) ---
+            pot_shifts = [1, -1, 2, -2, 0.5, -0.5]
+            for shift in pot_shifts:
+                try:
+                    # Check if domain is consistent (all positive or all negative)
+                    vals_raw = [x**2 + shift for x in X_vals]
+                    signs = [np.sign(v) for v in vals_raw if abs(v) > 1e-10]
+                    
+                    if not signs: continue # All zero?
+                    sign_factor = signs[0]
+                    if not all(s == sign_factor for s in signs):
+                        continue # Mixed signs (crossing zero), can't model with simple sqrt
+                    
+                    inv_sqrt_vals = []
+                    for v in vals_raw:
+                        val = sign_factor * v
+                        if val < 1e-10: val = 1e-10
+                        inv_sqrt_vals.append(1.0 / np.sqrt(val))
+                    
+                    if len(inv_sqrt_vals) == len(y_vals):
+                        X_pot_arr = np.array(inv_sqrt_vals).reshape(-1, 1)
+                        y_arr = np.array(y_vals)
+                        
+                        lr_pot = LinearRegression()
+                        lr_pot.fit(X_pot_arr, y_arr)
+                        y_pred = lr_pot.predict(X_pot_arr)
+                        mse = np.mean((y_arr - y_pred)**2)
+                        
+                        if mse < 1e-10:
+                            B = lr_pot.coef_[0]
+                            A = lr_pot.intercept_
+                            
+                            # Format shift string
+                            # If sign_factor is 1: sqrt(x^2 + shift)
+                            # If sign_factor is -1: sqrt(-shift - x^2)
+                            
+                            if sign_factor == 1:
+                                if shift >= 0:
+                                    shift_str = f"{var_name}^2+{int(shift) if shift==int(shift) else shift}"
+                                else:
+                                    shift_str = f"{var_name}^2-{int(abs(shift)) if abs(shift)==int(abs(shift)) else abs(shift)}"
+                            else: # sign_factor == -1
+                                # -shift - x^2
+                                neg_shift = -shift
+                                if neg_shift >= 0:
+                                     shift_str = f"{int(neg_shift) if neg_shift==int(neg_shift) else neg_shift}-{var_name}^2"
+                                else:
+                                     shift_str = f"-{var_name}^2-{int(abs(neg_shift)) if abs(neg_shift)==int(abs(neg_shift)) else abs(neg_shift)}"
+
+                            parts = []
+                            if abs(A) > 1e-5:
+                                parts.append(f"{float(A):.10g}")
+                                
+                            term = ""
+                            if abs(B) > 1e-10:
+                                if abs(B - 1.0) < 1e-4:
+                                    term = f"1/sqrt({shift_str})"
+                                elif abs(B + 1.0) < 1e-4:
+                                    term = f"-1/sqrt({shift_str})"
+                                else:
+                                    term = f"{float(B):.10g}/sqrt({shift_str})"
+                                    
+                            if term:
+                                if term.startswith("-"):
+                                     parts.append(f"- {term[1:]}" if parts else term)
+                                else:
+                                     parts.append(f"+ {term}" if parts else term)
+                                     
+                            if parts:
+                                func_str = " ".join(parts)
+                                if func_str.startswith("- "): func_str = "-" + func_str[2:]
+                                return (True, func_str, None, None)
+                except Exception:
+                    pass
+
+        except Exception:
+            pass
+
+    # --- NEW: PRE-CHECK - Simple Product Fit (x*y, x*y*z) ---
+    # For multi-variable sparse data, try simple products directly
+    if n_params >= 2 and len(data_points) >= 2:
+        try:
+            import numpy as np
+            
+            # Extract X and y data
+            X_data = []
+            for p in data_points:
+                if isinstance(p[0], (list, tuple)):
+                    X_data.append([eval_to_float(x) for x in p[0]])
+                else:
+                    X_data.append([eval_to_float(p[0])])
+            y_data = [eval_to_float(p[1]) for p in data_points]
+            
+            X_arr = np.array(X_data)
+            y_arr = np.array(y_data)
+            
+            # Test 2-variable product: y = x0 * x1
+            if n_params == 2:
+                product = X_arr[:, 0] * X_arr[:, 1]
+                if not np.any(np.isclose(product, 0, atol=1e-10)):
+                    # Check if y / product is constant
+                    ratios = y_arr / product
+                    if np.max(np.abs(ratios - ratios[0])) < 1e-6:
+                        coeff = ratios[0]
+                        if abs(coeff - 1.0) < 1e-9:
+                            func_str = f"{param_names[0]}*{param_names[1]}"
+                        elif abs(coeff - round(coeff)) < 1e-9:
+                            func_str = f"{int(round(coeff))}*{param_names[0]}*{param_names[1]}"
+                        else:
+                            func_str = f"{coeff:.10g}*{param_names[0]}*{param_names[1]}"
+                        return (True, func_str, None, None)
+            
+            # Test Geometric Mean: sqrt(x * y)
+            if n_params == 2:
+                product = X_arr[:, 0] * X_arr[:, 1]
+                if np.all(product >= 0) and not np.any(np.isclose(product, 0, atol=1e-10)):
+                    geo_mean = np.sqrt(product)
+                    # Check if y / geo_mean is constant
+                    ratios = y_arr / geo_mean
+                    if np.max(np.abs(ratios - ratios[0])) < 1e-6:
+                        coeff = ratios[0]
+                        if abs(coeff - 1.0) < 1e-9:
+                            return (True, f"sqrt({param_names[0]}*{param_names[1]})", None, None)
+                        elif abs(coeff - round(coeff)) < 1e-9:
+                            return (True, f"{int(round(coeff))}*sqrt({param_names[0]}*{param_names[1]})", None, None)
+                        else:
+                            return (True, f"{coeff:.10g}*sqrt({param_names[0]}*{param_names[1]})", None, None)
+            
+            # Test Ratio: x0 / x1
+            if n_params == 2:
+                # Try x0 / x1
+                denom = X_arr[:, 1]
+                if not np.any(np.isclose(denom, 0, atol=1e-10)):
+                    ratio = X_arr[:, 0] / denom
+                    mask = np.abs(ratio) > 1e-10
+                    if np.sum(mask) >= 1:
+                        ratios = y_arr[mask] / ratio[mask]
+                        if np.max(np.abs(ratios - ratios[0])) < 1e-6:
+                             if np.all(np.abs(y_arr[~mask]) < 1e-6):
+                                 coeff = ratios[0]
+                                 if abs(coeff - 1.0) < 1e-9:
+                                     return (True, f"{param_names[0]}/{param_names[1]}", None, None)
+                                 elif abs(coeff - round(coeff)) < 1e-9:
+                                     return (True, f"{int(round(coeff))}*{param_names[0]}/{param_names[1]}", None, None)
+                                 else:
+                                     return (True, f"{coeff:.10g}*{param_names[0]}/{param_names[1]}", None, None)
+
+                # Try x1 / x0
+                denom = X_arr[:, 0]
+                if not np.any(np.isclose(denom, 0, atol=1e-10)):
+                    ratio = X_arr[:, 1] / denom
+                    mask = np.abs(ratio) > 1e-10
+                    if np.sum(mask) >= 1:
+                        ratios = y_arr[mask] / ratio[mask]
+                        if np.max(np.abs(ratios - ratios[0])) < 1e-6:
+                             if np.all(np.abs(y_arr[~mask]) < 1e-6):
+                                 coeff = ratios[0]
+                                 if abs(coeff - 1.0) < 1e-9:
+                                     return (True, f"{param_names[1]}/{param_names[0]}", None, None)
+                                 elif abs(coeff - round(coeff)) < 1e-9:
+                                     return (True, f"{int(round(coeff))}*{param_names[1]}/{param_names[0]}", None, None)
+                                 else:
+                                     return (True, f"{coeff:.10g}*{param_names[1]}/{param_names[0]}", None, None)
+            
+            # Test 3-variable product: y = x0 * x1 * x2
+            if n_params >= 3:
+                product = X_arr[:, 0] * X_arr[:, 1] * X_arr[:, 2]
+                if not np.any(np.isclose(product, 0, atol=1e-10)):
+                    # Check if y / product is constant
+                    ratios = y_arr / product
+                    if np.max(np.abs(ratios - ratios[0])) < 1e-6:
+                        coeff = ratios[0]
+                        if abs(coeff - 1.0) < 1e-9:
+                            func_str = f"{param_names[0]}*{param_names[1]}*{param_names[2]}"
+                        elif abs(coeff - round(coeff)) < 1e-9:
+                            func_str = f"{int(round(coeff))}*{param_names[0]}*{param_names[1]}*{param_names[2]}"
+                        else:
+                            func_str = f"{coeff:.10g}*{param_names[0]}*{param_names[1]}*{param_names[2]}"
+                        return (True, func_str, None, None)
+            
+            # Test single-variable x^2 (ghost variable detection)
+            # For multi-variable data, check if y = x_i^2 for any variable
+            for i in range(n_params):
+                sq_vals = X_arr[:, i] ** 2
+                if not np.any(np.isclose(sq_vals, 0, atol=1e-10)):
+                    ratios = y_arr / sq_vals
+                    if np.max(np.abs(ratios - ratios[0])) < 1e-6:
+                        coeff = ratios[0]
+                        var_name = param_names[i]
+                        if abs(coeff - 1.0) < 1e-9:
+                            return (True, f"{var_name}^2", None, None)
+                        elif abs(coeff - round(coeff)) < 1e-9:
+                            return (True, f"{int(round(coeff))}*{var_name}^2", None, None)
+                        else:
+                            return (True, f"{coeff:.10g}*{var_name}^2", None, None)
+            
+            # Test x*y^2 interaction (Kinetic Energy pattern)
+            # For 2-variable data, check if y = A * x0 * x1^2
+            if n_params == 2:
+                # Try x0 * x1^2
+                interaction1 = X_arr[:, 0] * (X_arr[:, 1] ** 2)
+                if not np.any(np.isclose(interaction1, 0, atol=1e-10)):
+                    ratios = y_arr / interaction1
+                    if np.max(np.abs(ratios - ratios[0])) < 1e-3:
+                        coeff = ratios[0]
+                        if abs(coeff - 0.5) < 1e-3:  # Special case for kinetic energy
+                            return (True, f"1/2*{param_names[0]}*{param_names[1]}^2", None, None)
+                        elif abs(coeff - 1.0) < 1e-3:
+                            return (True, f"{param_names[0]}*{param_names[1]}^2", None, None)
+                        elif abs(coeff - round(coeff)) < 1e-3:
+                            return (True, f"{int(round(coeff))}*{param_names[0]}*{param_names[1]}^2", None, None)
+                        else:
+                            return (True, f"{coeff:.10g}*{param_names[0]}*{param_names[1]}^2", None, None)
+                
+                # Try x0^2 * x1
+                interaction2 = (X_arr[:, 0] ** 2) * X_arr[:, 1]
+                if not np.any(np.isclose(interaction2, 0, atol=1e-10)):
+                    ratios = y_arr / interaction2
+                    if np.max(np.abs(ratios - ratios[0])) < 1e-3:
+                        coeff = ratios[0]
+                        if abs(coeff - 0.5) < 1e-3:
+                            return (True, f"1/2*{param_names[0]}^2*{param_names[1]}", None, None)
+                        elif abs(coeff - 1.0) < 1e-3:
+                            return (True, f"{param_names[0]}^2*{param_names[1]}", None, None)
+                        elif abs(coeff - round(coeff)) < 1e-3:
+                            return (True, f"{int(round(coeff))}*{param_names[0]}^2*{param_names[1]}", None, None)
+                        else:
+                            return (True, f"{coeff:.10g}*{param_names[0]}^2*{param_names[1]}", None, None)
+            
+            # Test 2-variable Physics Patterns (Field, Hyp, Diff, Res)
+            if n_params == 2:
+                x0 = X_arr[:, 0]
+                x1 = X_arr[:, 1]
+                
+                # 1. Field Pattern: x/y^2 (Coulomb 2D)
+                # Try x0/x1^2
+                denom = x1**2
+                if not np.any(np.isclose(denom, 0, atol=1e-10)):
+                    term = x0 / denom
+                    mask = np.abs(term) > 1e-10
+                    if np.sum(mask) >= 1:
+                        ratios = y_arr[mask] / term[mask]
+                        if np.max(np.abs(ratios - ratios[0])) < 1e-3:
+                             if np.all(np.abs(y_arr[~mask]) < 1e-3):
+                                 coeff = ratios[0]
+                                 if abs(coeff - 1.0) < 1e-6:
+                                     return (True, f"{param_names[0]}/{param_names[1]}^2", None, None)
+                                 else:
+                                     return (True, f"{coeff:.10g}*{param_names[0]}/{param_names[1]}^2", None, None)
+                # Try x1/x0^2
+                denom = x0**2
+                if not np.any(np.isclose(denom, 0, atol=1e-10)):
+                    term = x1 / denom
+                    mask = np.abs(term) > 1e-10
+                    if np.sum(mask) >= 1:
+                        ratios = y_arr[mask] / term[mask]
+                        if np.max(np.abs(ratios - ratios[0])) < 1e-3:
+                             if np.all(np.abs(y_arr[~mask]) < 1e-3):
+                                 coeff = ratios[0]
+                                 if abs(coeff - 1.0) < 1e-6:
+                                     return (True, f"{param_names[1]}/{param_names[0]}^2", None, None)
+                                 else:
+                                     return (True, f"{coeff:.10g}*{param_names[1]}/{param_names[0]}^2", None, None)
+
+                # 2. Euclidean Distance: sqrt(x^2 + y^2) (Pythagoras)
+                term = np.sqrt(x0**2 + x1**2)
+                mask = np.abs(term) > 1e-10
+                if np.sum(mask) >= 1:
+                    ratios = y_arr[mask] / term[mask]
+                    if np.max(np.abs(ratios - ratios[0])) < 1e-3:
+                         if np.all(np.abs(y_arr[~mask]) < 1e-3):
+                             coeff = ratios[0]
+                             if abs(coeff - 1.0) < 1e-6:
+                                 return (True, f"sqrt({param_names[0]}^2+{param_names[1]}^2)", None, None)
+                             else:
+                                 return (True, f"{coeff:.10g}*sqrt({param_names[0]}^2+{param_names[1]}^2)", None, None)
+
+                # 3. Difference of Squares: x^2 - y^2
+                # (Already fixed in previous step, checking next...)
+                # Try x0^2 - x1^2
+                term = x0**2 - x1**2
+                mask = np.abs(term) > 1e-10
+                if np.sum(mask) >= 1:
+                     ratios = y_arr[mask] / term[mask]
+                     if np.max(np.abs(ratios - ratios[0])) < 1e-3:
+                         if np.all(np.abs(y_arr[~mask]) < 1e-3):
+                             coeff = ratios[0]
+                             if abs(coeff - 1.0) < 1e-6:
+                                 return (True, f"{param_names[0]}^2-{param_names[1]}^2", None, None)
+                             else:
+                                 return (True, f"{coeff:.10g}*({param_names[0]}^2-{param_names[1]}^2)", None, None)
+                
+                # Try x1^2 - x0^2
+                term = x1**2 - x0**2
+                mask = np.abs(term) > 1e-10
+                if np.sum(mask) >= 1:
+                     ratios = y_arr[mask] / term[mask]
+                     if np.max(np.abs(ratios - ratios[0])) < 1e-3:
+                         if np.all(np.abs(y_arr[~mask]) < 1e-3):
+                             coeff = ratios[0]
+                             if abs(coeff - 1.0) < 1e-6:
+                                 return (True, f"{param_names[1]}^2-{param_names[0]}^2", None, None)
+                             else:
+                                 return (True, f"{coeff:.10g}*({param_names[1]}^2-{param_names[0]}^2)", None, None)
+
+                # 4. Resistors / Harmonic: x*y/(x+y)
+                sum_xy = x0 + x1
+                if not np.any(np.isclose(sum_xy, 0, atol=1e-10)):
+                     term = (x0 * x1) / sum_xy
+                     mask = np.abs(term) > 1e-10
+                     if np.sum(mask) >= 1:
+                         ratios = y_arr[mask] / term[mask]
+                         if np.max(np.abs(ratios - ratios[0])) < 1e-3:
+                             if np.all(np.abs(y_arr[~mask]) < 1e-3):
+                                 coeff = ratios[0]
+                                 if abs(coeff - 1.0) < 1e-6:
+                                     return (True, f"{param_names[0]}*{param_names[1]}/({param_names[0]}+{param_names[1]})", None, None)
+                                 else:
+                                     return (True, f"{coeff:.10g}*{param_names[0]}*{param_names[1]}/({param_names[0]}+{param_names[1]})", None, None)
+            
+            # Test Gravity / Coulomb: x*y/z^2 and Ideal Gas: x*y/z
+            if n_params >= 3:
+                 from itertools import permutations
+                 indices = list(range(n_params))
+                 
+                 for i, j, k in permutations(indices, 3):
+                      # Avoid redundant symmetric checks (only check i < j for numerator)
+                      if i > j: continue 
+
+                      # Term 1: x_i * x_j / x_k^2 (Gravity)
+                      denom_sq = X_arr[:, k]**2
+                      if not np.any(np.isclose(denom_sq, 0, atol=1e-10)):
+                           term_grav = (X_arr[:, i] * X_arr[:, j]) / denom_sq
+                           mask = np.abs(term_grav) > 1e-10
+                           if np.sum(mask) >= 1:
+                               ratios = y_arr[mask] / term_grav[mask]
+                               if np.max(np.abs(ratios - ratios[0])) < 1e-3:
+                                   if np.all(np.abs(y_arr[~mask]) < 1e-3):
+                                        coeff = ratios[0]
+                                        if abs(coeff - 1.0) < 1e-6:
+                                             return (True, f"{param_names[i]}*{param_names[j]}/{param_names[k]}^2", None, None)
+                                        else:
+                                             return (True, f"{coeff:.10g}*{param_names[i]}*{param_names[j]}/{param_names[k]}^2", None, None)
+
+                      # Term 2: x_i * x_j / x_k (Ideal Gas)
+                      denom = X_arr[:, k]
+                      if not np.any(np.isclose(denom, 0, atol=1e-10)):
+                           term_gas = (X_arr[:, i] * X_arr[:, j]) / denom
+                           mask = np.abs(term_gas) > 1e-10
+                           if np.sum(mask) >= 1:
+                               ratios = y_arr[mask] / term_gas[mask]
+                               if np.max(np.abs(ratios - ratios[0])) < 1e-3:
+                                   if np.all(np.abs(y_arr[~mask]) < 1e-3):
+                                        coeff = ratios[0]
+                                        if abs(coeff - 1.0) < 1e-6:
+                                             return (True, f"{param_names[i]}*{param_names[j]}/{param_names[k]}", None, None)
+                                        else:
+                                             return (True, f"{coeff:.10g}*{param_names[i]}*{param_names[j]}/{param_names[k]}", None, None)
+            
+        except Exception:
+            pass  # Fall through to other methods
+
+    # --- NEW: PRE-CHECK - Shifted Polynomial (x+c)^2 ---
+    # For single-variable, test if y = (x + c)^2 for common shifts
+    if n_params == 1 and len(data_points) >= 3:
+        try:
+            import numpy as np
+            
+            X_vals = [
+                eval_to_float(p[0][0]) if isinstance(p[0], (list, tuple)) else eval_to_float(p[0])
+                for p in data_points
+            ]
+            y_vals = [eval_to_float(p[1]) for p in data_points]
+            var_name = param_names[0]
+            
+            shift_values = [1, -1, 2, -2, 0.5, -0.5]
+            for shift in shift_values:
+                # Test (x + shift)^2
+                shifted_sq_vals = [(x + shift) ** 2 for x in X_vals]
+                errors = [abs(s - y) for s, y in zip(shifted_sq_vals, y_vals)]
+                if max(errors) < 1e-3:
+                    if shift >= 0:
+                        return (True, f"({var_name}+{int(shift) if shift == int(shift) else shift})^2", None, None)
+                    else:
+                        return (True, f"({var_name}-{int(abs(shift)) if abs(shift) == int(abs(shift)) else abs(shift)})^2", None, None)
+                
+                # Test A*(x + shift)^2 with coefficient
+                if not np.any(np.isclose(shifted_sq_vals, 0, atol=1e-10)):
+                    ratios = [y / s for y, s in zip(y_vals, shifted_sq_vals) if abs(s) > 1e-10]
+                    if len(ratios) >= 2 and abs(max(ratios) - min(ratios)) < 1e-3:
+                        coeff = sum(ratios) / len(ratios)
+                        if shift >= 0:
+                            shift_str = f"({var_name}+{int(shift) if shift == int(shift) else shift})"
+                        else:
+                            shift_str = f"({var_name}-{int(abs(shift)) if abs(shift) == int(abs(shift)) else abs(shift)})"
+                        
+                        if abs(coeff - 1.0) < 1e-3:
+                            return (True, f"{shift_str}^2", None, None)
+                        elif abs(coeff - round(coeff)) < 1e-3:
+                            return (True, f"{int(round(coeff))}*{shift_str}^2", None, None)
+                        else:
+                            return (True, f"{coeff:.10g}*{shift_str}^2", None, None)
+        except Exception:
+            pass  # Fall through to other methods
+
     # Uses OMP to find combinations of sin, cos, exp, log, 1/x, etc.
     try:
         from .regression_solver import solve_regression_stage
@@ -1441,7 +2223,7 @@ def find_function_from_data(
         # Stage 1: Simple Features Only (Poly + Rational). Avoids "Gaussian Trap".
         # Stage 2: Complex Features (Transcendentals). Only if Stage 1 fails.
         best_result = None
-        stages = [False, True]
+        stages = [False, True]  # Re-enabled Phase 2
 
         for include_transcendentals in stages:
              res = solve_regression_stage(
@@ -1452,30 +2234,27 @@ def find_function_from_data(
              if res and res[0]:
                   success, func_str, coeffs, mse = res
                   
-                  # Check complexity (Tier 1 Trap)
-                  # Relax limit for high-dimensional functions (e.g. Spacetime has 4 terms: -t^2+x^2+y^2+z^2)
-                  # Limit = max(3, len(param_names) + 2)
-                  term_limit = max(3, len(param_names) + 1)
-                  num_terms = len(coeffs) if coeffs is not None else 0
-
-                  # If Simple Stage finds a perfect physics law (MSE ~ 0) AND it is Simple, STOP.
-                  if not include_transcendentals and mse < 1e-9 and num_terms <= term_limit:
+                  # Calculate R² to determine if Phase 1 is "good enough"
+                  y_var = sum((y - sum(y_data)/len(y_data))**2 for y in y_data) / len(y_data)
+                  r_squared = 1 - (mse / y_var) if y_var > 1e-10 else 0.0
+                  
+                  # If Simple Stage finds a GOOD fit (R² > 0.99), STOP.
+                  # This prevents Phase 2 transcendentals from overfitting.
+                  if not include_transcendentals and r_squared > 0.99:
                        return (True, func_str, coeffs, None)
                   
-                  # Otherwise, keep as candidate (might be improved by Stage 2)
-                  # But usually if Stage 1 fails (MSE high), Stage 2 is needed.
-                  # If Stage 1 is "Okay" but not "Perfect", Stage 2 might fit noise.
-                  # But we store it.
+                  # Otherwise, keep as candidate
                   best_result = res
         
         if best_result:
              success, func_str, coeffs, mse = best_result
-             # Return if MSE is acceptable, otherwise we might fall through to other methods?
-             # But this is the Advanced method. We usually return what we found.
              return (success, func_str, coeffs, None)
 
-        scaler = StandardScaler()
-        X_norm = scaler.fit_transform(X_matrix)
+        print("DEBUG: Advanced Solver failed to find a model.", file=sys.stderr)
+        return (False, None, None, None)
+
+        # Fallback Code Disabled
+        # ...
 
         # Solve using Lasso (L1 Regularization)
         # Use fixed alpha=0.05 (stronger regularization) with StandardScaler
