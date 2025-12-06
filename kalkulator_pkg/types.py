@@ -18,7 +18,7 @@ class EvalResult:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
-        result_dict = {"ok": self.ok}
+        result_dict: dict[str, Any] = {"ok": self.ok}
         if self.result is not None:
             result_dict["result"] = self.result
         if self.approx is not None:
@@ -62,7 +62,7 @@ class SolveResult:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
-        result_dict = {"ok": self.ok, "type": self.result_type}
+        result_dict: dict[str, Any] = {"ok": self.ok, "type": self.result_type}
         if self.error is not None:
             result_dict["error"] = self.error
         if self.exact is not None:
@@ -100,14 +100,14 @@ class InequalityResult:
     """Result of solving an inequality."""
 
     ok: bool
-    ok: bool
+
     result_type: str = field(default="inequality")
     error: str | None = None
     solutions: dict[str, str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
-        result_dict = {"ok": self.ok, "type": self.result_type}
+        result_dict: dict[str, Any] = {"ok": self.ok, "type": self.result_type}
         if self.error is not None:
             result_dict["error"] = self.error
         if self.solutions is not None:

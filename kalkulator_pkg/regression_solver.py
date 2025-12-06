@@ -201,7 +201,7 @@ def solve_regression_stage(
                 f"cos({v})" for v in param_names
             ]:
                 # Pure sin(x) or cos(x) - prioritize over complex damped forms
-                scale = 150.0
+                scale = 5.0 # Reduced from 150.0
 
             # --- TIER 3: POLYNOMIAL INTERACTIONS ---
             elif (
@@ -219,11 +219,11 @@ def solve_regression_stage(
             ):  # Boost x^x only
                 scale = 10.0
             elif "log" in name:  # Strong boost for Entropy (x*log(x))
-                scale = 120.0
+                scale = 5.0 # Reduced from 120.0
             elif "exp" in name and (
                 "sin" in name or "cos" in name
             ):  # Damped Oscillation
-                scale = 80.0  # Lower than pure trig
+                scale = 5.0  # Reduced from 80.0
 
             # --- TIER 4: OCCAM'S RAZOR - LINEAR TERMS FOR SPARSE DATA ---
             # For very sparse data (<=5 points), strongly prefer linear terms
@@ -231,7 +231,9 @@ def solve_regression_stage(
             if n_points <= 5 and not has_transcendental and not has_ratio:
                 # Check if it's a linear term (just a variable name like "x", "t", "m")
                 if name in param_names:
-                    scale = max(scale, 1.0)  # Disabled (was 50.0) - Pre-checks handle linear cheats now
+                    scale = max(
+                        scale, 1.0
+                    )  # Disabled (was 50.0) - Pre-checks handle linear cheats now
                 # Also boost constant term slightly
                 elif name == "1":
                     scale = max(scale, 1.0)

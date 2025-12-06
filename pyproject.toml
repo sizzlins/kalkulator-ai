@@ -142,6 +142,7 @@ addopts = [
     "--cov-report=xml",
     "--cov-fail-under=0",
 ]
+norecursedirs = [".*", "build", "dist", "venv", ".venv", "__pycache__"]
 testpaths = ["tests"]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",

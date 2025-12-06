@@ -103,7 +103,7 @@ if __name__ == "__main__":
     sys.exit(main())
 
 
-#>>> f(312321) = 624642, f(pi) = 6.28318530717958, find f(x)
+# >>> f(312321) = 624642, f(pi) = 6.28318530717958, find f(x)
 # f(x) = 6.282458077*exp(3.684405675e-05*x)
 # Function 'f' is now available. You can call it like: f(values)
 # >>> f(312321) = 624642, f(pi) = 6.28318530717958, f(5) = 10,find f(x)
