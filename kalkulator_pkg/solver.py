@@ -1811,14 +1811,14 @@ def solve_system(raw_no_find: str, find_token: str | None) -> dict[str, Any]:
             "error": "Invalid worker-solve output: expected JSON object.",
             "error_code": "INVALID_OUTPUT",
         }
-    
+
     data: dict[str, Any] = data_untyped
     if not data.get("ok"):
         return data
     sols_list = data.get("solutions", [])
     if not find_token:
         return {"ok": True, "type": "system", "solutions": sols_list}
-    
+
     found_vals: list[str] = []
     for sol_dict in sols_list:
         v = sol_dict.get(find_token)
@@ -1827,14 +1827,14 @@ def solve_system(raw_no_find: str, find_token: str | None) -> dict[str, Any]:
         if not isinstance(v, str):
             v = str(v)
         found_vals.append(v)
-        
+
     if not found_vals:
         return {
             "ok": False,
             "error": f"No solution found for variable {find_token}.",
             "error_code": "NO_SOLUTION",
         }
-    
+
     approx_vals: list[str | None] = []
     for vstr in found_vals:
         try:
@@ -1991,7 +1991,11 @@ def solve_inverse_function(
                         except Exception:
                             pass
 
-                integer_solutions.sort(key=lambda p: (abs(p[0]), p[0], abs(p[1]), p[1]) if len(p) == 2 else 0)
+                integer_solutions.sort(
+                    key=lambda p: (
+                        (abs(p[0]), p[0], abs(p[1]), p[1]) if len(p) == 2 else 0
+                    )
+                )
 
             elif len(sorted_syms) == 1:
                 sym = sorted_syms[0]
@@ -2009,7 +2013,9 @@ def solve_inverse_function(
                 domains["integers"] = {
                     "count": len(integer_solutions),
                     "solutions": [
-                        {"x": s[0], "y": s[1]} for s in integer_solutions[:20] if len(s) == 2
+                        {"x": s[0], "y": s[1]}
+                        for s in integer_solutions[:20]
+                        if len(s) == 2
                     ],
                 }
             else:

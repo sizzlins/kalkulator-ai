@@ -13,8 +13,9 @@ import sympy as sp
 
 # Helper for Python < 3.9 compatibility
 try:
-    from math import lcm as _math_lcm 
+    from math import lcm as _math_lcm
 except ImportError:
+
     def _math_lcm(*args: int) -> int:
         if not args:
             return 1
@@ -22,6 +23,7 @@ except ImportError:
         for v in args[1:]:
             res = abs(res * v) // gcd(res, v)
         return res
+
 
 import sympy as sp
 
@@ -2425,7 +2427,9 @@ def repl_loop(output_format: str = "human") -> None:
                             # Silently continue - cache hits are optional
                             pass
                     if not eva.get("ok"):
-                        error_msg = str(eva.get("error", "Unknown error") or "Unknown error")
+                        error_msg = str(
+                            eva.get("error", "Unknown error") or "Unknown error"
+                        )
                         error_code = eva.get("error_code", "UNKNOWN_ERROR")
 
                         # Provide helpful hints based on error code

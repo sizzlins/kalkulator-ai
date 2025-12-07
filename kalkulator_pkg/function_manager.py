@@ -1390,6 +1390,19 @@ def find_function_from_data(
         value = data_points[0][1]
         return (True, str(value), None, None)
 
+    import numpy as np
+    from sklearn.linear_model import LinearRegression
+
+    # Helper for consistent power formatting
+    def _format_power(base_name: str, exponent: float) -> str:
+        if abs(exponent - round(exponent)) < 1e-8:
+            return f"{base_name}^{int(round(exponent))}"
+        # prefer decimal representation for non-integer exponents
+        s = f"{exponent:.10g}"
+        # remove trailing zeros
+        s = s.rstrip("0").rstrip(".")
+        return f"{base_name}^{s}"
+
     # --- NEW: PRE-CHECK - Linear Fit (Occam's Razor for sparse data) ---
     # Moved to TOP PRIORITY to prevent log-linear checks from claiming imperfect exponential fits
     # For single-variable, always check for perfect linear fit first.
@@ -1406,8 +1419,6 @@ def find_function_from_data(
             y_vals = [eval_to_float(p[1]) for p in data_points]
 
             # Try y = a*x + b
-            import numpy as np
-            from sklearn.linear_model import LinearRegression
 
             X_arr = np.array(X_vals).reshape(-1, 1)
             y_arr = np.array(y_vals)
@@ -1462,6 +1473,83 @@ def find_function_from_data(
                     return (True, func_str, None, None)
         except Exception:
             pass  # Fall through to other methods
+
+    # --- NEW: PRE-CHECK - Sin(x) + C (Simple Harmonic) ---
+    # Fast detection for "sin(x) + 1", "2*sin(x)", etc. before polynomial fallback
+    if n_params == 1:
+        try:
+            X_vals_sin = []
+            y_vals_sin = []
+            for p in data_points:
+                x_val = (
+                    eval_to_float(p[0][0])
+                    if isinstance(p[0], (list, tuple))
+                    else eval_to_float(p[0])
+                )
+                X_vals_sin.append(x_val)
+                y_vals_sin.append(eval_to_float(p[1]))
+
+            if len(X_vals_sin) >= 2:
+                import numpy as np
+                from sklearn.linear_model import LinearRegression
+
+                X_arr_sin = np.array(X_vals_sin)
+                y_arr_sin = np.array(y_vals_sin)
+
+                # Check A*sin(x) + C
+                s_feat = np.sin(X_arr_sin).reshape(-1, 1)
+
+                lr_sin = LinearRegression()
+                lr_sin.fit(s_feat, y_arr_sin)
+
+                y_pred_sin = lr_sin.predict(s_feat)
+                mse_sin = np.mean((y_arr_sin - y_pred_sin) ** 2)
+
+                if mse_sin < 1e-10:  # Excellent fit
+                    A = lr_sin.coef_[0]
+                    C = lr_sin.intercept_
+
+                    p_name = param_names[0]
+                    parts_sin = []
+
+                    # Format A*sin(x)
+                    if abs(A) > 1e-10:
+                        A_r = round(A)
+                        if abs(A - A_r) < 1e-9:
+                            if A_r == 1:
+                                parts_sin.append(f"sin({p_name})")
+                            elif A_r == -1:
+                                parts_sin.append(f"-sin({p_name})")
+                            else:
+                                parts_sin.append(f"{int(A_r)}*sin({p_name})")
+                        else:
+                            parts_sin.append(f"{A:.6g}*sin({p_name})")
+
+                    # Format C
+                    if abs(C) > 1e-10:
+                        C_r = round(C)
+                        if abs(C - C_r) < 1e-9:
+                            ci = int(C_r)
+                            parts_sin.append(
+                                f"+ {ci}"
+                                if parts_sin and ci > 0
+                                else (f"- {abs(ci)}" if parts_sin else f"{ci}")
+                            )
+                        else:
+                            if C > 0:
+                                parts_sin.append(
+                                    f"+ {C:.6g}" if parts_sin else f"{C:.6g}"
+                                )
+                            else:
+                                parts_sin.append(
+                                    f"- {abs(C):.6g}" if parts_sin else f"{C:.6g}"
+                                )
+
+                    if parts_sin:
+                        func_str = " ".join(parts_sin)
+                        return (True, func_str, None, None)
+        except Exception:
+            pass
 
     # --- NEW: PRE-CHECK - Quadratic Shift Fit (A*x^2 + B) ---
     # For sparse single-variable data, regression often prefers linear if boost is high.
@@ -1593,7 +1681,7 @@ def find_function_from_data(
                     elif b == 0:
                         term = "1"
                     else:
-                        term = f"{param_name}^{b}"
+                        term = _format_power(param_name, b)
 
                     if abs(a - 1.0) < 1e-4:
                         func_str = term
