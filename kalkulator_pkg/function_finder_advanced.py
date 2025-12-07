@@ -18,7 +18,7 @@ from typing import Any
 import sympy as sp
 
 try:
-    import mpmath
+    import mpmath  # noqa: F401
 
     MPMATH_AVAILABLE = True
 except ImportError:
@@ -85,7 +85,7 @@ def detect_symbolic_constant(
         )
 
         # Check if it matches any known constant
-        for const_name, const_symbol in KNOWN_CONSTANTS.items():
+        for _const_name, const_symbol in KNOWN_CONSTANTS.items():
             const_val = float(sp.N(const_symbol))
             if abs(float_val - const_val) / (abs(const_val) + 1e-10) < tolerance:
                 return const_symbol
@@ -110,7 +110,7 @@ def detect_symbolic_constant(
         pass
 
     # Direct comparison with known constants
-    for const_name, const_symbol in KNOWN_CONSTANTS.items():
+    for _const_name, const_symbol in KNOWN_CONSTANTS.items():
         try:
             const_val = float(sp.N(const_symbol))
             if abs(float_val - const_val) / (abs(const_val) + 1e-10) < tolerance:
@@ -331,7 +331,7 @@ def orthogonal_matching_pursuit(
     selected: list[int] = []
     coefficients = np.zeros(n_features)
 
-    for iteration in range(min(max_nonzero, max_iterations)):
+    for _iteration in range(min(max_nonzero, max_iterations)):
         # Find column with maximum correlation with residual
         correlations = np.abs(A_arr.T @ residual)
         correlations[selected] = -np.inf  # Don't reselect
@@ -401,7 +401,7 @@ def lasso_regression(
         n_samples, n_features = A_arr.shape
         coefficients = np.zeros(n_features)
 
-        for iteration in range(max_iterations):
+        for _iteration in range(max_iterations):
             old_coeffs = coefficients.copy()
 
             for j in range(n_features):
@@ -769,25 +769,25 @@ def generate_candidate_features(
         for i in range(n_vars):
             for j in range(i + 1, n_vars):
                 for k in range(j + 1, n_vars):
-                    for l in range(n_vars):
-                        if l in [i, j, k]:
+                    for idx_l in range(n_vars):
+                        if idx_l in [i, j, k]:
                             continue
 
                         col_i = X_data[:, i]
                         col_j = X_data[:, j]
                         col_k = X_data[:, k]
-                        col_l = X_data[:, l]
+                        col_l = X_data[:, idx_l]
 
                         if not np.any(np.isclose(col_l, 0, atol=1e-10)):
                             features.append((col_i * col_j * col_k) / col_l)
                             feature_names.append(
-                                f"{variable_names[i]}*{variable_names[j]}*{variable_names[k]}/{variable_names[l]}"
+                                f"{variable_names[i]}*{variable_names[j]}*{variable_names[k]}/{variable_names[idx_l]}"
                             )
 
                             # Triple Product Inverse Quartic (for Hagen-Poiseuille: mu*L*Q/r^4)
                             features.append((col_i * col_j * col_k) / (col_l**4))
                             feature_names.append(
-                                f"{variable_names[i]}*{variable_names[j]}*{variable_names[k]}/{variable_names[l]}^4"
+                                f"{variable_names[i]}*{variable_names[j]}*{variable_names[k]}/{variable_names[idx_l]}^4"
                             )
 
     # --- NEW: TRANSCENDENTAL FUNCTIONS (x^x, x*log(x), interactions) ---

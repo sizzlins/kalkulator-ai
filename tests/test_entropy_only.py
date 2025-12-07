@@ -15,7 +15,7 @@ data_S = [
 ]
 success, func_str, coeffs, mse = find_function_from_data(data_S, ["x"])
 print(f"Entropy Result: {func_str}")
-print(f"Expected: -5*x*log(x)")
+print("Expected: -5*x*log(x)")
 if func_str and "x*log(x)" in func_str.replace(" ", ""):
     print("STATUS: PASS")
 else:

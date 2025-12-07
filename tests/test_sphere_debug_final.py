@@ -7,8 +7,6 @@ print(f"DEBUG PATH: {sys.path}")
 
 import math
 
-import numpy as np
-
 import kalkulator_pkg.regression_solver
 
 print(f"Loaded regression_solver from: {kalkulator_pkg.regression_solver.__file__}")

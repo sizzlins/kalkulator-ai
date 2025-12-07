@@ -17,7 +17,7 @@ success, func_str, coeffs, mse = find_function_from_data(
     data_R, ["rho", "u", "L", "mu"]
 )
 print(f"Reynolds Result: {func_str}")
-print(f"Expected: rho*u*L/mu")
+print("Expected: rho*u*L/mu")
 if func_str and "rho*u*L/mu" in func_str.replace(" ", ""):
     print("STATUS: PASS")
 else:

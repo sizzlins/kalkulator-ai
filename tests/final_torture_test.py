@@ -1,8 +1,5 @@
-import math
 import os
 import sys
-
-import numpy as np
 
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.dirname(__file__) + "/.."))

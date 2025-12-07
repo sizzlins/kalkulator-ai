@@ -89,7 +89,7 @@ def _parse_to_exact_fraction(
             # First, parse as exact decimal representation
             # For "70.833", this gives 70833/1000
             exact_frac = Fraction(val)
-            exact_val = float(exact_frac)
+            float(exact_frac)
 
             # CRITICAL: For function finding, we need to detect if a decimal is a rounded
             # version of a simpler rational. For example:
@@ -198,7 +198,7 @@ def _parse_to_exact_fraction(
         try:
             exact_frac = Fraction(val_str)
             # Try to find simpler rational for floats too
-            exact_val = float(exact_frac)
+            float(exact_frac)
             tolerance = 1e-6  # Default tolerance for floats
             best_frac = exact_frac
             best_denom = exact_frac.denominator
@@ -869,7 +869,6 @@ def _find_sparse_polynomial_solution(
             total_degree = 0
             has_product = False
             has_quadratic = False
-            has_inverse = False
             has_rational = False  # e.g., x*y/z^2 (product with inverse)
             uses_variables = set()
 
@@ -899,7 +898,7 @@ def _find_sparse_polynomial_solution(
                     if e != 0:
                         uses_variables.add(i)
                     if e < 0:
-                        has_inverse = True
+                        pass
 
                 # Check if it's a rational term like x*y/z^2 (product with inverse)
                 pos_count = sum(1 for e in exps if e > 0)
@@ -916,7 +915,7 @@ def _find_sparse_polynomial_solution(
                     has_quadratic = True
 
             # Count how many data variables are used
-            vars_used_count = len(uses_variables & data_vars)
+            len(uses_variables & data_vars)
             vars_not_used = len(data_vars - uses_variables)
 
             # Prefer subsets that:
@@ -1288,7 +1287,7 @@ def _symbolify_coefficient(val):
 
 
 def find_function_from_data(
-    data_points: list[tuple[Any, Any]], param_names: list[str] = ["x"]
+    data_points: list[tuple[Any, Any]], param_names: list[str] | None = None
 ) -> tuple[bool, str | None, dict[str, Any] | None, str | None]:
     """Find a function from data points using interpolation/regression.
 
@@ -1323,6 +1322,9 @@ def find_function_from_data(
     import numpy as np
 
     # Helper function to convert symbolic expressions to floats
+    if param_names is None:
+        param_names = ["x"]
+
     def eval_to_float(val):
         """Convert a value (string or number) to float, evaluating symbolic expressions."""
         import sympy as sp
@@ -1542,7 +1544,7 @@ def find_function_from_data(
                     # and at least one of them should be non-zero
                     is_valid_A = abs(A_lin - A_r) < 1e-3 and abs(A_r) <= 10
                     is_valid_B = abs(B_sin - B_r) < 1e-3 and abs(B_r) <= 10
-                    is_valid_C = abs(C - C_r) < 1e-2 and abs(C_r) <= 10
+                    abs(C - C_r) < 1e-2 and abs(C_r) <= 10
 
                     # Only proceed if coefficients look like simple sine+linear combination
                     if is_valid_A and is_valid_B and (abs(A_r) >= 1 or abs(B_r) >= 1):
@@ -3239,7 +3241,7 @@ def find_function_from_data(
                 # For n data points, we can fit a polynomial of degree (n-1) exactly
                 # f(x) = a₀ + a₁x + a₂x² + ... + aₙ₋₁xⁿ⁻¹
                 n_points = len(data_points)
-                degree = n_points - 1
+                n_points - 1
 
                 # Check if we should try polynomial fitting (when we have more points than needed for linear)
                 if n_points > 1:
@@ -3912,7 +3914,7 @@ def find_function_from_data(
                                     and len(sol_result) >= 1
                                 ):
                                     coeffs_param = sol_result[0]
-                                    free_vars = (
+                                    (
                                         sol_result[1]
                                         if len(sol_result) > 1
                                         else sp.Matrix([])
@@ -4308,7 +4310,7 @@ def find_function_from_data(
             is_underdetermined_local = len(data_points) < n_coeffs
 
             terms = []
-            for i, (coeff, param) in enumerate(zip(param_coeffs, param_names)):
+            for _, (coeff, param) in enumerate(zip(param_coeffs, param_names)):
                 # Check if coefficient is zero
                 is_zero = False
                 try:
@@ -4452,7 +4454,7 @@ def find_function_from_data(
 
                             # Build factored form: (A*x + B*y + C) / D
                             factored_terms = []
-                            for i, (coeff_int, param) in enumerate(
+                            for _, (coeff_int, param) in enumerate(
                                 zip(scaled_ints[:-1], param_names)
                             ):
                                 if coeff_int != 0:

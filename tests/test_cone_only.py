@@ -15,7 +15,7 @@ data_V = [
 ]
 success, func_str, coeffs, mse = find_function_from_data(data_V, ["r", "h"])
 print(f"Cone Result: {func_str}")
-print(f"Expected: pi*r^2*h (or 1/3*pi*r^2*h)")
+print("Expected: pi*r^2*h (or 1/3*pi*r^2*h)")
 if func_str and (
     "r^2*h" in func_str.replace(" ", "") or "h*r^2" in func_str.replace(" ", "")
 ):

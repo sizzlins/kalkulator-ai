@@ -338,7 +338,6 @@ def _protect_function_commas(expr: str) -> tuple[str, dict[str, str]]:
         if func_name in multi_arg_funcs:
             # Replace commas in arguments with placeholders
             protected = args_content
-            comma_positions = []
             depth = 0
             result = []
             i = 0

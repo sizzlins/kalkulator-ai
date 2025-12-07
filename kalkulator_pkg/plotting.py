@@ -251,7 +251,7 @@ def plot_function(
             except Exception as e:
                 # If showing fails, try to save instead
                 try:
-                    import os
+                    import os  # noqa: F401
                     import tempfile
 
                     temp_file = tempfile.NamedTemporaryFile(suffix=".png", delete=False)

@@ -25,8 +25,6 @@ except ImportError:
         return res
 
 
-import sympy as sp
-
 from .config import VAR_NAME_RE, VERSION
 from .parser import (
     format_inequality_solution,
