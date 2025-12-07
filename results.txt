@@ -1,0 +1,92 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.0, pytest-7.4.4, pluggy-1.6.0 -- C:\Users\LOQ\PycharmProjects\kalkulator-ai\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+hypothesis profile 'default'
+rootdir: C:\Users\LOQ\PycharmProjects\kalkulator-ai
+configfile: pyproject.toml
+plugins: hypothesis-6.148.7, cov-4.1.0, xdist-3.5.0
+collecting ... collected 8 items
+
+tests/test_transcendental.py::TestTranscendentalFunctions::test_composite_function PASSED [ 12%]
+tests/test_transcendental.py::TestTranscendentalFunctions::test_cosine_function PASSED [ 25%]
+tests/test_transcendental.py::TestTranscendentalFunctions::test_exponential_function PASSED [ 37%]
+tests/test_transcendental.py::TestTranscendentalFunctions::test_inverse_function PASSED [ 50%]
+tests/test_transcendental.py::TestTranscendentalFunctions::test_log_function PASSED [ 62%]
+tests/test_transcendental.py::TestTranscendentalFunctions::test_power_law FAILED [ 75%]
+tests/test_transcendental.py::TestTranscendentalFunctions::test_sine_function PASSED [ 87%]
+tests/test_scale_imbalance.py::TestScaleImbalance::test_giants_vs_ants FAILED [100%]
+
+================================== FAILURES ===================================
+_________________ TestTranscendentalFunctions.test_power_law __________________
+
+self = <tests.test_transcendental.TestTranscendentalFunctions testMethod=test_power_law>
+
+    def test_power_law(self):
+        """Test finding f(x) = x^2.5 (power law)."""
+        # f(1)=1, f(4)=32, f(9)=243
+        data = [([1], 1), ([4], 32), ([9], 243)]
+        success, func_str, _, error = find_function_from_data(data, ["x"])
+        self.assertTrue(success, f"Failed to find x^2.5: {error}")
+>       self.assertIn("x^2.5", func_str)
+E       AssertionError: 'x^2.5' not found in 'x^5/2'
+
+tests\test_transcendental.py:74: AssertionError
+___________________ TestScaleImbalance.test_giants_vs_ants ____________________
+
+self = <tests.test_scale_imbalance.TestScaleImbalance testMethod=test_giants_vs_ants>
+
+    def test_giants_vs_ants(self):
+        """Test f(x) = x + sin(x) with exp(x) in search space."""
+        # Data points from user
+        # f(0)=0, f(1.57)=2.57, f(3.14)=3.14, f(4.71)=3.71, f(6.28)=6.28
+        data = [
+            ([0], 0),
+            ([1.57], 2.57),
+            ([3.14], 3.14),
+            ([4.71], 3.71),
+            ([6.28], 6.28),
+        ]
+    
+        success, func_str, _, error = find_function_from_data(data, ["x"])
+        print(f"\nFound function: {func_str}")
+    
+        # We expect x + sin(x)
+        # Or 1.0*x + 1.0*sin(x)
+        self.assertTrue("x" in func_str, "Missing linear term x")
+>       self.assertTrue("sin(x)" in func_str, "Missing sine term sin(x)")
+E       AssertionError: False is not true : Missing sine term sin(x)
+
+tests\test_scale_imbalance.py:25: AssertionError
+---------------------------- Captured stdout call -----------------------------
+
+Found function: 2.6985138*x - 0.8113919429*x^2 + 0.08613502578*x^3
+
+---------- coverage: platform win32, python 3.14.0-final-0 -----------
+Name                                         Stmts   Miss  Cover   Missing
+--------------------------------------------------------------------------
+kalkulator_pkg\__init__.py                       3      0   100%
+kalkulator_pkg\__main__.py                       3      3     0%   13-17
+kalkulator_pkg\abpn.py                           0      0   100%
+kalkulator_pkg\api.py                           64     64     0%   3-273
+kalkulator_pkg\cache_manager.py                194    194     0%   10-448
+kalkulator_pkg\calculus.py                      83     83     0%   3-142
+kalkulator_pkg\cli.py                         3244   3244     0%   1-6544
+kalkulator_pkg\config.py                        45      2    96%   32-34
+kalkulator_pkg\function_finder_advanced.py     453    268    41%   24-25, 71-121, 143-201, 224-234, 250-257, 274-276, 293-295, 318-360, 382-426, 444-493, 514, 544-567, 571-580, 594-596, 665-670, 712-720, 725-738, 741-764, 769-789, 811-819, 850, 875, 877, 879, 888, 893-895, 916, 935-942, 959, 967, 970-971
+kalkulator_pkg\function_manager.py            2243   1995    11%   65-219, 234-269, 279, 288-291, 300-310, 325-359, 375-407, 426-481, 493-557, 579-602, 617-628, 645-688, 705-766, 794-1083, 1099-1243, 1250-1270, 1315-1358, 1369-1371, 1381, 1384, 1390-1391, 1423-1464, 1496-1535, 1555, 1558-1599, 1626-1633, 1665, 1674, 1687-1690, 1701-1704, 1717-1742, 1755, 1761, 1767, 1787, 1794, 1800, 1806, 1812, 1819, 1825, 1829-1843, 1857-1858, 1876-1922, 1933, 1942, 1955-2003, 2008-2465, 2490-2498, 2511-2529, 2542, 2583-4661, 4693-4793, 4807-4821, 4830-4833, 4845-4864, 4894-4945, 4956-4989, 4994-5019
+kalkulator_pkg\logging_config.py                33     33     0%   3-89
+kalkulator_pkg\parser.py                       614    614     0%   11-1343
+kalkulator_pkg\plotting.py                     151    151     0%   3-295
+kalkulator_pkg\regression_solver.py            271     84    69%   14-28, 41-43, 52-54, 64-71, 80, 82-83, 102, 126, 133, 166, 174, 180, 184, 186, 188, 192-195, 197, 220, 222, 259, 265, 281, 290-296, 301, 305-330, 333, 351, 359, 363-365, 368, 381, 392, 396, 401, 433-434
+kalkulator_pkg\solver.py                      1103   1103     0%   22-2075
+kalkulator_pkg\types.py                         81     43    47%   21-30, 65-78, 110-115, 131-133, 136, 143-145, 148, 157-160, 163
+kalkulator_pkg\worker.py                       798    798     0%   1-1492
+--------------------------------------------------------------------------
+TOTAL                                         9383   8679     8%
+Coverage HTML written to dir htmlcov
+Coverage XML written to file coverage.xml
+
+=========================== short test summary info ===========================
+FAILED tests/test_transcendental.py::TestTranscendentalFunctions::test_power_law
+FAILED tests/test_scale_imbalance.py::TestScaleImbalance::test_giants_vs_ants
+========================= 2 failed, 6 passed in 4.97s =========================
