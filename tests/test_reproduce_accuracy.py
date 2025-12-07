@@ -5,7 +5,7 @@ import sys
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(project_root)
 
-from kalkulator_pkg.function_manager import find_function_from_data
+from kalkulator_pkg.function_manager import find_function_from_data  # noqa: E402
 
 
 def test_ghost_noise():
@@ -35,7 +35,7 @@ def test_ghost_noise():
         # Expected: 4.903325*t^2
         # Current Bad Output: 4.903*t^2 ...
 
-        import re
+        import re  # noqa: E402
 
         # Extract coefficient of t^2
         match = re.search(r"([\d\.]+)\*t\^2", func_str)

@@ -3,7 +3,7 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__) + "/.."))
 
-from kalkulator_pkg.function_manager import find_function_from_data
+from kalkulator_pkg.function_manager import find_function_from_data  # noqa: E402
 
 
 def test_blindfold_physics():

@@ -10,7 +10,7 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__) + "/.."))
 
-from kalkulator_pkg.function_manager import find_function_from_data
+from kalkulator_pkg.function_manager import find_function_from_data  # noqa: E402
 
 
 def test_linear_offset():
@@ -41,7 +41,7 @@ def test_pure_cosine():
     print("\n=== PURE COSINE ===")
     print("Expected: w(t) = cos(t)")
 
-    import math
+    import math  # noqa: E402
 
     data = [([0], 1), ([math.pi / 2], 0), ([math.pi], -1), ([2 * math.pi], 1)]
     _, result, _, _ = find_function_from_data(data, ["t"])

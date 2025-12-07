@@ -3,11 +3,11 @@ import sys
 
 sys.path.append(os.path.abspath(os.path.dirname(__file__) + "/.."))
 print(f"DEBUG PATH: {sys.path}")
-import kalkulator_pkg.regression_solver
+import kalkulator_pkg.regression_solver  # noqa: E402
 
 print(f"DEBUG FILE: {kalkulator_pkg.regression_solver.__file__}")
 
-from kalkulator_pkg.function_manager import find_function_from_data
+from kalkulator_pkg.function_manager import find_function_from_data  # noqa: E402
 
 tests = [
     # 1. Reynolds

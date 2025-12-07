@@ -4,7 +4,7 @@ import sys
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.dirname(__file__) + "/.."))
 
-from kalkulator_pkg.function_manager import find_function_from_data
+from kalkulator_pkg.function_manager import find_function_from_data  # noqa: E402
 
 
 def execute_case(name, data_points, param_names, expected_pattern):
@@ -60,7 +60,7 @@ def execute_case(name, data_points, param_names, expected_pattern):
             print("STATUS: FAIL (No function found)")
     except Exception as e:
         print(f"STATUS: CRASH ({e})")
-        import traceback
+        import traceback  # noqa: E402
 
         traceback.print_exc()
 

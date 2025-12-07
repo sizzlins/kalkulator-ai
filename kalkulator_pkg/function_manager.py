@@ -3489,7 +3489,7 @@ def find_function_from_data(
                                             denominators.append(term.denominator)
 
                                     if denominators:
-                                        from math import gcd
+                                        from math import gcd  # noqa: F811
 
                                         def lcm(a, b):
                                             return (
@@ -3724,7 +3724,7 @@ def find_function_from_data(
 
                                     if denominators:
                                         # Find LCM of all denominators
-                                        from math import gcd
+                                        from math import gcd  # noqa: F811
 
                                         def lcm(a, b):
                                             return (
@@ -4140,7 +4140,7 @@ def find_function_from_data(
                 )
 
                 if all_numeric:
-                    from math import gcd
+                    from math import gcd  # noqa: F811
 
                     # Get all denominators
                     denominators = [

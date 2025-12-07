@@ -1493,7 +1493,7 @@ def repl_loop(output_format: str = "human") -> None:
             # If no explicit "find" keyword, check for multiple function assignments (like main REPL)
             if not is_find_command:
                 try:
-                    from .function_manager import (
+                    from .function_manager import (  # noqa: F811
                         find_function_from_data,
                         parse_find_function_command,
                     )
@@ -1547,7 +1547,7 @@ def repl_loop(output_format: str = "human") -> None:
             # Process function finding if detected
             if is_find_command and find_func_cmd is not None:
                 try:
-                    from .function_manager import (
+                    from .function_manager import (  # noqa: F811
                         define_function,
                         find_function_from_data,
                         parse_function_definition,
@@ -3697,7 +3697,7 @@ def repl_loop(output_format: str = "human") -> None:
                                                                 var2
                                                             )
                                                             c = poly.coeff_monomial(1)
-                                                            from math import (
+                                                            from math import (  # noqa: F811
                                                                 gcd as math_gcd,
                                                             )
 
@@ -3881,7 +3881,7 @@ def repl_loop(output_format: str = "human") -> None:
                                                                 const, sp.Rational
                                                             )
                                                         ):
-                                                            from math import (
+                                                            from math import (  # noqa: F811
                                                                 gcd as math_gcd,
                                                             )
 
@@ -4020,7 +4020,7 @@ def repl_loop(output_format: str = "human") -> None:
                                                                 var2
                                                             )
                                                             c = poly.coeff_monomial(1)
-                                                            from math import (
+                                                            from math import (  # noqa: F811
                                                                 gcd as math_gcd,
                                                             )
 
@@ -4714,7 +4714,7 @@ def repl_loop(output_format: str = "human") -> None:
             # Check if these look like function calls (not equations)
             looks_like_function_calls = False
             try:
-                from .function_manager import list_functions
+                from .function_manager import list_functions  # noqa: F811
 
                 defined_funcs = list_functions()
                 for part in parts_for_system:
@@ -6109,7 +6109,7 @@ def main_entry(argv: list[str] | None = None) -> int:
         # If no explicit "find" keyword, check for multiple function assignments
         if not is_find_command:
             try:
-                from .function_manager import (
+                from .function_manager import (  # noqa: F811
                     find_function_from_data,
                     parse_find_function_command,
                 )
@@ -6161,7 +6161,7 @@ def main_entry(argv: list[str] | None = None) -> int:
                 # split_top_level_commas is already imported at module level
                 import sympy as sp
 
-                from .function_manager import find_function_from_data
+                from .function_manager import find_function_from_data  # noqa: F811
                 from .parser import parse_preprocessed as _parse_preprocessed
 
                 func_name, param_names = find_func_cmd

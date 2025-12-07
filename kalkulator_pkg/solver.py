@@ -335,7 +335,7 @@ def solve_system_of_congruences(
                 if result is None:
                     return None
                 # Calculate the modulus (LCM of all moduli)
-                from math import lcm
+                from math import lcm  # noqa: F811
 
                 m = lcm(*moduli)
                 # Normalize the remainder to be in [0, m)
@@ -355,7 +355,7 @@ def solve_system_of_congruences(
 
             # Check if moduli are coprime (required for CRT)
             # If not coprime, we need to check consistency
-            from math import gcd, lcm
+            from math import gcd, lcm  # noqa: F811, F401, F402
 
             g = gcd(m, n)
 
