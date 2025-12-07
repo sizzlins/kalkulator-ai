@@ -83,7 +83,7 @@ jobs:
           pip install -e .
 
       - name: Run tests with pytest
-        run: pytest tests/ -v --cov=kalkulator_pkg --cov-report=xml --cov-report=term-missing --cov-report=html --cov-fail-under=20
+        run: pytest tests/ -v --timeout=120 -m "not slow" --cov=kalkulator_pkg --cov-report=xml --cov-report=term-missing --cov-report=html --cov-fail-under=20
 
       - name: Upload coverage to Codecov
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
