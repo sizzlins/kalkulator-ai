@@ -27,11 +27,11 @@ Examples:
 
 from __future__ import annotations
 
+import math
 import re
 from fractions import Fraction
 from typing import Any
 
-import math
 import sympy as sp
 from sympy import parse_expr
 
