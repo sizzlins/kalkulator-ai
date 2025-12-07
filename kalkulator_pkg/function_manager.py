@@ -878,16 +878,16 @@ def _find_sparse_polynomial_solution(
             for vars_tuple, _ in samples:
                 for i, val in enumerate(vars_tuple):
                     # Convert to Fraction to check if non-zero
-                        try:
-                            val_frac = (
-                                _parse_to_exact_fraction(val)
-                                if not isinstance(val, Fraction)
-                                else val
-                            )
-                            if val_frac != 0:
-                                data_vars.add(i)
-                        except Exception:
-                            pass
+                    try:
+                        val_frac = (
+                            _parse_to_exact_fraction(val)
+                            if not isinstance(val, Fraction)
+                            else val
+                        )
+                        if val_frac != 0:
+                            data_vars.add(i)
+                    except Exception:
+                        pass
 
             for idx in subset_indices:
                 exps = exps_list[idx]
@@ -1360,7 +1360,9 @@ def find_function_from_data(
                     )
                 return float(result)
             except (TypeError, ValueError) as e:
-                raise ValueError(f"Could not convert '{val}' to a numeric value: {e}") from e
+                raise ValueError(
+                    f"Could not convert '{val}' to a numeric value: {e}"
+                ) from e
             except Exception as e:
                 raise ValueError(f"Could not convert '{val}' to a numeric value") from e
         # For SymPy expressions
@@ -1535,13 +1537,13 @@ def find_function_from_data(
                     A_r = round(A_lin)
                     B_r = round(B_sin)
                     C_r = round(C)
-                    
+
                     # Require both A and B to be close to small integers (within 1e-3)
                     # and at least one of them should be non-zero
                     is_valid_A = abs(A_lin - A_r) < 1e-3 and abs(A_r) <= 10
                     is_valid_B = abs(B_sin - B_r) < 1e-3 and abs(B_r) <= 10
                     is_valid_C = abs(C - C_r) < 1e-2 and abs(C_r) <= 10
-                    
+
                     # Only proceed if coefficients look like simple sine+linear combination
                     if is_valid_A and is_valid_B and (abs(A_r) >= 1 or abs(B_r) >= 1):
                         p_name = param_names[0]
