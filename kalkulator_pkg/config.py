@@ -120,6 +120,45 @@ PREFER_SIMPLER_MODELS = (
     os.getenv("KALKULATOR_PREFER_SIMPLER_MODELS", "true").lower() == "true"
 )
 
+# ============================================================================
+# RESEARCH-GRADE SYMBOLIC REGRESSION CONFIGURATION
+# ============================================================================
+
+# Genetic Programming configuration
+GP_POPULATION_SIZE = int(
+    os.getenv("KALKULATOR_GP_POPULATION_SIZE", "200")
+)  # Population per island
+GP_GENERATIONS = int(
+    os.getenv("KALKULATOR_GP_GENERATIONS", "50")
+)  # Maximum generations
+GP_PARSIMONY = float(
+    os.getenv("KALKULATOR_GP_PARSIMONY", "0.001")
+)  # Complexity penalty coefficient
+GP_TIMEOUT = float(
+    os.getenv("KALKULATOR_GP_TIMEOUT", "30")
+)  # Timeout in seconds
+
+# SINDy (Sparse Identification of Nonlinear Dynamics) configuration
+SINDY_THRESHOLD = float(
+    os.getenv("KALKULATOR_SINDY_THRESHOLD", "0.1")
+)  # Sparsity threshold
+SINDY_POLY_ORDER = int(
+    os.getenv("KALKULATOR_SINDY_POLY_ORDER", "3")
+)  # Maximum polynomial order
+
+# Causal Discovery configuration
+CAUSAL_ALPHA = float(
+    os.getenv("KALKULATOR_CAUSAL_ALPHA", "0.05")
+)  # Significance level for independence tests
+
+# Robust regression configuration
+ROBUST_METHOD = os.getenv(
+    "KALKULATOR_ROBUST_METHOD", "auto"
+)  # "auto", "huber", "ransac", "irls"
+RANSAC_THRESHOLD = float(
+    os.getenv("KALKULATOR_RANSAC_THRESHOLD", "3.0")
+)  # MAD multiplier for RANSAC
+
 ALLOWED_SYMPY_NAMES = {
     "pi": sp.pi,
     "E": sp.E,

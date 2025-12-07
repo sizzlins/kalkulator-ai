@@ -1169,6 +1169,274 @@ def repl_loop(output_format: str = "human") -> None:
                 print("Example: export V to volume_lib.py")
                 continue
 
+        # =====================================================================
+        # RESEARCH-GRADE SYMBOLIC REGRESSION COMMANDS
+        # =====================================================================
+        
+        # Evolve command: Use genetic programming to discover equations
+        # Usage: evolve f(x) from x=[1,2,3,4], y=[2,4,6,8]
+        if raw_lower.startswith("evolve "):
+            import re
+            try:
+                import numpy as np
+                from .symbolic_regression import GeneticSymbolicRegressor, GeneticConfig
+                
+                # Parse: evolve f(x) from x=[...], y=[...]
+                # or: evolve f(x,y) from x=[...], y=[...], z=[...]
+                evolve_match = re.match(
+                    r"evolve\s+(\w+)\s*\(([^)]+)\)\s+from\s+(.+)",
+                    raw, re.IGNORECASE
+                )
+                
+                if evolve_match:
+                    func_name = evolve_match.group(1)
+                    var_names = [v.strip() for v in evolve_match.group(2).split(',')]
+                    data_part = evolve_match.group(3)
+                    
+                    # Parse data arrays
+                    data_dict = {}
+                    array_pattern = re.compile(r"(\w+)\s*=\s*\[([^\]]+)\]")
+                    for match in array_pattern.finditer(data_part):
+                        var = match.group(1)
+                        values = [float(v.strip()) for v in match.group(2).split(',')]
+                        data_dict[var] = np.array(values)
+                    
+                    # Determine X (inputs) and y (output)
+                    # Last variable in var_names or 'y' is typically output
+                    output_var = var_names[-1] if len(var_names) > 1 else 'y'
+                    if output_var not in data_dict and 'y' in data_dict:
+                        output_var = 'y'
+                    
+                    input_vars = [v for v in var_names if v != output_var and v in data_dict]
+                    if not input_vars:
+                        input_vars = [k for k in data_dict.keys() if k != output_var]
+                    
+                    if output_var not in data_dict:
+                        print(f"Error: Output variable '{output_var}' not found in data")
+                        continue
+                    
+                    X = np.column_stack([data_dict[v] for v in input_vars])
+                    y = data_dict[output_var]
+                    
+                    print(f"Evolving {func_name}({', '.join(input_vars)}) from {len(y)} data points...")
+                    
+                    config = GeneticConfig(
+                        population_size=200,
+                        n_islands=2,
+                        generations=50,
+                        timeout=30,
+                        verbose=True
+                    )
+                    regressor = GeneticSymbolicRegressor(config)
+                    pareto = regressor.fit(X, y, input_vars)
+                    
+                    best = pareto.get_knee_point() or pareto.get_best()
+                    if best:
+                        print(f"\nDiscovered: {func_name}({', '.join(input_vars)}) = {best.expression}")
+                        print(f"MSE: {best.mse:.6e}")
+                        print(f"Complexity: {best.complexity} nodes")
+                    else:
+                        print("No solution found")
+                else:
+                    print("Usage: evolve f(x) from x=[1,2,3], y=[2,4,6]")
+                    print("       evolve g(a,b) from a=[...], b=[...], z=[...]")
+            except ImportError as e:
+                print(f"Error: Required module not available: {e}")
+            except Exception as e:
+                print(f"Error: {e}")
+            continue
+        
+        # Find ODE command: Discover differential equations using SINDy
+        # Usage: find ode from t=[...], x=[...], v=[...]
+        if raw_lower.startswith("find ode"):
+            import re
+            try:
+                import numpy as np
+                from .dynamics_discovery import SINDy, SINDyConfig
+                
+                # Parse: find ode from t=[...], x=[...], v=[...]
+                ode_match = re.match(
+                    r"find\s+ode\s+from\s+(.+)",
+                    raw, re.IGNORECASE
+                )
+                
+                if ode_match:
+                    data_part = ode_match.group(1)
+                    
+                    # Parse data arrays
+                    data_dict = {}
+                    array_pattern = re.compile(r"(\w+)\s*=\s*\[([^\]]+)\]")
+                    for match in array_pattern.finditer(data_part):
+                        var = match.group(1)
+                        values = [float(v.strip()) for v in match.group(2).split(',')]
+                        data_dict[var] = np.array(values)
+                    
+                    if 't' not in data_dict:
+                        print("Error: Time variable 't' is required")
+                        continue
+                    
+                    t = data_dict.pop('t')
+                    state_vars = list(data_dict.keys())
+                    X = np.column_stack([data_dict[v] for v in state_vars])
+                    
+                    print(f"Discovering ODEs for {state_vars}...")
+                    
+                    sindy = SINDy(SINDyConfig(threshold=0.1, poly_order=3))
+                    sindy.fit(X, t, variable_names=state_vars)
+                    
+                    print("\nDiscovered equations:")
+                    sindy.print_equations()
+                else:
+                    print("Usage: find ode from t=[0,0.1,0.2,...], x=[...], v=[...]")
+            except ImportError as e:
+                print(f"Error: Required module not available: {e}")
+            except Exception as e:
+                print(f"Error: {e}")
+            continue
+        
+        # Discover causal graph command
+        # Usage: discover causal graph from x=[...], y=[...], z=[...]
+        if raw_lower.startswith("discover causal"):
+            import re
+            try:
+                import numpy as np
+                from .causal_discovery import PCAlgorithm
+                
+                # Parse: discover causal graph from x=[...], y=[...], z=[...]
+                causal_match = re.match(
+                    r"discover\s+causal\s+(?:graph\s+)?from\s+(.+)",
+                    raw, re.IGNORECASE
+                )
+                
+                if causal_match:
+                    data_part = causal_match.group(1)
+                    
+                    # Parse alpha parameter if present
+                    alpha = 0.05
+                    alpha_match = re.search(r"alpha\s*=\s*([\d.]+)", data_part)
+                    if alpha_match:
+                        alpha = float(alpha_match.group(1))
+                        data_part = re.sub(r"alpha\s*=\s*[\d.]+,?\s*", "", data_part)
+                    
+                    # Parse data arrays
+                    data_dict = {}
+                    array_pattern = re.compile(r"(\w+)\s*=\s*\[([^\]]+)\]")
+                    for match in array_pattern.finditer(data_part):
+                        var = match.group(1)
+                        values = [float(v.strip()) for v in match.group(2).split(',')]
+                        data_dict[var] = np.array(values)
+                    
+                    if len(data_dict) < 2:
+                        print("Error: At least 2 variables required")
+                        continue
+                    
+                    var_names = list(data_dict.keys())
+                    X = np.column_stack([data_dict[v] for v in var_names])
+                    
+                    print(f"Discovering causal structure for {var_names}...")
+                    
+                    pc = PCAlgorithm(alpha=alpha)
+                    graph = pc.fit(X, variable_names=var_names)
+                    
+                    print(graph)
+                else:
+                    print("Usage: discover causal graph from x=[...], y=[...], z=[...]")
+                    print("       discover causal from x=[...], y=[...], alpha=0.01")
+            except ImportError as e:
+                print(f"Error: Required module not available: {e}")
+            except Exception as e:
+                print(f"Error: {e}")
+            continue
+        
+        # Dimensionless groups / Buckingham Pi
+        # Usage: find dimensionless from F=force, rho=density, v=velocity, L=length
+        if raw_lower.startswith("find dimensionless"):
+            import re
+            try:
+                from .dimensional_analysis import (
+                    Dimension, find_dimensionless_groups, format_pi_group,
+                    MASS, LENGTH, TIME, FORCE, VELOCITY, DENSITY, ENERGY, 
+                    POWER, PRESSURE, ACCELERATION, FREQUENCY
+                )
+                
+                dim_map = {
+                    'mass': MASS, 'm': MASS,
+                    'length': LENGTH, 'l': LENGTH,
+                    'time': TIME, 't': TIME,
+                    'force': FORCE, 'f': FORCE,
+                    'velocity': VELOCITY, 'v': VELOCITY,
+                    'density': DENSITY, 'rho': DENSITY,
+                    'energy': ENERGY, 'e': ENERGY,
+                    'power': POWER, 'p': POWER,
+                    'pressure': PRESSURE,
+                    'acceleration': ACCELERATION, 'a': ACCELERATION,
+                    'frequency': FREQUENCY, 'freq': FREQUENCY,
+                }
+                
+                dim_match = re.match(
+                    r"find\s+dimensionless\s+from\s+(.+)",
+                    raw, re.IGNORECASE
+                )
+                
+                if dim_match:
+                    data_part = dim_match.group(1)
+                    
+                    quantities = []
+                    for item in data_part.split(','):
+                        item = item.strip()
+                        if '=' in item:
+                            var, dim_name = item.split('=', 1)
+                            var = var.strip()
+                            dim_name = dim_name.strip().lower()
+                            if dim_name in dim_map:
+                                quantities.append((var, dim_map[dim_name]))
+                            else:
+                                print(f"Unknown dimension: {dim_name}")
+                                print(f"Available: {', '.join(sorted(set(dim_map.keys())))}")
+                                continue
+                    
+                    if quantities:
+                        print(f"Finding dimensionless groups for: {[q[0] for q in quantities]}")
+                        groups = find_dimensionless_groups(quantities)
+                        
+                        if groups:
+                            print("\nDimensionless groups (Buckingham Pi):")
+                            for i, g in enumerate(groups, 1):
+                                print(f"  Π{i} = {format_pi_group(g)}")
+                        else:
+                            print("No dimensionless groups found")
+                else:
+                    print("Usage: find dimensionless from F=force, rho=density, v=velocity, L=length")
+            except ImportError as e:
+                print(f"Error: Required module not available: {e}")
+            except Exception as e:
+                print(f"Error: {e}")
+            continue
+        
+        # Quick benchmark command
+        if raw_lower.startswith("benchmark"):
+            try:
+                from .benchmarks import quick_benchmark, FEYNMAN_EQUATIONS
+                
+                parts = raw.split()
+                n_eq = 5
+                if len(parts) > 1:
+                    try:
+                        n_eq = int(parts[1])
+                    except ValueError:
+                        pass
+                
+                print(f"Running benchmark on {n_eq} Feynman equations...")
+                print(f"(Total available: {len(FEYNMAN_EQUATIONS)} equations)")
+                
+                suite = quick_benchmark(method='lasso', n_equations=n_eq, timeout=10)
+                print(f"\nSuccess rate: {suite.success_rate:.1%}")
+            except ImportError as e:
+                print(f"Error: Required module not available: {e}")
+            except Exception as e:
+                print(f"Error: {e}")
+            continue
+
         if raw.lower() in ("clearcache", "clear cache"):
             from .worker import clear_caches
 
@@ -5871,6 +6139,29 @@ FUNCTION FEATURES:
   - Uses exact rational arithmetic for precise coefficients
   - Sparse solution search for finding simple explanations
   - Constant detection (π, e, sqrt(2), etc.) in coefficients
+
+════════════════════════════════════════════════════════
+RESEARCH-GRADE SYMBOLIC REGRESSION:
+════════════════════════════════════════════════════════
+• Genetic Programming (evolve equations):
+  → evolve f(x) from x=[1,2,3,4,5], y=[2,5,10,17,26]
+    Discovers complex compositional functions (e.g., x^2 + 1)
+
+• Differential Equation Discovery (SINDy):
+  → find ode from t=[0,0.1,0.2,...], x=[cos(0),cos(0.1),...], v=[-sin(0),...]
+    Discovers governing ODEs from time series data
+
+• Causal Discovery (PC Algorithm):
+  → discover causal graph from x=[...], y=[...], z=[...]
+    Infers causal structure from observational data
+
+• Dimensional Analysis (Buckingham Pi):
+  → find dimensionless from F=force, rho=density, v=velocity, L=length
+    Finds dimensionless groups (e.g., drag coefficient)
+
+• Benchmarking:
+  → benchmark 10
+    Tests against Feynman physics equations
 
 ════════════════════════════════════════════════════════
 CALCULUS & ALGEBRA:

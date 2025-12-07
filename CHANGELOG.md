@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2025-12-07
+
+### Added - Research-Grade Symbolic Regression Engine
+
+#### Genetic Programming Module (`symbolic_regression/`)
+- **Expression Trees**: Core data structure with NumPy evaluation and SymPy conversion
+- **Genetic Operators**: Point mutation, subtree mutation, hoist/shrink mutations, crossover
+- **Pareto Optimization**: Multi-objective optimization balancing accuracy vs complexity
+- **Island Model**: Multi-population evolution with migration for diversity
+- **CLI Command**: `evolve f(x) from x=[...], y=[...]`
+
+#### Robust Noise Handling (`noise_handling/`)
+- **Huber Regression**: Robust to moderate outliers
+- **RANSAC**: Handles extreme outliers
+- **IRLS M-estimators**: Huber, Tukey, Cauchy weight functions
+- **Uncertainty Quantification**: Bootstrap confidence intervals, prediction intervals
+
+#### Differential Equation Discovery (`dynamics_discovery/`)
+- **SINDy Algorithm**: Sparse Identification of Nonlinear Dynamics
+- **Derivative Estimation**: Finite difference, Savitzky-Golay, spectral, TV regularization
+- **CLI Command**: `find ode from t=[...], x=[...], v=[...]`
+
+#### Dimensional Analysis (`dimensional_analysis/`)
+- **SI Dimensions**: Full 7-dimension system (M, L, T, I, Θ, N, J)
+- **Buckingham Pi Theorem**: Automatic discovery of dimensionless groups
+- **CLI Command**: `find dimensionless from F=force, rho=density, ...`
+
+#### Causal Discovery (`causal_discovery/`)
+- **PC Algorithm**: Peter-Clark algorithm for causal graph discovery
+- **Conditional Independence Tests**: Partial correlation and G² tests
+- **V-structure Detection**: Proper edge orientation
+- **CLI Command**: `discover causal graph from x=[...], y=[...], z=[...]`
+
+#### Feynman Benchmark Suite (`benchmarks/`)
+- **80 Physics Equations**: From Feynman Lectures on Physics
+- **Automated Testing**: Benchmark runner with success metrics
+- **CLI Command**: `benchmark N`
+
+### Changed
+- Updated README.md with comprehensive documentation
+- Added configuration options in `config.py` for GP, SINDy, causal discovery
+- Enhanced help text with new command documentation
+
+
 ### Added
 - **Modulo operations**: Support for modulo equations (`x % 2 = 0`) with parametric solutions
 - **Chinese Remainder Theorem**: Automatic solving of systems of congruences (e.g., `x = 1 % 2, x = 3 % 6, x = 3 % 7`)
