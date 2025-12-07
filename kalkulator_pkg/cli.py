@@ -1026,12 +1026,35 @@ def repl_loop(output_format: str = "human") -> None:
                     for p in parts_check
                     if p.strip()
                 )
+                
+                # Check for function finding pattern: multiple func(numeric) = value
+                # with same function name (e.g., "g(1) = -4, g(2) = 0, g(0) = -6")
+                func_finding_pattern = re.compile(
+                    r"^([a-zA-Z_][a-zA-Z0-9_]*)\s*\(([^)]+)\)\s*=\s*(.+)$"
+                )
+                is_function_finding = False
+                if len(parts_check) >= 2:
+                    func_names_found = set()
+                    numeric_args_count = 0
+                    for p in parts_check:
+                        m = func_finding_pattern.match(p.strip())
+                        if m:
+                            func_names_found.add(m.group(1))
+                            # Check if argument contains at least one digit (numeric data point)
+                            if re.search(r'\d', m.group(2)):
+                                numeric_args_count += 1
+                    # If all parts match the pattern, same function name, and have numeric args
+                    if len(func_names_found) == 1 and numeric_args_count >= 2:
+                        is_function_finding = True
 
                 if has_find_keyword and has_assignments:
                     # Don't split - process entire input together for variable finding
                     raw = raw_input
                 elif all_simple_assignments and len(parts_check) > 1:
                     # Don't split - process as chained assignments (a=1, x=a+1)
+                    raw = raw_input
+                elif is_function_finding:
+                    # Don't split - process entire input as function finding data points
                     raw = raw_input
                 else:
                     parts = split_top_level_commas(raw_input)
@@ -2758,6 +2781,13 @@ def repl_loop(output_format: str = "human") -> None:
         # Check for function finding command FIRST (e.g., find f(x,y) with data points)
         # This must come before any other processing to avoid parsing "find" as an expression
         # Define is_find_command outside try block so it's accessible in exception handler
+        
+        # Normalize common typos: "= =" -> "=", multiple spaces around =
+        raw = re.sub(r"=\s*=", "=", raw)  # Fix double equals typo
+        raw = re.sub(r"\s*=\s*", " = ", raw)  # Normalize spaces around =
+        raw = re.sub(r"\s+", " ", raw)  # Collapse multiple spaces
+        raw = raw.strip()
+        
         is_find_command = "find" in raw.lower()
         find_func_cmd = None
 
