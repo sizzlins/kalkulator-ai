@@ -1100,7 +1100,7 @@ def _worker_eval_cached(
                             ),
                         }
                     )
-                except:
+                except Exception:
                     pass
             return cached_result
     except ImportError:
@@ -1338,10 +1338,8 @@ def clear_caches() -> None:
     """Clear worker-side LRU caches, parser cache, and persistent cache."""
     try:
         # Clear in-memory LRU caches
-        try:
-            _worker_eval_cached.cache_clear()
-        except AttributeError:
-            pass  # Function may not be decorated with lru_cache anymore
+        if hasattr(_worker_eval_cached, "cache_clear"):
+            _worker_eval_cached.cache_clear()  # Function may not be decorated with lru_cache anymore
         _worker_solve_cached.cache_clear()
         from .parser import parse_preprocessed as _pp
 

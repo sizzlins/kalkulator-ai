@@ -31,8 +31,8 @@ import re
 from fractions import Fraction
 from typing import Any
 
+import math
 import sympy as sp
-from sklearn.preprocessing import StandardScaler
 from sympy import parse_expr
 
 from .config import ALLOWED_SYMPY_NAMES, TRANSFORMATIONS
@@ -188,8 +188,8 @@ def _parse_to_exact_fraction(
                     # Convert via string to preserve precision
                     val_str = format(float_val, ".15f").rstrip("0").rstrip(".")
                     return Fraction(val_str)
-                except (ValueError, TypeError):
-                    raise ValueError(f"Cannot parse '{val}' as a number")
+                except (ValueError, TypeError) as e:
+                    raise ValueError(f"Cannot parse '{val}' as a number") from e
 
     # If it's a float, convert via string to preserve precision
     if isinstance(val, float):
@@ -353,7 +353,7 @@ def define_function(name: str, params: list[str], body_expr: str) -> None:
         raise ValidationError(
             f"Failed to parse function body '{body_expr}': {str(e)}",
             "FUNCTION_BODY_PARSE_ERROR",
-        )
+        ) from e
 
     # Store function definition
     _function_registry[name] = (params, body)
@@ -407,7 +407,7 @@ def evaluate_function(name: str, args: list[Any]) -> sp.Basic:
         raise ValidationError(
             f"Failed to evaluate function '{name}': {str(e)}",
             "FUNCTION_EVAL_ERROR",
-        )
+        ) from e
 
 
 def parse_function_definition(expr: str) -> tuple[str, list[str], str] | None:
@@ -878,16 +878,16 @@ def _find_sparse_polynomial_solution(
             for vars_tuple, _ in samples:
                 for i, val in enumerate(vars_tuple):
                     # Convert to Fraction to check if non-zero
-                    try:
-                        val_frac = (
-                            _parse_to_exact_fraction(val)
-                            if not isinstance(val, Fraction)
-                            else val
-                        )
-                        if val_frac != 0:
-                            data_vars.add(i)
-                    except:
-                        pass
+                        try:
+                            val_frac = (
+                                _parse_to_exact_fraction(val)
+                                if not isinstance(val, Fraction)
+                                else val
+                            )
+                            if val_frac != 0:
+                                data_vars.add(i)
+                        except Exception:
+                            pass
 
             for idx in subset_indices:
                 exps = exps_list[idx]
@@ -1112,11 +1112,28 @@ def _polynomial_solution_to_string(
             if exp == 1:
                 monomial_parts.append(param)
             elif exp > 1:
-                monomial_parts.append(f"{param}**{exp}")
+                # Format exponent as integer or decimal
+                try:
+                    exp_f = float(exp)
+                    if abs(exp_f - round(exp_f)) < 1e-12:
+                        exp_str = str(int(round(exp_f)))
+                    else:
+                        exp_str = f"{exp_f:.10g}".rstrip("0").rstrip(".")
+                except Exception:
+                    exp_str = str(exp)
+                monomial_parts.append(f"{param}**{exp_str}")
             elif exp == -1:
                 denominator_parts.append(param)
             else:  # exp < -1
-                denominator_parts.append(f"{param}**{abs(exp)}")
+                try:
+                    exp_f = abs(float(exp))
+                    if abs(exp_f - round(exp_f)) < 1e-12:
+                        exp_str = str(int(round(exp_f)))
+                    else:
+                        exp_str = f"{exp_f:.10g}".rstrip("0").rstrip(".")
+                except Exception:
+                    exp_str = str(abs(exp))
+                denominator_parts.append(f"{param}**{exp_str}")
 
         # Build the full term string (numerator/denominator)
         if not monomial_parts and not denominator_parts:
@@ -1343,9 +1360,9 @@ def find_function_from_data(
                     )
                 return float(result)
             except (TypeError, ValueError) as e:
-                raise ValueError(f"Could not convert '{val}' to a numeric value: {e}")
-            except Exception:
-                raise ValueError(f"Could not convert '{val}' to a numeric value")
+                raise ValueError(f"Could not convert '{val}' to a numeric value: {e}") from e
+            except Exception as e:
+                raise ValueError(f"Could not convert '{val}' to a numeric value") from e
         # For SymPy expressions
         try:
             result = val.evalf()
@@ -1354,8 +1371,8 @@ def find_function_from_data(
                     f"Expression contains free symbols: {result.free_symbols}"
                 )
             return float(result)
-        except Exception:
-            raise ValueError(f"Could not convert '{val}' to a numeric value")
+        except Exception as e:
+            raise ValueError(f"Could not convert '{val}' to a numeric value") from e
 
     # 0. Check for conflicting data points (Impossible Data)
     input_map = {}
@@ -1496,58 +1513,94 @@ def find_function_from_data(
                 X_arr_sin = np.array(X_vals_sin)
                 y_arr_sin = np.array(y_vals_sin)
 
-                # Check A*sin(x) + C
-                s_feat = np.sin(X_arr_sin).reshape(-1, 1)
+                # Check A*x + B*sin(x) + C (linear + sine combination)
+                # This catches x + sin(x), 2*x + sin(x), etc.
+                x_feat = X_arr_sin.reshape(-1, 1)
+                sin_feat = np.sin(X_arr_sin).reshape(-1, 1)
+                combined_feat = np.hstack([x_feat, sin_feat])
 
-                lr_sin = LinearRegression()
-                lr_sin.fit(s_feat, y_arr_sin)
+                lr_combined = LinearRegression()
+                lr_combined.fit(combined_feat, y_arr_sin)
 
-                y_pred_sin = lr_sin.predict(s_feat)
-                mse_sin = np.mean((y_arr_sin - y_pred_sin) ** 2)
+                y_pred_combined = lr_combined.predict(combined_feat)
+                mse_combined = np.mean((y_arr_sin - y_pred_combined) ** 2)
 
-                if mse_sin < 1e-10:  # Excellent fit
-                    A = lr_sin.coef_[0]
-                    C = lr_sin.intercept_
+                if mse_combined < 1e-5:  # Excellent fit (relaxed for FP noise)
+                    A_lin = lr_combined.coef_[0]  # coefficient for x
+                    B_sin = lr_combined.coef_[1]  # coefficient for sin(x)
+                    C = lr_combined.intercept_
 
-                    p_name = param_names[0]
-                    parts_sin = []
+                    # Stricter validation: only accept if coefficients are close to small integers
+                    # This avoids false positives on exp(x) and power law data
+                    A_r = round(A_lin)
+                    B_r = round(B_sin)
+                    C_r = round(C)
+                    
+                    # Require both A and B to be close to small integers (within 1e-3)
+                    # and at least one of them should be non-zero
+                    is_valid_A = abs(A_lin - A_r) < 1e-3 and abs(A_r) <= 10
+                    is_valid_B = abs(B_sin - B_r) < 1e-3 and abs(B_r) <= 10
+                    is_valid_C = abs(C - C_r) < 1e-2 and abs(C_r) <= 10
+                    
+                    # Only proceed if coefficients look like simple sine+linear combination
+                    if is_valid_A and is_valid_B and (abs(A_r) >= 1 or abs(B_r) >= 1):
+                        p_name = param_names[0]
+                        parts_sin = []
 
-                    # Format A*sin(x)
-                    if abs(A) > 1e-10:
-                        A_r = round(A)
-                        if abs(A - A_r) < 1e-9:
-                            if A_r == 1:
-                                parts_sin.append(f"sin({p_name})")
-                            elif A_r == -1:
-                                parts_sin.append(f"-sin({p_name})")
+                        # Format A*x
+                        if abs(A_lin) > 1e-10:
+                            if abs(A_lin - A_r) < 1e-3 and A_r != 0:
+                                if A_r == 1:
+                                    parts_sin.append(p_name)
+                                elif A_r == -1:
+                                    parts_sin.append(f"-{p_name}")
+                                else:
+                                    parts_sin.append(f"{int(A_r)}*{p_name}")
                             else:
-                                parts_sin.append(f"{int(A_r)}*sin({p_name})")
-                        else:
-                            parts_sin.append(f"{A:.6g}*sin({p_name})")
+                                parts_sin.append(f"{A_lin:.6g}*{p_name}")
 
-                    # Format C
-                    if abs(C) > 1e-10:
-                        C_r = round(C)
-                        if abs(C - C_r) < 1e-9:
-                            ci = int(C_r)
-                            parts_sin.append(
-                                f"+ {ci}"
-                                if parts_sin and ci > 0
-                                else (f"- {abs(ci)}" if parts_sin else f"{ci}")
-                            )
-                        else:
-                            if C > 0:
+                        # Format B*sin(x)
+                        if abs(B_sin) > 1e-10:
+                            if abs(B_sin - B_r) < 1e-3 and B_r != 0:
+                                if B_r == 1:
+                                    term = f"sin({p_name})"
+                                elif B_r == -1:
+                                    term = f"-sin({p_name})"
+                                else:
+                                    term = f"{int(B_r)}*sin({p_name})"
+                            else:
+                                term = f"{B_sin:.6g}*sin({p_name})"
+
+                            if parts_sin:
+                                if term.startswith("-"):
+                                    parts_sin.append(f"- {term[1:]}")
+                                else:
+                                    parts_sin.append(f"+ {term}")
+                            else:
+                                parts_sin.append(term)
+
+                        # Format C (only if significant)
+                        if abs(C) > 1e-2:
+                            if abs(C - C_r) < 1e-2:
+                                ci = int(C_r)
                                 parts_sin.append(
-                                    f"+ {C:.6g}" if parts_sin else f"{C:.6g}"
+                                    f"+ {ci}"
+                                    if parts_sin and ci > 0
+                                    else (f"- {abs(ci)}" if parts_sin else f"{ci}")
                                 )
                             else:
-                                parts_sin.append(
-                                    f"- {abs(C):.6g}" if parts_sin else f"{C:.6g}"
-                                )
+                                if C > 0:
+                                    parts_sin.append(
+                                        f"+ {C:.6g}" if parts_sin else f"{C:.6g}"
+                                    )
+                                else:
+                                    parts_sin.append(
+                                        f"- {abs(C):.6g}" if parts_sin else f"{C:.6g}"
+                                    )
 
-                    if parts_sin:
-                        func_str = " ".join(parts_sin)
-                        return (True, func_str, None, None)
+                        if parts_sin:
+                            func_str = " ".join(parts_sin)
+                            return (True, func_str, None, None)
         except Exception:
             pass
 
@@ -2674,293 +2727,6 @@ def find_function_from_data(
 
         print("DEBUG: Advanced Solver failed to find a model.", file=sys.stderr)
         return (False, None, None, None)
-
-        # Fallback Code Disabled
-        # ...
-
-        # Solve using Lasso (L1 Regularization)
-        # Use fixed alpha=0.05 (stronger regularization) with StandardScaler
-        # This combination favors the linear solution (x + sin(x)) over exponential
-        # Center y data (mean) because StandardScaler centers X
-        import numpy as np
-
-        y_mean = np.mean(y_data)
-        y_centered = np.array(y_data) - y_mean
-
-        # Feature Weighting: Hybrid approach (Name + Magnitude)
-        # 1. Penalize complexity (exp, high freq) by default (2x, 3x)
-        # 2. Penalize Giants (magnitude mismatch) heavily (5x)
-
-        y_max = np.max(np.abs(y_data))
-        if y_max < 1e-6:
-            y_max = 1.0
-
-        penalty_factors = np.ones(X_norm.shape[1])
-
-        for i in range(X_norm.shape[1]):
-            # Base penalty based on name (Complexity)
-            name = feature_names[i]
-            # Penalize raw exp(x) more heavily than decay/Gaussian forms
-            if "exp(" in name:
-                if "exp(-" in name and "^2)" in name:
-                    # Gaussian exp(-x^2) - common physics function, low penalty
-                    penalty_factors[i] = 1.0
-                elif "exp(-" in name:
-                    # Decay exp(-x) - common, moderate penalty
-                    penalty_factors[i] = 1.5
-                else:
-                    # Raw exp(x) - grows explosively, high penalty
-                    penalty_factors[i] = 2.5
-
-            # Refined Frequency Regularization:
-            # Only penalize 2* inside sin/cos to avoid penalizing x^2*y (power interactions)
-            if "sin(2*" in name or "cos(2*" in name:
-                penalty_factors[i] = max(penalty_factors[i], 2.0)
-            elif "sin(pi*" in name or "cos(pi*" in name:
-                penalty_factors[i] = max(penalty_factors[i], 3.0)
-
-            # Boost penalty for Giants (Magnitude)
-            col_max = np.max(np.abs(X_matrix[:, i]))
-            if col_max > 20 * y_max:
-                penalty_factors[i] = max(penalty_factors[i], 5.0)
-
-            # CRITICAL: Reward Rational/Squared Simple Terms (Low Cost for Physics)
-            if "/" in name:
-                penalty_factors[i] *= 0.1  # Favor Rationals strongly
-            elif "^2" in name:
-                penalty_factors[i] *= 0.5  # Favor Squares
-
-        X_weighted = X_norm / penalty_factors
-
-        # Scale-Invariant Regularization
-        # Set alpha proportional to y_std so it works for both large (Giant) and small (Damped) signals.
-        y_std = np.std(y_data)
-        if y_std < 1e-6:
-            y_std = 1.0
-
-        adaptive_alpha = 0.01 * y_std
-        adaptive_threshold = 1e-3 * y_std
-
-        # Strategy Switch:
-        # For Sparse Data (< 20 samples), Lasso (L1) can be unstable or pick linear combinations of noise.
-        # Orthogonal Matching Pursuit (OMP) is a Greedy approach that works better for "finding the needle"
-        # (e.g. n*T/V) in a haystack of features when N is small.
-        if len(data_points) < 20:
-            # Use OMP with Physics Boosting
-            # We scale "Physical" columns (Squares, Rationals) so OMP's greedy dot-product selection prefers them.
-            X_omp = X_norm.copy()
-            omp_boosts = np.ones(X_norm.shape[1])
-            for i, name in enumerate(feature_names):
-                if "^2" in name or "/" in name:
-                    scale = 10.0
-                    X_omp[:, i] *= scale
-                    omp_boosts[i] = scale
-
-            import warnings
-
-            from sklearn.linear_model import OrthogonalMatchingPursuit
-
-            n_nonzero = min(len(data_points) - 1, 12)  # Increased limit slightly
-            if n_nonzero < 1:
-                n_nonzero = 1
-
-            omp = OrthogonalMatchingPursuit(n_nonzero_coefs=n_nonzero)
-
-            with warnings.catch_warnings():
-                warnings.filterwarnings("ignore")
-                omp.fit(X_omp, y_centered)
-
-            coeffs = (
-                omp.coef_ * omp_boosts
-            )  # Restore coefficient magnitude for correct ranking
-            adaptive_alpha = 0.0  # Not used
-        else:
-            # Standard Lasso for larger datasets
-            coeffs = lasso_regression(
-                X_weighted.tolist(),
-                y_centered.tolist(),
-                lambda_reg=adaptive_alpha,
-                max_iterations=50000,
-            )
-
-            # Unscale coefficients (multiply by penalty factor)
-            # Note: This unscaling logic might interact with Ranking Boosts, but we preserve it for compatibility
-            coeffs = [c * p for c, p in zip(coeffs, penalty_factors)]
-
-        # Select features with non-zero coefficients
-        # Use adaptive threshold to filter out numerical noise relative to signal scale
-        selected_indices = [
-            i for i, c in enumerate(coeffs) if abs(c) > adaptive_threshold
-        ]
-
-        # If too many features selected, pick top 5 by magnitude
-        # If too many features selected, pick top k by magnitude
-        # We need to allow enough features to capture complexity (e.g. x^2 + y^2 + z^2 is 3 terms)
-        # But not more than we can fit with OLS (num_samples - 1)
-        max_features = min(len(data_points) - 1, 12)
-        if max_features < 1:
-            max_features = 1
-
-        if len(selected_indices) > max_features:
-            # Sort by absolute coefficient value (descending)
-            # CRITICAL: Boost non-linear terms (squares, interactions) to ensure they survive the "Top K" cut
-            # if they are competing with linear terms in potential.
-            def get_sort_metric(idx):
-                val = abs(coeffs[idx])
-                name = feature_names[idx]
-                # Boost polynomial/interaction terms
-                boost = 1.0
-                if "/" in name:
-                    boost = 500.0  # Extreme bias for Rational laws (Rare and Specific)
-                elif "^2" in name:
-                    boost = 100.0  # Strong bias for Squares
-                elif "*" in name:
-                    boost = 5.0
-                else:
-                    boost = 1.0
-
-                # Penalty for mixing Powers with Transcendentals (e.g. T^2*sin(T)) - likely overfitting on small data
-                if "^" in name and (
-                    "sin(" in name
-                    or "cos(" in name
-                    or "tan(" in name
-                    or "exp(" in name
-                    or "log(" in name
-                ):
-                    boost *= 0.1
-
-                return val * boost
-
-            selected_indices.sort(key=get_sort_metric, reverse=True)
-            selected_indices = selected_indices[:max_features]
-
-        if len(selected_indices) > 0:
-            # REFIT: Run OLS on selected features to ensure best fit
-            from sklearn.linear_model import LinearRegression
-
-            # Iterative OLS Cleanup: Remove tiny coefficients that are likely noise
-            # This handles "Ghost Noise" (e.g. tiny sinh(t) term)
-            for _ in range(3):  # Max 3 cleanup iterations
-                X_selected = X_matrix[:, selected_indices]
-                ols = LinearRegression(fit_intercept=True)
-                ols.fit(X_selected, y_data)
-
-                refined_coeffs = ols.coef_
-                intercept = ols.intercept_
-
-                # Check for tiny coefficients relative to the max coefficient
-                max_coeff_abs = (
-                    max(abs(c) for c in refined_coeffs)
-                    if len(refined_coeffs) > 0
-                    else 0
-                )
-                if max_coeff_abs < 1e-12:
-                    break
-
-                new_indices = []
-                new_refined_coeffs = []
-
-                # Filter out noise (coefficients < 1e-7 * max or absolute < 1e-8)
-                # This ensures we don't keep terms like 2.5e-15*sinh(t) OR 2e-8*y^2*cos(y)
-                param_changed = False
-                for i, c in enumerate(refined_coeffs):
-                    if abs(c) > 1e-7 * max_coeff_abs and abs(c) > 1e-8:
-                        new_indices.append(selected_indices[i])
-                        new_refined_coeffs.append(c)
-                    else:
-                        param_changed = True
-
-                if not param_changed:
-                    break
-
-                selected_indices = new_indices
-                if not selected_indices:
-                    break
-
-            # Calculate final coefficients after cleanup
-            refined_coeffs = ols.coef_
-            intercept = ols.intercept_
-
-            # Reconstruct equation with refined coefficients
-            equation_parts = []
-
-            # Use higher precision (.10g) to avoid "Shrinkage" (4.903 vs 4.903325)
-            # Try symbolic recovery for intercept
-            sym_intercept = _symbolify_coefficient(intercept)
-            if sym_intercept:
-                equation_parts.append(sym_intercept)
-            elif abs(intercept) > 1e-6:
-                equation_parts.append(f"{intercept:.10g}")
-
-            for i, idx in enumerate(selected_indices):
-                coeff = refined_coeffs[i]
-                name = feature_names[idx]
-
-                # Format coefficient nicely with high precision
-                # Try symbolic conversion first
-                sym_coeff = _symbolify_coefficient(coeff)
-
-                if sym_coeff:
-                    equation_parts.append(f"{sym_coeff}*{name}")
-                elif abs(coeff - 1.0) < 1e-9:
-                    term = name
-                    equation_parts.append(term)
-                elif abs(coeff + 1.0) < 1e-9:
-                    term = f"-{name}"
-                    equation_parts.append(term)
-                else:
-                    term = f"{coeff:.10g}*{name}"
-                    equation_parts.append(term)
-
-            if not equation_parts:
-                func_str = "0"
-            else:
-                func_str = " + ".join(equation_parts).replace("+ -", "- ")
-
-            # Verify the fit
-            import sympy as sp_module
-
-            try:
-                # Create local symbol dict
-                local_dict = {name: sp_module.Symbol(name) for name in param_names}
-                # Add functions to local dict
-                local_dict.update(
-                    {
-                        "sin": sp_module.sin,
-                        "cos": sp_module.cos,
-                        "exp": sp_module.exp,
-                        "log": sp_module.log,
-                    }
-                )
-
-                func_expr = sp_module.sympify(func_str, locals=local_dict)
-
-                # Check MSE
-                total_error = 0
-                for point in data_points:
-                    input_vals = point[0]
-                    expected_output = point[1]
-
-                    # Evaluate symbolic constants in input values
-                    input_floats = [
-                        eval_to_float(v) if isinstance(v, str) else float(v)
-                        for v in input_vals
-                    ]
-                    subs_dict = {
-                        local_dict[name]: val
-                        for name, val in zip(param_names, input_floats)
-                    }
-                    computed = float(func_expr.subs(subs_dict))
-                    expected = eval_to_float(expected_output)
-                    total_error += (computed - expected) ** 2
-
-                mse = total_error / len(data_points)
-
-                if mse < 1e-5:
-                    return (True, func_str, None, None)
-            except Exception:
-
-                pass  # Verification failed, fall back
 
     except (ImportError, Exception) as e:
         import sys

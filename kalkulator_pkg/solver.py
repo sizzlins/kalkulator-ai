@@ -44,7 +44,7 @@ from .worker import _worker_solve_cached, evaluate_safely
 try:
     from .logging_config import get_logger
 
-    logger = get_logger("solver")
+    logger: Any = get_logger("solver")
 except ImportError:
     # Fallback if logging not available
     class NullLogger:

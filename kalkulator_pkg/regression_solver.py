@@ -79,7 +79,7 @@ def _symbolify_coefficient(val):
             if abs(den) < 100 and abs(num) < 100 and num != 0:
                 return f"{simplified_pi}*pi".replace("1*pi", "pi")
         return None
-    except:
+    except Exception:
         return None
 
 

@@ -56,7 +56,7 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Type check with mypy
-        run: mypy kalkulator_pkg --ignore-missing-imports
+        run: mypy --python-version 3.11 kalkulator_pkg --ignore-missing-imports
 
   test:
     name: Test (Python ${{ matrix.python-version }} on ${{ matrix.os }})
