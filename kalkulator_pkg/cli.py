@@ -6199,6 +6199,21 @@ RESEARCH-GRADE SYMBOLIC REGRESSION:
     Tests against Feynman physics equations
 
 ════════════════════════════════════════════════════════
+AGENTIC DISCOVERY (Intelligent Pattern Detection):
+════════════════════════════════════════════════════════
+• Sigmoid-family: Detects Softplus, Sigmoid, Tanh from saturation patterns
+  → S(-2)=0.127, S(0)=0.693, S(4)=4.018, find S(x)
+    Discovers: S(x) = log(1+exp(x))
+
+• Inverse powers: Detects from log-log slopes
+  → I(1)=100, I(2)=25, I(4)=6.25, find I(d)
+    Discovers: I(d) = 100*d^-2
+
+• Frequencies: Detects from zero-crossings
+• Quality checks: Only overrides when correlation > 0.9
+• Residual hints: For bad fits (R² < 0.7), suggests missing patterns
+
+════════════════════════════════════════════════════════
 CALCULUS & ALGEBRA:
 ════════════════════════════════════════════════════════
 • Differentiation:

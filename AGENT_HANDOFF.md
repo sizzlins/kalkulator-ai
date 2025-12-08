@@ -54,15 +54,27 @@ When a spurious feature (like `1/(340-x)`) numerically fits better than the dete
 .venv\Scripts\python.exe -m pytest tests/test_user_failures.py -v
 ```
 
-## Future Work
-- [x] Implement transparent alternative reporting (Detection-Priority Override)
-- [ ] Add residual-based feature synthesis (if R² low, analyze residual)
-- [ ] Add memory/caching of successful patterns
-- [ ] Consider ensemble methods for uncertain cases
+## Ideas Evaluated and Rejected
+| Idea | Reason for Rejection |
+|------|---------------------|
+| Memory/caching of patterns | Conflicts with "agentic discovery" - creates bias toward cached solutions |
+| Ensemble methods | Adds complexity without clear benefit; current override handles main cases |
 
-## Recent Fix (2025-12-08)
-**Detection-Priority Override**: When `detect_saturation` confirms sigmoid/softplus patterns, the solver now force-selects the matching feature over spurious numerical fits like `1/(340-x)`. This "trusts the detector" approach was validated by BotBicker debate.
+## Future Work (Vetted)
+- [ ] Fallback solver chain: If OMP fails (R² < 0.5), try Genetic Programming
+- [ ] Pattern confidence scoring: Track which detectors are most reliable
 
-Key changes:
-- `regression_solver.py` lines 279-296: Override checks sigmoid first (more specific), then softplus
-- `regression_solver.py` line 260: Fixed threshold from `< 20` to `<= 20` to include 20-point datasets
+## Recent Refinements (2025-12-08)
+
+### Detection-Priority Override (with quality check)
+When `detect_saturation` confirms sigmoid/softplus patterns, the solver force-selects the matching feature **only if correlation > 0.9**. This prevents override from forcing a bad fit.
+
+### Residual-Based Hints
+For really bad fits (R² < 0.7), analyze residuals and suggest missed patterns:
+- `[Hint: try adding trig terms]` - if residuals show periodic patterns
+- `[Hint: try sigmoid/softplus]` - if residuals show saturation
+
+### Key Implementation Changes
+- `regression_solver.py` line 260: Fixed `< 20` to `<= 20`
+- `regression_solver.py` lines 279-306: Override with quality check (corr > 0.9)
+- `regression_solver.py` lines 570-610: Residual hints for R² < 0.7 only

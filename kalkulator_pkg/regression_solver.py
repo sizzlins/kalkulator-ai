@@ -276,20 +276,33 @@ def solve_regression_stage(
                 sat_hints = detect_saturation(x_col, y_data)
                 curv_hints = detect_curvature(x_col, y_data)
                 
-                # --- DETECTION-PRIORITY OVERRIDE ---
+                # --- DETECTION-PRIORITY OVERRIDE (with quality check) ---
                 # When detection strongly confirms a pattern, find that feature and
-                # force-select it (trust the pattern detector over raw correlation)
+                # force-select it IF it actually fits well (R² > 0.8)
                 # Priority: sigmoid (double saturation = more specific) > softplus
+                candidate_idx = None
                 if sat_hints.get('sigmoid'):
                     for idx, name in enumerate(feature_names):
                         if '1/(1+exp(-' in name:
-                            detected_feature_idx = idx
+                            candidate_idx = idx
                             break
                 elif sat_hints.get('softplus'):
                     for idx, name in enumerate(feature_names):
                         if name == 'log(1+exp(x))' or name == f'log(1+exp({param_names[0]}))':
-                            detected_feature_idx = idx
+                            candidate_idx = idx
                             break
+                
+                # Quality check: only override if detected feature actually fits well
+                if candidate_idx is not None:
+                    try:
+                        feature_col = X_norm[:, candidate_idx]
+                        # Simple R² check: does this feature explain variance?
+                        corr = np.corrcoef(feature_col, y_centered)[0, 1]
+                        if abs(corr) > 0.9:  # High correlation = good fit
+                            detected_feature_idx = candidate_idx
+                        # else: detection fired but feature doesn't fit well, skip override
+                    except:
+                        pass
             except Exception:
                 pass  # Detection failed - fall back to regular search
 
@@ -554,10 +567,51 @@ def solve_regression_stage(
         ss_tot = sum((y - y_mean)**2 for y in y_values)
         r_squared = 1.0 - (total_error / ss_tot) if ss_tot > 1e-12 else 1.0
         
+        # --- RESIDUAL-BASED PATTERN DETECTION ---
+        # Only analyze residuals for REALLY bad fits (R² < 0.7)
+        # This avoids cluttering output for acceptable fits
+        residual_hint = ""
+        if r_squared < 0.7 and len(y_values) >= 8:
+            try:
+                from kalkulator_pkg.function_finder_advanced import detect_saturation, detect_frequency
+                
+                # Compute residuals
+                residuals = []
+                x_vals = []
+                for point in data_points:
+                    input_vals = point[0]
+                    expected = eval_to_float(point[1])
+                    input_floats = [eval_to_float(v) if isinstance(v, str) else float(v) for v in input_vals]
+                    subs_dict = {local_dict[n]: v for n, v in zip(param_names, input_floats)}
+                    computed = float(func_expr.subs(subs_dict))
+                    residuals.append(expected - computed)
+                    x_vals.append(input_floats[0] if input_floats else 0)
+                
+                residuals = np.array(residuals)
+                x_vals = np.array(x_vals)
+                
+                # Quick checks for obvious missed patterns
+                try:
+                    freq_hints = detect_frequency(x_vals, residuals)
+                    if freq_hints:
+                        residual_hint = " [Hint: try adding trig terms]"
+                except:
+                    pass
+                
+                if not residual_hint:
+                    try:
+                        sat_hints = detect_saturation(x_vals, residuals)
+                        if sat_hints.get('softplus') or sat_hints.get('sigmoid'):
+                            residual_hint = " [Hint: try sigmoid/softplus]"
+                    except:
+                        pass
+            except Exception:
+                pass
+        
         # Confidence Awareness: Warn user if R² is low
         confidence_note = ""
         if r_squared < 0.5:
-            confidence_note = " [LOW CONFIDENCE: R²={:.2f}]".format(r_squared)
+            confidence_note = " [LOW CONFIDENCE: R²={:.2f}]".format(r_squared) + residual_hint
         elif r_squared < 0.9:
             confidence_note = " [R²={:.2f}]".format(r_squared)
             
