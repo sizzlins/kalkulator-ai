@@ -6,6 +6,7 @@ from sklearn.linear_model import LinearRegression, OrthogonalMatchingPursuit
 from sklearn.preprocessing import StandardScaler
 
 from .function_finder_advanced import generate_candidate_features, lasso_regression
+from .noise_handling.robust_regression import robust_fit
 
 
 def eval_to_float(val):
@@ -86,10 +87,129 @@ def _symbolify_coefficient(val):
 def solve_regression_stage(
     X_data, y_data, data_points, param_names, include_transcendentals=True
 ):
+    # --- Step 0: Filter NaNs/Infs ---
+    # Robustly remove any data points with invalid values
+    try:
+        X_arr = np.array(X_data, dtype=float)
+        y_arr = np.array(y_data, dtype=float)
+        
+        # Check masks
+        valid_mask_x = np.all(np.isfinite(X_arr), axis=1)
+        valid_mask_y = np.isfinite(y_arr)
+        valid_mask = valid_mask_x & valid_mask_y
+        
+        if np.sum(valid_mask) < len(y_arr):
+             X_data = X_arr[valid_mask]
+             y_data = y_arr[valid_mask]
+             data_points = [d for i, d in enumerate(data_points) if valid_mask[i]]
+    except Exception:
+        pass # Fallback to original if array conversion fails (shouldn't happen)
+
     # Generate feature matrix
     X_matrix, feature_names = generate_candidate_features(
-        X_data, param_names, include_transcendentals=include_transcendentals
+        X_data, param_names, include_transcendentals=include_transcendentals, y_data=y_data
     )
+    
+    # Pre-filtering: Detect and remove gross outliers using Robust Regression on Linear/Quadratic model
+    # This comes AFTER feature generation but BEFORE fitting.
+    # Actually, simplistic linear check might not work for complex functions.
+    # But if we have 100 vs 6, even a robust mean would catch it.
+    # Phase 0 Exact Linear Check
+    # Need enough points to determine coefficients (n_vars + 1 usually).
+    # But let's just try if we have > 2 points.
+    if len(y_data) > 2:
+         # --- PHASE 0: EXACT INTEGER LINEAR CHECK (Genius Mode) ---
+         # Check if y is exactly A*x + B*y + C with integer/simple rational coefficients.
+         try:
+            if X_data.ndim == 2:
+                X_lin = X_data
+            else:
+                X_lin = X_data.reshape(-1, 1)
+            
+            # Augment with 1 for intercept
+            X_aug = np.column_stack([X_lin, np.ones(len(y_data))])
+            
+            # Least squares
+            coeffs, residuals, rank, s = np.linalg.lstsq(X_aug, y_data, rcond=None)
+            
+            # Check if residuals are effectively zero
+            y_pred = X_aug @ coeffs
+            mse = np.mean((y_data - y_pred)**2)
+            
+            if mse < 1e-18: # It's linear
+                # Try to snap coefficients to integers or simple rationals
+                snapped_coeffs = []
+                all_snapped = True
+                
+                for c in coeffs:
+                    # Try integer
+                    c_int = int(round(c))
+                    if abs(c - c_int) < 1e-9:
+                        snapped_coeffs.append(c_int)
+                        continue
+                    
+                    # Try simple rational (denominator up to 12)
+                    from fractions import Fraction
+                    c_frac = Fraction(c).limit_denominator(12)
+                    if abs(c - float(c_frac)) < 1e-9:
+                        snapped_coeffs.append(c_frac)
+                        continue
+                    
+                    all_snapped = False
+                    break
+                
+                if all_snapped:
+                    # We found an exact simple linear form!
+                    terms = []
+                    for i, c in enumerate(snapped_coeffs[:-1]): # Exclude intercept for now
+                        if c == 0: continue
+                        name = param_names[i]
+                        if c == 1: term = name
+                        elif c == -1: term = f"-{name}"
+                        else: term = f"{c}*{name}"
+                        terms.append(term)
+                    
+                    c_int = snapped_coeffs[-1] # Intercept
+                    if c_int != 0:
+                        terms.append(str(c_int))
+                        
+                    if not terms: terms = ["0"]
+                    
+                    poly_str = " + ".join(terms).replace("+ -", "- ")
+                    return True, poly_str, "exact_linear", 0.0
+         except Exception:
+             pass
+         # Use simple linear fit on X_data (first few cols of X_matrix are usually linear terms)
+         # Or robust_fit on full X_matrix might be too slow if many features.
+         # Let's trust robust_fit's outlier detection on the RAW X_data first?
+         # But X_data might be multi-dimensional.
+         try:
+             # Fit a robust linear model to detect gross outliers
+             # We use the raw input variables + constant
+             X_check = np.array(X_data)
+             if X_check.ndim == 1: X_check = X_check.reshape(-1, 1)
+             
+             # Add bias
+             X_check_aug = np.column_stack([np.ones(len(y_data)), X_check])
+             
+             # Robust fit with higher min_samples (60%) to avoid 2-point fits on outliers
+             _, _, info = robust_fit(
+                 X_check_aug, y_data, method='ransac', min_samples=0.6
+             )
+             
+             # If RANSAC rejected points, use the mask
+             if 'inlier_mask' in info:
+                 inlier_mask = info['inlier_mask']
+                 n_inliers = np.sum(inlier_mask)
+                 
+                 # Safety: don't reject more than 50%
+                 if n_inliers >= 0.5 * len(y_data) and n_inliers < len(y_data):
+                     # apply mask to EVERYTHING
+                     X_matrix = X_matrix[inlier_mask]
+                     y_data = np.array(y_data)[inlier_mask]
+                     data_points = [d for i, d in enumerate(data_points) if inlier_mask[i]]
+         except Exception:
+             pass
 
     scaler = StandardScaler()
     X_norm = scaler.fit_transform(X_matrix)
@@ -110,12 +230,12 @@ def solve_regression_stage(
             elif "exp(-" in name:
                 penalty_factors[i] = 1.5
             else:
-                penalty_factors[i] = 2.5
+                penalty_factors[i] = 5.0  # Increased from 2.5 to penalize complex transcendentals
 
         if "sin(2*" in name or "cos(2*" in name:
-            penalty_factors[i] = max(penalty_factors[i], 2.0)
+            penalty_factors[i] = max(penalty_factors[i], 5.0) # Increased to prefer simple polys
         elif "sin(pi*" in name or "cos(pi*" in name:
-            penalty_factors[i] = max(penalty_factors[i], 3.0)
+            penalty_factors[i] = max(penalty_factors[i], 7.0) # Increased heavily
 
         col_max = np.max(np.abs(X_matrix[:, i]))
         if col_max > 20 * y_max:
@@ -135,157 +255,127 @@ def solve_regression_stage(
     adaptive_threshold = 1e-3 * y_std
 
     coeffs = None
-    if len(data_points) < 20:
+    exact_indices = None
+    if len(data_points) <= 20:
         # OMP with Physics Boost
         X_omp = X_norm.copy()
         omp_boosts = np.ones(X_norm.shape[1])
+        if include_transcendentals:
+            # print(f"DEBUG FEATURES ({len(feature_names)}): {feature_names[:10]} ... {feature_names[-10:]}", flush=True)
+            pass
+
+        # --- DETECTION-TRIGGERED BOOST (Supporting Parent) ---
+        # Run detection ONCE before the loop, then apply boosts based on results.
+        sat_hints = {}
+        curv_hints = {}
+        detected_feature_idx = None  # Track the detected pattern's index
+        if y_data is not None and len(y_data) >= 8 and include_transcendentals:
+            try:
+                from kalkulator_pkg.function_finder_advanced import detect_saturation, detect_curvature
+                x_col = X_data[:, 0] if X_data.ndim > 1 else X_data
+                sat_hints = detect_saturation(x_col, y_data)
+                curv_hints = detect_curvature(x_col, y_data)
+                
+                # --- DETECTION-PRIORITY OVERRIDE ---
+                # When detection strongly confirms a pattern, find that feature and
+                # force-select it (trust the pattern detector over raw correlation)
+                # Priority: sigmoid (double saturation = more specific) > softplus
+                if sat_hints.get('sigmoid'):
+                    for idx, name in enumerate(feature_names):
+                        if '1/(1+exp(-' in name:
+                            detected_feature_idx = idx
+                            break
+                elif sat_hints.get('softplus'):
+                    for idx, name in enumerate(feature_names):
+                        if name == 'log(1+exp(x))' or name == f'log(1+exp({param_names[0]}))':
+                            detected_feature_idx = idx
+                            break
+            except Exception:
+                pass  # Detection failed - fall back to regular search
+
         for i, name in enumerate(feature_names):
+            # NO TRAINING WHEELS - But we boost features that match DETECTED patterns.
+            # This is the "supporting parent" - not telling the child what to learn,
+            # but helping prioritize what the child has already discovered.
             scale = 1.0
-
-            # --- TIER 0: TRIPLE PRODUCTS (Highest Priority for m*g*h) ---
-            # Count asterisks to detect triple products like "m*g*h"
-            asterisk_count = name.count("*")
-            has_power = "^" in name
-            has_transcendental = (
-                "sin" in name
-                or "cos" in name
-                or "exp" in name
-                or "log" in name
-                or "sinh" in name
-                or "cosh" in name
-            )
-            has_ratio = "/" in name
-
-            if (
-                asterisk_count == 2
-                and not has_power
-                and not has_transcendental
-                and not has_ratio
-            ):
-                # Pure triple product like m*g*h
-                scale = 300.0
-            elif (
-                asterisk_count == 1
-                and not has_power
-                and not has_transcendental
-                and not has_ratio
-            ):
-                # Pure double product like I*R, m*a
+            
+            # Boost Softplus if detected
+            if sat_hints.get('softplus') and 'log(1+exp' in name:
                 scale = 200.0
-
-            # --- TIER 1: RATIONAL PRODUCTS (A*B/C, Coulomb) ---
-            elif (
-                "/" in name and name.count("*") >= 2 and "^4" in name
-            ):  # Triple Product Inverse Quartic (mu*L*Q/r^4)
-                scale = 100.0
-            elif (
-                "/" in name and name.count("*") >= 2
-            ):  # Triple Product Ratio (rho*u*L/mu)
-                scale = 100.0
-            elif "sin(" in name and "/" in name:  # Sinc function (sin(x)/x)
-                scale = 60.0
-            elif "^4" in name and "/" in name:  # Inverse Quartic (1/r^4)
-                scale = 100.0
-            elif (
-                "/" in name and "*" in name
-            ):  # Generalized Ratio (A*B/C or A*B/C^2) - CHECK FIRST before generic ^2
-                if "^2" in name:  # Inverse Square Ratio (A*B/C^2) - COULOMB
-                    scale = 150.0
-                else:
-                    scale = 120.0
-            elif "/" in name:
-                scale = 10.0
-
-            # --- TIER 2: PURE TRIG (Higher than damped oscillation) ---
-            elif name in [f"sin({v})" for v in param_names] or name in [
-                f"cos({v})" for v in param_names
-            ]:
-                # Pure sin(x) or cos(x) - prioritize over complex damped forms
-                scale = 5.0  # Reduced from 150.0
-
-            # --- TIER 3: POLYNOMIAL INTERACTIONS ---
-            elif (
-                "^2" in name and "*" in name and "exp" not in name
-            ):  # Poly Interactions (r^2*h) - conservative
-                scale = 15.0  # Will be overridden by Structural Boosting below
-            elif "^2" in name and "exp" not in name:
-                scale = 10.0
-            elif (
-                "^" in name
-                and "(" not in name
-                and "^2" not in name
-                and "^3" not in name
-                and "^4" not in name
-            ):  # Boost x^x only
-                scale = 10.0
-            elif "log" in name:  # Strong boost for Entropy (x*log(x))
-                scale = 5.0  # Reduced from 120.0
-            elif "exp" in name and (
-                "sin" in name or "cos" in name
-            ):  # Damped Oscillation
-                scale = 5.0  # Reduced from 80.0
-
-            # --- TIER 4: OCCAM'S RAZOR - LINEAR TERMS FOR SPARSE DATA ---
-            # For very sparse data (<=5 points), strongly prefer linear terms
-            n_points = len(data_points)
-            if n_points <= 5 and not has_transcendental and not has_ratio:
-                # Check if it's a linear term (just a variable name like "x", "t", "m")
-                if name in param_names:
-                    scale = max(
-                        scale, 1.0
-                    )  # Disabled (was 50.0) - Pre-checks handle linear cheats now
-                # Also boost constant term slightly
-                elif name == "1":
-                    scale = max(scale, 1.0)
-
-            # --- STRUCTURAL BOOSTING (Variable Agnostic) ---
-            # Overrides for polynomial terms to prioritize simple physics shapes.
-            # Applies to non-transcendental, non-rational terms.
-            is_transcendental = (
-                "sin" in name or "cos" in name or "exp" in name or "log" in name
-            )
-            if not is_transcendental and "/" not in name:
-                # Estimate Degree
-                # Count variables (splitting by *)
-                vars_in_term = name.split("*")
-                degree = 0
-                for v in vars_in_term:
-                    if "^" in v:
-                        if "^2" in v:
-                            degree += 2
-                        elif "^3" in v:
-                            degree += 3
-                        else:
-                            degree += 4  # High degree
-                # Apply Boosts - Squares > Interactions (prevents Spacetime leakage)
-                if degree == 2:
-                    if "*" not in name:  # Pure Degree 2 (x^2) - SPACETIME PRIORITY
-                        scale = max(scale, 120.0)
-                    else:  # Interaction Degree 2 (x*y)
-                        scale = max(scale, 100.0)
-                elif degree == 3:
-                    # Tier 3: Penalty Box
-                    scale = max(scale, 90.0)
-                # Degree 1 (Linear) left at default (or previous scale)
-
+                
+            # Boost Sigmoid if detected
+            if sat_hints.get('sigmoid') and '1/(1+exp' in name:
+                scale = 50.0
+                
+            # Boost Tanh if detected
+            if sat_hints.get('tanh') and 'tanh(' in name:
+                scale = 30.0
+                
+            # Boost Exp if curvature detected
+            if curv_hints.get('exp') and 'exp(' in name and 'log' not in name:
+                scale = 20.0
+                
+            # Boost Log if curvature detected  
+            if curv_hints.get('log') and 'log(' in name and 'exp' not in name:
+                scale = 20.0
+            
             if scale > 1.0:
-                # if scale >= 30.0: print(f"DEBUG BOOST: name={name}, scale={scale}", flush=True)
                 X_omp[:, i] *= scale
-                omp_boosts[i] = scale
+            omp_boosts[i] = scale
 
-        # Reduce n_nonzero to prefer parsimony (prefer 6 terms max unless data requires more)
-        n_nonzero = min(
-            len(data_points) - 1, 6, X_omp.shape[1]
-        )  # Can't request more atoms than features
-        if n_nonzero < 1:
-            n_nonzero = 1
+        # --- BFSS: Brute Force Subset Search (Anti-Greedy) ---
+        # For small data, check EXACT combinations of top correlated features
+        # This solves finding sin(10t)+sin(11t) when OMP greedily picks sin(12t)
+        coeffs = None
+        exact_indices = None
+        
+        # --- DETECTION-PRIORITY OVERRIDE ---
+        # When detection strongly confirms a pattern, force-select that feature
+        # This trusts the pattern detector over raw correlation (per BotBicker debate)
+        if detected_feature_idx is not None:
+            # Force-select the detected feature
+            exact_indices = [detected_feature_idx]
+        elif len(data_points) <= 20 and X_norm.shape[1] < 500:
+             # Increased limit to 500 to allow Genius Features scan
+             # Pass OMP Boosts as priorities to screen features differently
+             exact_indices = find_best_subset_small_data(
+                 X_norm, y_centered, max_subset_size=3, top_k=60, priorities=omp_boosts
+             )
 
-        omp = OrthogonalMatchingPursuit(n_nonzero_coefs=n_nonzero)
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore")
-            omp.fit(X_omp, y_centered)
+        if exact_indices:
+             # Manual Coefficient Calculation for selected indices
+             selected_indices = exact_indices
+             # Get raw coefs
+             X_sel = X_norm[:, exact_indices]
+             try:
+                 c_vals, _, _, _ = np.linalg.lstsq(X_sel, y_centered, rcond=None)
+                 coeffs = np.zeros(X_norm.shape[1])
+                 for idx, val in zip(exact_indices, c_vals):
+                     coeffs[idx] = val
+             except:
+                 exact_indices = None # Fallback
 
-        coeffs = omp.coef_ * omp_boosts
+        if exact_indices is None:
+            # Fallback to OMP/Lasso
+            pass
+        else:
+             pass # Will skip the block below by checking if coeffs is not None?
+             
+        if exact_indices is None:
+            # Reduce n_nonzero to prefer parsimony (prefer 3 terms max for sparse data, else 6)
+            limit_terms = 3 if len(data_points) < 15 else 6
+            n_nonzero = min(
+                len(data_points) - 1, limit_terms, X_omp.shape[1]
+            )  # Can't request more atoms than features
+            if n_nonzero < 1:
+                n_nonzero = 1
+
+            omp = OrthogonalMatchingPursuit(n_nonzero_coefs=n_nonzero)
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore")
+                omp.fit(X_omp, y_centered)
+
+            coeffs = omp.coef_ * omp_boosts
     else:
         coeffs = lasso_regression(
             X_weighted.tolist(),
@@ -294,6 +384,21 @@ def solve_regression_stage(
             max_iterations=50000,
         )
         coeffs = [c * p for c, p in zip(coeffs, penalty_factors)]
+        
+    # --- BFSS OVERRIDE ---
+    if exact_indices:
+        # If Brute Force found a superior subset, override greedy results
+        # Re-calculate coefficients for exact indices on unweighted data?
+        # Or just use the coeffs we calculated earlier?
+        # Re-calculate to be safe and consistent with flow
+        X_sel = X_norm[:, exact_indices]
+        try:
+             c_vals, _, _, _ = np.linalg.lstsq(X_sel, y_centered, rcond=None)
+             coeffs = np.zeros(X_norm.shape[1])
+             for idx, val in zip(exact_indices, c_vals):
+                 coeffs[idx] = val
+        except:
+             pass # Keep OMP/Lasso result if override fails
 
     selected_indices = [i for i, c in enumerate(coeffs) if abs(c) > adaptive_threshold]
     max_features = min(len(data_points) - 1, 12)
@@ -307,17 +412,17 @@ def solve_regression_stage(
             name = feature_names[idx]
             boost = 1.0
             if "/" in name:
-                boost = 50.0  # Reduced boost for Rationals to avoid distracting from valid Polys
+                boost = 5.0  # Reduced from 50.0
             elif "^2" in name and "exp" not in name:
-                boost = 100.0  # Only boost clean squares, not Gaussians
+                boost = 10.0  # Reduced from 100.0
             elif "^" in name and "(" not in name and not name.split("^")[-1].isdigit():
-                boost = 100.0  # Boost x^x, ignore x^3
+                boost = 10.0  # Boost x^x
             elif "log" in name:
-                boost = 100.0  # Strong Boost for Entropy
+                boost = 10.0  # Strong Boost for Entropy
             elif "exp" in name and ("sin" in name or "cos" in name):
-                boost = 100.0  # Strong Boost for Damped
+                boost = 10.0  # Strong Boost for Damped
             elif "*" in name:
-                boost = 10.0  # Interactions
+                boost = 5.0  # Interactions
 
             # Penalize complex mixed powers if not caught above?
             if "exp(-" in name and "^2" in name:  # Gaussian
@@ -339,10 +444,12 @@ def solve_regression_stage(
 
     for _ in range(3):
         X_selected = X_matrix[:, selected_indices]
-        ols = LinearRegression(fit_intercept=True)
-        ols.fit(X_selected, y_data)
-        refined_coeffs = ols.coef_
-        intercept = ols.intercept_
+        
+        # Use automated robust regression instead of plain OLS
+        # this handles outliers (e.g. f(3)=100) by switching to RANSAC/Huber
+        refined_coeffs, intercept, _ = robust_fit(
+            X_selected, y_data, method='auto', fit_intercept=True
+        )
 
         max_coeff_abs = (
             max(abs(c) for c in refined_coeffs) if len(refined_coeffs) > 0 else 0
@@ -367,8 +474,9 @@ def solve_regression_stage(
     if not selected_indices:
         return (False, None, None, 1e9)
 
-    refined_coeffs = ols.coef_
-    intercept = ols.intercept_
+    refined_coeffs, intercept, _ = robust_fit(
+        X_matrix[:, selected_indices], y_data, method='auto', fit_intercept=True
+    )
 
     # Zero Snap: If intercept is tiny relative to y_mean, snap to zero
     y_mean = np.mean(y_data)
@@ -387,7 +495,16 @@ def solve_regression_stage(
     for i, idx in enumerate(selected_indices):
         coeff = refined_coeffs[i]
         name = feature_names[idx]
+        
+        # Zero check: strict 1e-9 cutoff
+        if abs(coeff) < 1e-9:
+            continue
+
         sym_coeff = _symbolify_coefficient(coeff)
+        # Extra check: if symbolify returned "0", skip it
+        if sym_coeff == "0" or sym_coeff == "-0": 
+             continue
+             
         if sym_coeff:
             equation_parts.append(f"{sym_coeff}*{name}")
         elif abs(coeff - 1.0) < 1e-9:
@@ -418,9 +535,11 @@ def solve_regression_stage(
         func_expr = sp.sympify(func_str, locals=local_dict)
 
         total_error = 0
+        y_values = []
         for point in data_points:
             input_vals = point[0]
             expected = eval_to_float(point[1])
+            y_values.append(expected)
             input_floats = [
                 eval_to_float(v) if isinstance(v, str) else float(v) for v in input_vals
             ]
@@ -429,6 +548,103 @@ def solve_regression_stage(
             total_error += (computed - expected) ** 2
 
         mse = total_error / len(data_points)
-        return (True, func_str, refined_coeffs, mse)
+        
+        # Calculate R² for confidence
+        y_mean = np.mean(y_values)
+        ss_tot = sum((y - y_mean)**2 for y in y_values)
+        r_squared = 1.0 - (total_error / ss_tot) if ss_tot > 1e-12 else 1.0
+        
+        # Confidence Awareness: Warn user if R² is low
+        confidence_note = ""
+        if r_squared < 0.5:
+            confidence_note = " [LOW CONFIDENCE: R²={:.2f}]".format(r_squared)
+        elif r_squared < 0.9:
+            confidence_note = " [R²={:.2f}]".format(r_squared)
+            
+        return (True, func_str + confidence_note, None, mse)
     except Exception:
-        return (False, func_str, refined_coeffs, 1e9)
+        return (False, func_str, None, 1e9)
+
+
+def find_best_subset_small_data(X, y, max_subset_size=3, top_k=50, priorities=None):
+    from itertools import combinations
+    n_features = X.shape[1]
+    
+    # 1. Screen features by correlation with y
+    correlations = []
+    y_norm = np.linalg.norm(y)
+    if y_norm < 1e-9:
+        return []
+
+    for i in range(n_features):
+        col = X[:, i]
+        col_norm = np.linalg.norm(col)
+        if col_norm < 1e-9:
+            corr = 0.0
+        else:
+            corr = abs(np.dot(col, y) / (col_norm * y_norm))
+        
+        # Apply Priority Boost if provided
+        if priorities is not None:
+            # priorities[i] is scale (e.g. 150.0). We should not multiply lineraly maybe?
+            # Actually, simply multiplying allows high-priority features to jump queue.
+            # Even low correlation * 150 will beat high correlation?
+            # If real correlation is 0.01 * 150 = 1.5. A pure noise is 0.1.
+            # Yes, multiplying works.
+            corr *= priorities[i]
+            
+        correlations.append((corr, i))
+    
+    # Sort and take top K candidates
+    correlations.sort(key=lambda x: x[0], reverse=True)
+    top_indices = [idx for _, idx in correlations[:top_k]]
+    
+    best_mse = float('inf')
+    best_subset = None
+    
+    y_var = np.var(y)
+    if y_var < 1e-9: y_var = 1.0
+
+    def _fit_mse(indices):
+        X_sub = X[:, indices]
+        try:
+            coef, _, _, _ = np.linalg.lstsq(X_sub, y, rcond=None)
+            pred = X_sub @ coef
+            return np.mean((y - pred)**2)
+        except:
+            return float('inf')
+
+    # 2. Check 1-term
+    for idx in top_indices:
+        mse = _fit_mse([idx])
+        # Apply inverse priority penalty: lower priority features get MSE inflated
+        # This favors detected features (high priority) over spurious correlations
+        if priorities is not None and priorities[idx] < 10.0:
+            mse *= 10.0  # Penalize non-detected features
+        if mse < best_mse:
+            best_mse = mse
+            best_subset = [idx]
+            
+    # 3. Check 2-term
+    if max_subset_size >= 2:
+        for c in combinations(top_indices, 2):
+            mse = _fit_mse(list(c))
+            if mse < best_mse * 0.95: # Strict improvement required
+                 best_mse = mse
+                 best_subset = list(c)
+                 
+    # 4. Check 3-term (limit to top 25 features to keep it fast)
+    if max_subset_size >= 3:
+        top_25 = top_indices[:25]
+        for c in combinations(top_25, 3):
+             mse = _fit_mse(list(c))
+             if mse < best_mse * 0.95:
+                 best_mse = mse
+                 best_subset = list(c)
+
+    # 5. Acceptance Check
+    # If MSE is < 1% of variance (R2 > 0.99) OR significantly better than null
+    if best_mse / y_var < 0.05: # Accept decent fits
+         return best_subset
+    
+    return None

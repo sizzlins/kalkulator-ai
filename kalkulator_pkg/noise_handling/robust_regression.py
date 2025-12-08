@@ -19,6 +19,23 @@ from scipy import stats
 from sklearn.linear_model import HuberRegressor, RANSACRegressor, LinearRegression
 
 
+def huber_loss(y_true: np.ndarray, y_pred: np.ndarray, delta: float = 1.35) -> float:
+    """Calculate average Huber loss between true and predicted values.
+    
+    Args:
+        y_true: True values
+        y_pred: Predicted values
+        delta: Threshold for quadratic vs linear loss
+        
+    Returns:
+        Average loss
+    """
+    residuals = np.abs(y_true - y_pred)
+    quadratic = np.minimum(residuals, delta)
+    linear = residuals - quadratic
+    return np.mean(0.5 * quadratic ** 2 + delta * linear)
+
+
 def huber_loss_regression(
     X: np.ndarray,
     y: np.ndarray,
@@ -354,12 +371,19 @@ def robust_fit(
             # Low outliers, use regular OLS
             return lr.coef_, lr.intercept_, {'method': 'ols', 'n_outliers': 0}
     
-    if method == 'huber':
-        return huber_loss_regression(X, y, **kwargs)
-    elif method == 'ransac':
-        return ransac_regression(X, y, **kwargs)
-    elif method == 'irls':
-        return iteratively_reweighted_lst_sq(X, y, **kwargs)
-    else:
-        # Fallback to Huber
-        return huber_loss_regression(X, y, **kwargs)
+    try:
+        if method == 'huber':
+            return huber_loss_regression(X, y, **kwargs)
+        elif method == 'ransac':
+            return ransac_regression(X, y, **kwargs)
+        elif method == 'irls':
+            return iteratively_reweighted_lst_sq(X, y, **kwargs)
+        else:
+            # Fallback to Huber
+            return huber_loss_regression(X, y, **kwargs)
+    except Exception:
+        # Fallback to OLS if robust method fails
+        # This handles cases where Huber fails on perfect linear data due to scaling
+        lr = LinearRegression()
+        lr.fit(X, y)
+        return lr.coef_, lr.intercept_, {'method': 'ols_fallback'}

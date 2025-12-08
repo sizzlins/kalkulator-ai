@@ -960,7 +960,7 @@ def repl_loop(output_format: str = "human") -> None:
     from .parser import parse_preprocessed as _parse_preprocessed
     from .worker import evaluate_safely as _evaluate_safely
 
-    print("Kalkulator Aljabar — type 'help' for commands, 'quit' to exit.")
+    print("kalkulator-ai — type 'help' for commands, 'quit' to exit.")
     _current_req_id = None  # Track current request for cancellation
     _timing_enabled = False  # Track whether timing is enabled
     _cache_hits_enabled = False  # Track whether cache hit display is enabled
@@ -1047,7 +1047,20 @@ def repl_loop(output_format: str = "human") -> None:
                     if len(func_names_found) == 1 and numeric_args_count >= 2:
                         is_function_finding = True
 
-                if has_find_keyword and has_assignments:
+                # Check for research-grade commands that should NOT be split
+                raw_lower_check = raw_input.lower().strip()
+                is_research_command = (
+                    raw_lower_check.startswith("evolve ") or
+                    raw_lower_check.startswith("find ode") or
+                    raw_lower_check.startswith("discover causal") or
+                    raw_lower_check.startswith("find dimensionless") or
+                    raw_lower_check.startswith("benchmark")
+                )
+
+                if is_research_command:
+                    # Don't split - these commands use array syntax with commas
+                    raw = raw_input
+                elif has_find_keyword and has_assignments:
                     # Don't split - process entire input together for variable finding
                     raw = raw_input
                 elif all_simple_assignments and len(parts_check) > 1:
@@ -1190,7 +1203,8 @@ def repl_loop(output_format: str = "human") -> None:
                 
                 if evolve_match:
                     func_name = evolve_match.group(1)
-                    var_names = [v.strip() for v in evolve_match.group(2).split(',')]
+                    # These are the INPUT variable names from f(x) or f(a,b)
+                    input_var_names = [v.strip() for v in evolve_match.group(2).split(',')]
                     data_part = evolve_match.group(3)
                     
                     # Parse data arrays
@@ -1201,18 +1215,32 @@ def repl_loop(output_format: str = "human") -> None:
                         values = [float(v.strip()) for v in match.group(2).split(',')]
                         data_dict[var] = np.array(values)
                     
-                    # Determine X (inputs) and y (output)
-                    # Last variable in var_names or 'y' is typically output
-                    output_var = var_names[-1] if len(var_names) > 1 else 'y'
-                    if output_var not in data_dict and 'y' in data_dict:
-                        output_var = 'y'
+                    if not data_dict:
+                        print("Error: No data arrays found. Use format: x=[1,2,3], y=[4,5,6]")
+                        continue
                     
-                    input_vars = [v for v in var_names if v != output_var and v in data_dict]
+                    # Input variables are the ones in the function signature
+                    # Output is any variable NOT in the signature (typically 'y' or 'z')
+                    input_vars = [v for v in input_var_names if v in data_dict]
+                    output_candidates = [v for v in data_dict.keys() if v not in input_var_names]
+                    
                     if not input_vars:
-                        input_vars = [k for k in data_dict.keys() if k != output_var]
+                        # Maybe user provided x,y in data but only x in function signature
+                        # Use all vars from signature that exist in data
+                        input_vars = input_var_names[:1]  # Use first var as input
+                        output_candidates = [v for v in data_dict.keys() if v != input_vars[0]]
                     
-                    if output_var not in data_dict:
-                        print(f"Error: Output variable '{output_var}' not found in data")
+                    if not output_candidates:
+                        print(f"Error: Need output variable. Provide data for a variable not in {func_name}({','.join(input_var_names)})")
+                        print(f"  Example: evolve f(x) from x=[1,2,3], y=[2,4,6]  (y is output)")
+                        continue
+                    
+                    output_var = output_candidates[0]  # First non-input variable is output
+                    
+                    # Validate all input vars have data
+                    missing = [v for v in input_vars if v not in data_dict]
+                    if missing:
+                        print(f"Error: Missing data for input variable(s): {missing}")
                         continue
                     
                     X = np.column_stack([data_dict[v] for v in input_vars])
@@ -1281,7 +1309,14 @@ def repl_loop(output_format: str = "human") -> None:
                     
                     print(f"Discovering ODEs for {state_vars}...")
                     
-                    sindy = SINDy(SINDyConfig(threshold=0.1, poly_order=3))
+                    if len(t) < 10:
+                        print(f"Warning: Only {len(t)} data points provided. SINDy requires more data for reliable results.")
+                        print("  With very few points, complex models will overfit.")
+                        print("  Restricting to LINEAR models only (poly_order=1) and higher threshold...")
+                        sindy = SINDy(SINDyConfig(threshold=0.5, poly_order=1))
+                    else:
+                        sindy = SINDy(SINDyConfig(threshold=0.1, poly_order=3))
+                        
                     sindy.fit(X, t, variable_names=state_vars)
                     
                     print("\nDiscovered equations:")
@@ -2087,7 +2122,7 @@ def repl_loop(output_format: str = "human") -> None:
                         if success:
                             if output_format == "json":
                                 result = {"ok": True, "function": func_str}
-                                if factored_form:
+                                if factored_form and isinstance(factored_form, str):
                                     result["factored_form"] = factored_form
                                 print(json.dumps(result))
                             else:
@@ -2096,7 +2131,7 @@ def repl_loop(output_format: str = "human") -> None:
                                 # Note: We used to remove * for display, but that made it unparseable
                                 # The function string is already human-readable
                                 print(f"{func_name}({params_str}) = {func_str}")
-                                if factored_form:
+                                if factored_form and isinstance(factored_form, str):
                                     print(
                                         f"Equivalent: {func_name}({params_str}) = {factored_form}"
                                     )
@@ -6048,7 +6083,7 @@ def print_help_text() -> None:
     """Print help text for REPL commands."""
     from .config import VERSION
 
-    help_text = f"""Kalkulator Aljabar version {VERSION}
+    help_text = f"""kalkulator-ai version {VERSION}
 
 ════════════════════════════════════════════════════════
 BASIC USAGE (one-line input):
@@ -6242,7 +6277,7 @@ EXAMPLES:
   atan(x)
 
 ════════════════════════════════════════════════════════
-For more information, visit: https://github.com/sizzlins/kalkulatoraljabar
+For more information, visit: https://github.com/sizzlins/kalkulator-ai
 ════════════════════════════════════════════════════════
 """
     print(help_text)

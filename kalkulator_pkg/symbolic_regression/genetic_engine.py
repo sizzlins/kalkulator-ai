@@ -34,6 +34,7 @@ from .operators import (
     lexicographic_selection,
 )
 from .pareto_front import ParetoFront, ParetoSolution
+from ..noise_handling.robust_regression import huber_loss
 
 
 @dataclass
@@ -60,7 +61,7 @@ class GeneticConfig:
     tournament_size: int = 5
     crossover_rate: float = 0.7
     mutation_rate: float = 0.1
-    parsimony_coefficient: float = 0.001
+    parsimony_coefficient: float = 0.01
     max_depth: int = 8
     operators: list[str] = field(default_factory=lambda: [
         'add', 'sub', 'mul', 'div',
@@ -127,12 +128,14 @@ class GeneticSymbolicRegressor:
         """
         try:
             predictions = tree.evaluate(X)
-            mse = np.mean((predictions - y) ** 2)
+            # Use Huber loss for robustness against outliers
+            # This prevents a single outlier from dominating the fitness
+            loss = huber_loss(y, predictions, delta=1.35)
             
             # Parsimony pressure: penalize complexity
             penalty = self.config.parsimony_coefficient * tree.complexity()
             
-            return mse + penalty
+            return loss + penalty
             
         except Exception:
             return float('inf')

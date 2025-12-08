@@ -37,6 +37,7 @@ Kalkulator just did Galileo's life's work in 0.02 seconds.
 | Feature | Description |
 |---------|-------------|
 | **Symbolic Regression** | Discovers functions like `exp(-x)*sin(x)` or `100/d²` from raw data |
+| **Agentic Discovery** | Pattern detectors guide feature selection - finds `log(1+exp(x))` not `1/(340-x)` |
 | **Genetic Programming** | Evolves complex compositional functions beyond linear combinations |
 | **ODE Discovery (SINDy)** | Discovers differential equations from time series data |
 | **Causal Discovery** | Infers causal structure using the PC algorithm |

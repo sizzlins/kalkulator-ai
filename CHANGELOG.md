@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.2] - 2025-12-08
+
+### Added - Agentic Discovery: Detection-Priority Override
+- **Shape Detection**: `detect_saturation` identifies sigmoid-family patterns (Softplus, Sigmoid, Tanh) from asymptotic behavior
+- **Detection-Priority Override**: When shape detectors confirm a pattern, the solver force-selects that feature over spurious numerical fits
+- **Agent Handoff Documentation**: `agent_handoff.MD` provides development guidance for future AI agents
+
+### Fixed
+- Threshold bug: `< 20` → `<= 20` to include 20-point datasets in detection block
+- Softplus test now correctly returns `log(1+exp(x))` instead of `1/(340-x)`
+- Sigmoid detection priority: Double-saturation (more specific) checked before single-saturation
+
 ## [2.0.0] - 2025-12-07
 
 ### Added - Research-Grade Symbolic Regression Engine

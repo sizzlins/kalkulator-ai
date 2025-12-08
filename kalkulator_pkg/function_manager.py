@@ -355,6 +355,19 @@ def define_function(name: str, params: list[str], body_expr: str) -> None:
             "FUNCTION_BODY_PARSE_ERROR",
         ) from e
 
+    # AUTO-FIX: Variable Case Sensitivity
+    # Check for free symbols that match parameters case-insensitively but not exactly
+    if hasattr(body, "free_symbols"):
+        for symbol in body.free_symbols:
+            symbol_str = str(symbol)
+            if symbol_str not in params:
+                 # Check if it matches any param insensitively
+                 for param in params:
+                     if symbol_str.lower() == param.lower():
+                         # Mismatch found (e.g. X vs x). Fix it.
+                         body = body.subs(symbol, sp.Symbol(param))
+                         break
+
     # Store function definition
     _function_registry[name] = (params, body)
 
@@ -1904,16 +1917,21 @@ def find_function_from_data(
                 return (True, f"exp(-{var_name}^2)", None, None)
 
             # Test exp(x) - Exponential growth
-            exp_vals = [np.exp(x) for x in X_vals]
-            exp_errors = [abs(e - y) for e, y in zip(exp_vals, y_vals)]
-            if max(exp_errors) < 1e-3:
-                return (True, f"exp({var_name})", None, None)
+            with np.errstate(over="ignore"):
+                exp_vals = [np.exp(x) for x in X_vals]
+                # Filter out Infs for error calculation
+                if all(np.isfinite(e) for e in exp_vals):
+                    exp_errors = [abs(e - y) for e, y in zip(exp_vals, y_vals)]
+                    if max(exp_errors) < 1e-3:
+                        return (True, f"exp({var_name})", None, None)
 
             # Test exp(-x) - Exponential decay
-            exp_neg_vals = [np.exp(-x) for x in X_vals]
-            exp_neg_errors = [abs(e - y) for e, y in zip(exp_neg_vals, y_vals)]
-            if max(exp_neg_errors) < 1e-3:
-                return (True, f"exp(-{var_name})", None, None)
+            with np.errstate(over="ignore"):
+                exp_neg_vals = [np.exp(-x) for x in X_vals]
+                if all(np.isfinite(e) for e in exp_neg_vals):
+                    exp_neg_errors = [abs(e - y) for e, y in zip(exp_neg_vals, y_vals)]
+                    if max(exp_neg_errors) < 1e-3:
+                        return (True, f"exp(-{var_name})", None, None)
 
             # Test A*log(x) - Logarithmic growth
             # Only valid for positive x values
@@ -1937,16 +1955,20 @@ def find_function_from_data(
                         return (True, func_str, None, None)
 
             # Test cosh(x) - Hyperbolic cosine (catenary)
-            cosh_vals = [np.cosh(x) for x in X_vals]
-            cosh_errors = [abs(c - y) for c, y in zip(cosh_vals, y_vals)]
-            if max(cosh_errors) < 1e-3:
-                return (True, f"cosh({var_name})", None, None)
+            with np.errstate(over="ignore"):
+                cosh_vals = [np.cosh(x) for x in X_vals]
+                if all(np.isfinite(c) for c in cosh_vals):
+                    cosh_errors = [abs(c - y) for c, y in zip(cosh_vals, y_vals)]
+                    if max(cosh_errors) < 1e-3:
+                        return (True, f"cosh({var_name})", None, None)
 
             # Test sinh(x) - Hyperbolic sine
-            sinh_vals = [np.sinh(x) for x in X_vals]
-            sinh_errors = [abs(s - y) for s, y in zip(sinh_vals, y_vals)]
-            if max(sinh_errors) < 1e-3:
-                return (True, f"sinh({var_name})", None, None)
+            with np.errstate(over="ignore"):
+                sinh_vals = [np.sinh(x) for x in X_vals]
+                if all(np.isfinite(s) for s in sinh_vals):
+                    sinh_errors = [abs(s - y) for s, y in zip(sinh_vals, y_vals)]
+                    if max(sinh_errors) < 1e-3:
+                        return (True, f"sinh({var_name})", None, None)
 
             # Test sigmoid(x) = 1 / (1 + exp(-x)) - Logistic Growth
             sigmoid_vals = [1 / (1 + np.exp(-x)) for x in X_vals]
@@ -4740,8 +4762,8 @@ def export_function_to_file(func_name: str, filename: str) -> tuple[bool, str]:
         Tuple of (success, message)
 
     Example:
-        >>> V(1,1)=3.14159, V(2,1)=12.56637, find V(r,h)
-        >>> export V to volume_lib.py
+        #>>> V(1,1)=3.14159, V(2,1)=12.56637, find V(r,h)
+        #>>> export V to volume_lib.py
         Creates:
             import math
             from math import sin, cos, exp, log, sqrt, pi

@@ -161,6 +161,7 @@ RANSAC_THRESHOLD = float(
 
 ALLOWED_SYMPY_NAMES = {
     "pi": sp.pi,
+    "e": sp.E,
     "E": sp.E,
     "I": sp.I,
     "sqrt": sp.sqrt,
@@ -179,6 +180,7 @@ ALLOWED_SYMPY_NAMES = {
     "sinh": sp.sinh,
     "cosh": sp.cosh,
     "tanh": sp.tanh,
+    "cot": sp.cot,
     # Modulo
     "Mod": sp.Mod,
     "mod": sp.Mod,  # lowercase alias for convenience

@@ -278,6 +278,18 @@ class SINDy:
         # Sparse regression
         self.coefficients = self._sequential_threshold(Theta, dXdt)
         
+        # Post-processing: Prune terms that are negligible relative to dominant physics
+        # This prevents small noise terms (like 0.02*v^2) from polluting clean laws
+        if self.coefficients is not None:
+            for j in range(self.coefficients.shape[1]):
+                col_coeffs = self.coefficients[:, j]
+                max_c = np.max(np.abs(col_coeffs))
+                if max_c > 1e-10:
+                    # Prune anything less than 10% of the dominant term
+                    # This is critical for clean physics discovery
+                    col_coeffs[np.abs(col_coeffs) < 0.1 * max_c] = 0
+                    self.coefficients[:, j] = col_coeffs
+        
         # Build equation strings
         self._build_equations()
         

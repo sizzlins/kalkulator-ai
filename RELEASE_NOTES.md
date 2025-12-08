@@ -1,5 +1,25 @@
 # Release Notes
 
+## v1.0.2 (2025-12-08) - Agentic Discovery: Detection-Priority Override
+
+### 🧠 Intelligent Pattern Detection
+The engine now "trusts its pattern detector" over spurious numerical fits. When data exhibits sigmoid-family shapes (Softplus, Sigmoid, Tanh), the engine force-selects the detected pattern feature instead of being tricked by arbitrary fits like `1/(340-x)`.
+
+### ✨ New Features
+- **Detection-Priority Override**: Shape detectors (`detect_saturation`, `detect_curvature`) now directly influence feature selection
+- **Softplus Discovery**: `log(1+exp(x))` correctly identified from asymptotic saturation patterns
+- **Sigmoid Priority**: Double-saturation (both ends level off) treated as more specific than single-saturation
+
+### 🐛 Bug Fixes
+- Fixed threshold bug: `< 20` → `<= 20` to include 20-point datasets in detection block
+- Fixed test failures for Softplus and Sigmoid discovery
+
+### 📚 Documentation
+- Added `agent_handoff.MD` - Development guide for future AI agents
+- Documents the "Child Metaphor" philosophy for agentic discovery
+
+---
+
 ## v1.0.1 (2025-12-07) - CI & Linting Fixes
 
 ### 🐛 Bug Fixes
