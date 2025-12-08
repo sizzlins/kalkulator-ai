@@ -750,6 +750,12 @@ def preprocess(input_str: str, skip_exponent_conversion: bool = False) -> str:
                 subexpr = match.group(
                     1
                 )  # Content inside parentheses (without the parentheses)
+                
+                # Don't replace symbolic constants with their cached numeric values
+                # This preserves exact results for sin(pi), log(E), etc.
+                if subexpr.strip() in ("pi", "E", "I", "zoo", "oo", "-oo"):
+                    continue
+
                 # Try to get cached value for this sub-expression
                 # Note: get_cached_subexpr will track cache hits automatically
                 cached_value = get_cached_subexpr(subexpr)
