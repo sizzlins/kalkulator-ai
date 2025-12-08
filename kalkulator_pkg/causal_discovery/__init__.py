@@ -9,17 +9,17 @@ Components:
 from .pc_algorithm import (
     CausalGraph,
     PCAlgorithm,
+    discover_causal_graph,
+    g2_test,
     partial_correlation,
     partial_correlation_test,
-    g2_test,
-    discover_causal_graph,
 )
 
 __all__ = [
-    'CausalGraph',
-    'PCAlgorithm',
-    'partial_correlation',
-    'partial_correlation_test',
-    'g2_test',
-    'discover_causal_graph',
+    "CausalGraph",
+    "PCAlgorithm",
+    "partial_correlation",
+    "partial_correlation_test",
+    "g2_test",
+    "discover_causal_graph",
 ]

@@ -2,7 +2,7 @@ import warnings
 
 import numpy as np
 import sympy as sp
-from sklearn.linear_model import LinearRegression, OrthogonalMatchingPursuit
+from sklearn.linear_model import OrthogonalMatchingPursuit
 from sklearn.preprocessing import StandardScaler
 
 from .function_finder_advanced import generate_candidate_features, lasso_regression
@@ -92,24 +92,27 @@ def solve_regression_stage(
     try:
         X_arr = np.array(X_data, dtype=float)
         y_arr = np.array(y_data, dtype=float)
-        
+
         # Check masks
         valid_mask_x = np.all(np.isfinite(X_arr), axis=1)
         valid_mask_y = np.isfinite(y_arr)
         valid_mask = valid_mask_x & valid_mask_y
-        
+
         if np.sum(valid_mask) < len(y_arr):
-             X_data = X_arr[valid_mask]
-             y_data = y_arr[valid_mask]
-             data_points = [d for i, d in enumerate(data_points) if valid_mask[i]]
+            X_data = X_arr[valid_mask]
+            y_data = y_arr[valid_mask]
+            data_points = [d for i, d in enumerate(data_points) if valid_mask[i]]
     except Exception:
-        pass # Fallback to original if array conversion fails (shouldn't happen)
+        pass  # Fallback to original if array conversion fails (shouldn't happen)
 
     # Generate feature matrix
     X_matrix, feature_names = generate_candidate_features(
-        X_data, param_names, include_transcendentals=include_transcendentals, y_data=y_data
+        X_data,
+        param_names,
+        include_transcendentals=include_transcendentals,
+        y_data=y_data,
     )
-    
+
     # Pre-filtering: Detect and remove gross outliers using Robust Regression on Linear/Quadratic model
     # This comes AFTER feature generation but BEFORE fitting.
     # Actually, simplistic linear check might not work for complex functions.
@@ -118,98 +121,109 @@ def solve_regression_stage(
     # Need enough points to determine coefficients (n_vars + 1 usually).
     # But let's just try if we have > 2 points.
     if len(y_data) > 2:
-         # --- PHASE 0: EXACT INTEGER LINEAR CHECK (Genius Mode) ---
-         # Check if y is exactly A*x + B*y + C with integer/simple rational coefficients.
-         try:
+        # --- PHASE 0: EXACT INTEGER LINEAR CHECK (Genius Mode) ---
+        # Check if y is exactly A*x + B*y + C with integer/simple rational coefficients.
+        try:
             if X_data.ndim == 2:
                 X_lin = X_data
             else:
                 X_lin = X_data.reshape(-1, 1)
-            
+
             # Augment with 1 for intercept
             X_aug = np.column_stack([X_lin, np.ones(len(y_data))])
-            
+
             # Least squares
             coeffs, residuals, rank, s = np.linalg.lstsq(X_aug, y_data, rcond=None)
-            
+
             # Check if residuals are effectively zero
             y_pred = X_aug @ coeffs
-            mse = np.mean((y_data - y_pred)**2)
-            
-            if mse < 1e-18: # It's linear
+            mse = np.mean((y_data - y_pred) ** 2)
+
+            if mse < 1e-18:  # It's linear
                 # Try to snap coefficients to integers or simple rationals
                 snapped_coeffs = []
                 all_snapped = True
-                
+
                 for c in coeffs:
                     # Try integer
                     c_int = int(round(c))
                     if abs(c - c_int) < 1e-9:
                         snapped_coeffs.append(c_int)
                         continue
-                    
+
                     # Try simple rational (denominator up to 12)
                     from fractions import Fraction
+
                     c_frac = Fraction(c).limit_denominator(12)
                     if abs(c - float(c_frac)) < 1e-9:
                         snapped_coeffs.append(c_frac)
                         continue
-                    
+
                     all_snapped = False
                     break
-                
+
                 if all_snapped:
                     # We found an exact simple linear form!
                     terms = []
-                    for i, c in enumerate(snapped_coeffs[:-1]): # Exclude intercept for now
-                        if c == 0: continue
+                    for i, c in enumerate(
+                        snapped_coeffs[:-1]
+                    ):  # Exclude intercept for now
+                        if c == 0:
+                            continue
                         name = param_names[i]
-                        if c == 1: term = name
-                        elif c == -1: term = f"-{name}"
-                        else: term = f"{c}*{name}"
+                        if c == 1:
+                            term = name
+                        elif c == -1:
+                            term = f"-{name}"
+                        else:
+                            term = f"{c}*{name}"
                         terms.append(term)
-                    
-                    c_int = snapped_coeffs[-1] # Intercept
+
+                    c_int = snapped_coeffs[-1]  # Intercept
                     if c_int != 0:
                         terms.append(str(c_int))
-                        
-                    if not terms: terms = ["0"]
-                    
+
+                    if not terms:
+                        terms = ["0"]
+
                     poly_str = " + ".join(terms).replace("+ -", "- ")
                     return True, poly_str, "exact_linear", 0.0
-         except Exception:
-             pass
-         # Use simple linear fit on X_data (first few cols of X_matrix are usually linear terms)
-         # Or robust_fit on full X_matrix might be too slow if many features.
-         # Let's trust robust_fit's outlier detection on the RAW X_data first?
-         # But X_data might be multi-dimensional.
-         try:
-             # Fit a robust linear model to detect gross outliers
-             # We use the raw input variables + constant
-             X_check = np.array(X_data)
-             if X_check.ndim == 1: X_check = X_check.reshape(-1, 1)
-             
-             # Add bias
-             X_check_aug = np.column_stack([np.ones(len(y_data)), X_check])
-             
-             # Robust fit with higher min_samples (60%) to avoid 2-point fits on outliers
-             _, _, info = robust_fit(
-                 X_check_aug, y_data, method='ransac', min_samples=0.6
-             )
-             
-             # If RANSAC rejected points, use the mask
-             if 'inlier_mask' in info:
-                 inlier_mask = info['inlier_mask']
-                 n_inliers = np.sum(inlier_mask)
-                 
-                 # Safety: don't reject more than 50%
-                 if n_inliers >= 0.5 * len(y_data) and n_inliers < len(y_data):
-                     # apply mask to EVERYTHING
-                     X_matrix = X_matrix[inlier_mask]
-                     y_data = np.array(y_data)[inlier_mask]
-                     data_points = [d for i, d in enumerate(data_points) if inlier_mask[i]]
-         except Exception:
-             pass
+        except Exception:
+            pass
+        # Use simple linear fit on X_data (first few cols of X_matrix are usually linear terms)
+        # Or robust_fit on full X_matrix might be too slow if many features.
+        # Let's trust robust_fit's outlier detection on the RAW X_data first?
+        # But X_data might be multi-dimensional.
+        try:
+            # Fit a robust linear model to detect gross outliers
+            # We use the raw input variables + constant
+            X_check = np.array(X_data)
+            if X_check.ndim == 1:
+                X_check = X_check.reshape(-1, 1)
+
+            # Add bias
+            X_check_aug = np.column_stack([np.ones(len(y_data)), X_check])
+
+            # Robust fit with higher min_samples (60%) to avoid 2-point fits on outliers
+            _, _, info = robust_fit(
+                X_check_aug, y_data, method="ransac", min_samples=0.6
+            )
+
+            # If RANSAC rejected points, use the mask
+            if "inlier_mask" in info:
+                inlier_mask = info["inlier_mask"]
+                n_inliers = np.sum(inlier_mask)
+
+                # Safety: don't reject more than 50%
+                if n_inliers >= 0.5 * len(y_data) and n_inliers < len(y_data):
+                    # apply mask to EVERYTHING
+                    X_matrix = X_matrix[inlier_mask]
+                    y_data = np.array(y_data)[inlier_mask]
+                    data_points = [
+                        d for i, d in enumerate(data_points) if inlier_mask[i]
+                    ]
+        except Exception:
+            pass
 
     scaler = StandardScaler()
     X_norm = scaler.fit_transform(X_matrix)
@@ -230,12 +244,16 @@ def solve_regression_stage(
             elif "exp(-" in name:
                 penalty_factors[i] = 1.5
             else:
-                penalty_factors[i] = 5.0  # Increased from 2.5 to penalize complex transcendentals
+                penalty_factors[i] = (
+                    5.0  # Increased from 2.5 to penalize complex transcendentals
+                )
 
         if "sin(2*" in name or "cos(2*" in name:
-            penalty_factors[i] = max(penalty_factors[i], 5.0) # Increased to prefer simple polys
+            penalty_factors[i] = max(
+                penalty_factors[i], 5.0
+            )  # Increased to prefer simple polys
         elif "sin(pi*" in name or "cos(pi*" in name:
-            penalty_factors[i] = max(penalty_factors[i], 7.0) # Increased heavily
+            penalty_factors[i] = max(penalty_factors[i], 7.0)  # Increased heavily
 
         col_max = np.max(np.abs(X_matrix[:, i]))
         if col_max > 20 * y_max:
@@ -271,27 +289,34 @@ def solve_regression_stage(
         detected_feature_idx = None  # Track the detected pattern's index
         if y_data is not None and len(y_data) >= 8 and include_transcendentals:
             try:
-                from kalkulator_pkg.function_finder_advanced import detect_saturation, detect_curvature
+                from kalkulator_pkg.function_finder_advanced import (
+                    detect_curvature,
+                    detect_saturation,
+                )
+
                 x_col = X_data[:, 0] if X_data.ndim > 1 else X_data
                 sat_hints = detect_saturation(x_col, y_data)
                 curv_hints = detect_curvature(x_col, y_data)
-                
+
                 # --- DETECTION-PRIORITY OVERRIDE (with quality check) ---
                 # When detection strongly confirms a pattern, find that feature and
                 # force-select it IF it actually fits well (R² > 0.8)
                 # Priority: sigmoid (double saturation = more specific) > softplus
                 candidate_idx = None
-                if sat_hints.get('sigmoid'):
+                if sat_hints.get("sigmoid"):
                     for idx, name in enumerate(feature_names):
-                        if '1/(1+exp(-' in name:
+                        if "1/(1+exp(-" in name:
                             candidate_idx = idx
                             break
-                elif sat_hints.get('softplus'):
+                elif sat_hints.get("softplus"):
                     for idx, name in enumerate(feature_names):
-                        if name == 'log(1+exp(x))' or name == f'log(1+exp({param_names[0]}))':
+                        if (
+                            name == "log(1+exp(x))"
+                            or name == f"log(1+exp({param_names[0]}))"
+                        ):
                             candidate_idx = idx
                             break
-                
+
                 # Quality check: only override if detected feature actually fits well
                 if candidate_idx is not None:
                     try:
@@ -311,27 +336,27 @@ def solve_regression_stage(
             # This is the "supporting parent" - not telling the child what to learn,
             # but helping prioritize what the child has already discovered.
             scale = 1.0
-            
+
             # Boost Softplus if detected
-            if sat_hints.get('softplus') and 'log(1+exp' in name:
+            if sat_hints.get("softplus") and "log(1+exp" in name:
                 scale = 200.0
-                
+
             # Boost Sigmoid if detected
-            if sat_hints.get('sigmoid') and '1/(1+exp' in name:
+            if sat_hints.get("sigmoid") and "1/(1+exp" in name:
                 scale = 50.0
-                
+
             # Boost Tanh if detected
-            if sat_hints.get('tanh') and 'tanh(' in name:
+            if sat_hints.get("tanh") and "tanh(" in name:
                 scale = 30.0
-                
+
             # Boost Exp if curvature detected
-            if curv_hints.get('exp') and 'exp(' in name and 'log' not in name:
+            if curv_hints.get("exp") and "exp(" in name and "log" not in name:
                 scale = 20.0
-                
-            # Boost Log if curvature detected  
-            if curv_hints.get('log') and 'log(' in name and 'exp' not in name:
+
+            # Boost Log if curvature detected
+            if curv_hints.get("log") and "log(" in name and "exp" not in name:
                 scale = 20.0
-            
+
             if scale > 1.0:
                 X_omp[:, i] *= scale
             omp_boosts[i] = scale
@@ -341,7 +366,7 @@ def solve_regression_stage(
         # This solves finding sin(10t)+sin(11t) when OMP greedily picks sin(12t)
         coeffs = None
         exact_indices = None
-        
+
         # --- DETECTION-PRIORITY OVERRIDE ---
         # When detection strongly confirms a pattern, force-select that feature
         # This trusts the pattern detector over raw correlation (per BotBicker debate)
@@ -349,31 +374,31 @@ def solve_regression_stage(
             # Force-select the detected feature
             exact_indices = [detected_feature_idx]
         elif len(data_points) <= 20 and X_norm.shape[1] < 500:
-             # Increased limit to 500 to allow Genius Features scan
-             # Pass OMP Boosts as priorities to screen features differently
-             exact_indices = find_best_subset_small_data(
-                 X_norm, y_centered, max_subset_size=3, top_k=60, priorities=omp_boosts
-             )
+            # Increased limit to 500 to allow Genius Features scan
+            # Pass OMP Boosts as priorities to screen features differently
+            exact_indices = find_best_subset_small_data(
+                X_norm, y_centered, max_subset_size=3, top_k=60, priorities=omp_boosts
+            )
 
         if exact_indices:
-             # Manual Coefficient Calculation for selected indices
-             selected_indices = exact_indices
-             # Get raw coefs
-             X_sel = X_norm[:, exact_indices]
-             try:
-                 c_vals, _, _, _ = np.linalg.lstsq(X_sel, y_centered, rcond=None)
-                 coeffs = np.zeros(X_norm.shape[1])
-                 for idx, val in zip(exact_indices, c_vals):
-                     coeffs[idx] = val
-             except:
-                 exact_indices = None # Fallback
+            # Manual Coefficient Calculation for selected indices
+            selected_indices = exact_indices
+            # Get raw coefs
+            X_sel = X_norm[:, exact_indices]
+            try:
+                c_vals, _, _, _ = np.linalg.lstsq(X_sel, y_centered, rcond=None)
+                coeffs = np.zeros(X_norm.shape[1])
+                for idx, val in zip(exact_indices, c_vals):
+                    coeffs[idx] = val
+            except:
+                exact_indices = None  # Fallback
 
         if exact_indices is None:
             # Fallback to OMP/Lasso
             pass
         else:
-             pass # Will skip the block below by checking if coeffs is not None?
-             
+            pass  # Will skip the block below by checking if coeffs is not None?
+
         if exact_indices is None:
             # Reduce n_nonzero to prefer parsimony (prefer 3 terms max for sparse data, else 6)
             limit_terms = 3 if len(data_points) < 15 else 6
@@ -397,7 +422,7 @@ def solve_regression_stage(
             max_iterations=50000,
         )
         coeffs = [c * p for c, p in zip(coeffs, penalty_factors)]
-        
+
     # --- BFSS OVERRIDE ---
     if exact_indices:
         # If Brute Force found a superior subset, override greedy results
@@ -406,12 +431,12 @@ def solve_regression_stage(
         # Re-calculate to be safe and consistent with flow
         X_sel = X_norm[:, exact_indices]
         try:
-             c_vals, _, _, _ = np.linalg.lstsq(X_sel, y_centered, rcond=None)
-             coeffs = np.zeros(X_norm.shape[1])
-             for idx, val in zip(exact_indices, c_vals):
-                 coeffs[idx] = val
+            c_vals, _, _, _ = np.linalg.lstsq(X_sel, y_centered, rcond=None)
+            coeffs = np.zeros(X_norm.shape[1])
+            for idx, val in zip(exact_indices, c_vals):
+                coeffs[idx] = val
         except:
-             pass # Keep OMP/Lasso result if override fails
+            pass  # Keep OMP/Lasso result if override fails
 
     selected_indices = [i for i, c in enumerate(coeffs) if abs(c) > adaptive_threshold]
     max_features = min(len(data_points) - 1, 12)
@@ -457,11 +482,11 @@ def solve_regression_stage(
 
     for _ in range(3):
         X_selected = X_matrix[:, selected_indices]
-        
+
         # Use automated robust regression instead of plain OLS
         # this handles outliers (e.g. f(3)=100) by switching to RANSAC/Huber
         refined_coeffs, intercept, _ = robust_fit(
-            X_selected, y_data, method='auto', fit_intercept=True
+            X_selected, y_data, method="auto", fit_intercept=True
         )
 
         max_coeff_abs = (
@@ -488,7 +513,7 @@ def solve_regression_stage(
         return (False, None, None, 1e9)
 
     refined_coeffs, intercept, _ = robust_fit(
-        X_matrix[:, selected_indices], y_data, method='auto', fit_intercept=True
+        X_matrix[:, selected_indices], y_data, method="auto", fit_intercept=True
     )
 
     # Zero Snap: If intercept is tiny relative to y_mean, snap to zero
@@ -508,16 +533,16 @@ def solve_regression_stage(
     for i, idx in enumerate(selected_indices):
         coeff = refined_coeffs[i]
         name = feature_names[idx]
-        
+
         # Zero check: strict 1e-9 cutoff
         if abs(coeff) < 1e-9:
             continue
 
         sym_coeff = _symbolify_coefficient(coeff)
         # Extra check: if symbolify returned "0", skip it
-        if sym_coeff == "0" or sym_coeff == "-0": 
-             continue
-             
+        if sym_coeff == "0" or sym_coeff == "-0":
+            continue
+
         if sym_coeff:
             equation_parts.append(f"{sym_coeff}*{name}")
         elif abs(coeff - 1.0) < 1e-9:
@@ -561,35 +586,43 @@ def solve_regression_stage(
             total_error += (computed - expected) ** 2
 
         mse = total_error / len(data_points)
-        
+
         # Calculate R² for confidence
         y_mean = np.mean(y_values)
-        ss_tot = sum((y - y_mean)**2 for y in y_values)
+        ss_tot = sum((y - y_mean) ** 2 for y in y_values)
         r_squared = 1.0 - (total_error / ss_tot) if ss_tot > 1e-12 else 1.0
-        
+
         # --- RESIDUAL-BASED PATTERN DETECTION ---
         # Only analyze residuals for REALLY bad fits (R² < 0.7)
         # This avoids cluttering output for acceptable fits
         residual_hint = ""
         if r_squared < 0.7 and len(y_values) >= 8:
             try:
-                from kalkulator_pkg.function_finder_advanced import detect_saturation, detect_frequency
-                
+                from kalkulator_pkg.function_finder_advanced import (
+                    detect_frequency,
+                    detect_saturation,
+                )
+
                 # Compute residuals
                 residuals = []
                 x_vals = []
                 for point in data_points:
                     input_vals = point[0]
                     expected = eval_to_float(point[1])
-                    input_floats = [eval_to_float(v) if isinstance(v, str) else float(v) for v in input_vals]
-                    subs_dict = {local_dict[n]: v for n, v in zip(param_names, input_floats)}
+                    input_floats = [
+                        eval_to_float(v) if isinstance(v, str) else float(v)
+                        for v in input_vals
+                    ]
+                    subs_dict = {
+                        local_dict[n]: v for n, v in zip(param_names, input_floats)
+                    }
                     computed = float(func_expr.subs(subs_dict))
                     residuals.append(expected - computed)
                     x_vals.append(input_floats[0] if input_floats else 0)
-                
+
                 residuals = np.array(residuals)
                 x_vals = np.array(x_vals)
-                
+
                 # Quick checks for obvious missed patterns
                 try:
                     freq_hints = detect_frequency(x_vals, residuals)
@@ -597,24 +630,26 @@ def solve_regression_stage(
                         residual_hint = " [Hint: try adding trig terms]"
                 except:
                     pass
-                
+
                 if not residual_hint:
                     try:
                         sat_hints = detect_saturation(x_vals, residuals)
-                        if sat_hints.get('softplus') or sat_hints.get('sigmoid'):
+                        if sat_hints.get("softplus") or sat_hints.get("sigmoid"):
                             residual_hint = " [Hint: try sigmoid/softplus]"
                     except:
                         pass
             except Exception:
                 pass
-        
+
         # Confidence Awareness: Warn user if R² is low
         confidence_note = ""
         if r_squared < 0.5:
-            confidence_note = " [LOW CONFIDENCE: R²={:.2f}]".format(r_squared) + residual_hint
+            confidence_note = (
+                f" [LOW CONFIDENCE: R²={r_squared:.2f}]" + residual_hint
+            )
         elif r_squared < 0.9:
-            confidence_note = " [R²={:.2f}]".format(r_squared)
-            
+            confidence_note = f" [R²={r_squared:.2f}]"
+
         return (True, func_str + confidence_note, None, mse)
     except Exception:
         return (False, func_str, None, 1e9)
@@ -622,8 +657,9 @@ def solve_regression_stage(
 
 def find_best_subset_small_data(X, y, max_subset_size=3, top_k=50, priorities=None):
     from itertools import combinations
+
     n_features = X.shape[1]
-    
+
     # 1. Screen features by correlation with y
     correlations = []
     y_norm = np.linalg.norm(y)
@@ -637,7 +673,7 @@ def find_best_subset_small_data(X, y, max_subset_size=3, top_k=50, priorities=No
             corr = 0.0
         else:
             corr = abs(np.dot(col, y) / (col_norm * y_norm))
-        
+
         # Apply Priority Boost if provided
         if priorities is not None:
             # priorities[i] is scale (e.g. 150.0). We should not multiply lineraly maybe?
@@ -646,27 +682,28 @@ def find_best_subset_small_data(X, y, max_subset_size=3, top_k=50, priorities=No
             # If real correlation is 0.01 * 150 = 1.5. A pure noise is 0.1.
             # Yes, multiplying works.
             corr *= priorities[i]
-            
+
         correlations.append((corr, i))
-    
+
     # Sort and take top K candidates
     correlations.sort(key=lambda x: x[0], reverse=True)
     top_indices = [idx for _, idx in correlations[:top_k]]
-    
-    best_mse = float('inf')
+
+    best_mse = float("inf")
     best_subset = None
-    
+
     y_var = np.var(y)
-    if y_var < 1e-9: y_var = 1.0
+    if y_var < 1e-9:
+        y_var = 1.0
 
     def _fit_mse(indices):
         X_sub = X[:, indices]
         try:
             coef, _, _, _ = np.linalg.lstsq(X_sub, y, rcond=None)
             pred = X_sub @ coef
-            return np.mean((y - pred)**2)
+            return np.mean((y - pred) ** 2)
         except:
-            return float('inf')
+            return float("inf")
 
     # 2. Check 1-term
     for idx in top_indices:
@@ -678,27 +715,27 @@ def find_best_subset_small_data(X, y, max_subset_size=3, top_k=50, priorities=No
         if mse < best_mse:
             best_mse = mse
             best_subset = [idx]
-            
+
     # 3. Check 2-term
     if max_subset_size >= 2:
         for c in combinations(top_indices, 2):
             mse = _fit_mse(list(c))
-            if mse < best_mse * 0.95: # Strict improvement required
-                 best_mse = mse
-                 best_subset = list(c)
-                 
+            if mse < best_mse * 0.95:  # Strict improvement required
+                best_mse = mse
+                best_subset = list(c)
+
     # 4. Check 3-term (limit to top 25 features to keep it fast)
     if max_subset_size >= 3:
         top_25 = top_indices[:25]
         for c in combinations(top_25, 3):
-             mse = _fit_mse(list(c))
-             if mse < best_mse * 0.95:
-                 best_mse = mse
-                 best_subset = list(c)
+            mse = _fit_mse(list(c))
+            if mse < best_mse * 0.95:
+                best_mse = mse
+                best_subset = list(c)
 
     # 5. Acceptance Check
     # If MSE is < 1% of variance (R2 > 0.99) OR significantly better than null
-    if best_mse / y_var < 0.05: # Accept decent fits
-         return best_subset
-    
+    if best_mse / y_var < 0.05:  # Accept decent fits
+        return best_subset
+
     return None

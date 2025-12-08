@@ -59,10 +59,15 @@ When a spurious feature (like `1/(340-x)`) numerically fits better than the dete
 |------|---------------------|
 | Memory/caching of patterns | Conflicts with "agentic discovery" - creates bias toward cached solutions |
 | Ensemble methods | Adds complexity without clear benefit; current override handles main cases |
+| Fallback solver chain (OMP→GP) | GP is slow (seconds vs ms); already exists as explicit `evolve` command |
+| Pattern confidence scoring | Already do per-instance quality checks (corr > 0.9); historical tracking adds complexity without benefit |
 
 ## Future Work (Vetted)
-- [ ] Fallback solver chain: If OMP fails (R² < 0.5), try Genetic Programming
-- [ ] Pattern confidence scoring: Track which detectors are most reliable
+✅ **All identified improvements have been evaluated.** Current implementation is stable.
+
+Potential enhancements (low priority):
+- Verbose mode: `find f(x) --verbose` to show detection details
+- Detection method in output: Show which detector triggered the result
 
 ## Recent Refinements (2025-12-08)
 

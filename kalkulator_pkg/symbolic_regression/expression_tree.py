@@ -11,7 +11,6 @@ Key Classes:
 
 from __future__ import annotations
 
-import copy
 import math
 import random
 from dataclasses import dataclass, field
@@ -24,73 +23,76 @@ import sympy as sp
 
 class NodeType(Enum):
     """Types of nodes in an expression tree."""
-    CONSTANT = auto()   # Numeric constant (e.g., 3.14)
-    VARIABLE = auto()   # Input variable (e.g., x, y, z)
-    UNARY_OP = auto()   # Unary operator (e.g., sin, cos, exp)
+
+    CONSTANT = auto()  # Numeric constant (e.g., 3.14)
+    VARIABLE = auto()  # Input variable (e.g., x, y, z)
+    UNARY_OP = auto()  # Unary operator (e.g., sin, cos, exp)
     BINARY_OP = auto()  # Binary operator (e.g., +, -, *, /)
 
 
 # Operator definitions with arities and safe evaluation functions
 UNARY_OPERATORS: dict[str, Callable[[float], float]] = {
-    'sin': np.sin,
-    'cos': np.cos,
-    'tan': lambda x: np.tan(np.clip(x, -1e6, 1e6)),
-    'exp': lambda x: np.exp(np.clip(x, -700, 700)),  # Prevent overflow
-    'log': lambda x: np.log(np.abs(x) + 1e-10),  # Protected log
-    'sqrt': lambda x: np.sqrt(np.abs(x)),  # Protected sqrt
-    'abs': np.abs,
-    'neg': lambda x: -x,
-    'inv': lambda x: 1.0 / (x + 1e-10 * np.sign(x + 1e-10)),  # Protected inverse
-    'square': lambda x: x * x,
-    'cube': lambda x: x * x * x,
-    'sinh': lambda x: np.sinh(np.clip(x, -700, 700)),
-    'cosh': lambda x: np.cosh(np.clip(x, -700, 700)),
-    'tanh': np.tanh,
+    "sin": np.sin,
+    "cos": np.cos,
+    "tan": lambda x: np.tan(np.clip(x, -1e6, 1e6)),
+    "exp": lambda x: np.exp(np.clip(x, -700, 700)),  # Prevent overflow
+    "log": lambda x: np.log(np.abs(x) + 1e-10),  # Protected log
+    "sqrt": lambda x: np.sqrt(np.abs(x)),  # Protected sqrt
+    "abs": np.abs,
+    "neg": lambda x: -x,
+    "inv": lambda x: 1.0 / (x + 1e-10 * np.sign(x + 1e-10)),  # Protected inverse
+    "square": lambda x: x * x,
+    "cube": lambda x: x * x * x,
+    "sinh": lambda x: np.sinh(np.clip(x, -700, 700)),
+    "cosh": lambda x: np.cosh(np.clip(x, -700, 700)),
+    "tanh": np.tanh,
 }
 
 BINARY_OPERATORS: dict[str, Callable[[float, float], float]] = {
-    'add': lambda x, y: x + y,
-    'sub': lambda x, y: x - y,
-    'mul': lambda x, y: x * y,
-    'div': lambda x, y: x / (y + 1e-10 * np.sign(y + 1e-10)),  # Protected division
-    'pow': lambda x, y: np.power(np.abs(x) + 1e-10, np.clip(y, -10, 10)),  # Protected power
-    'max': np.maximum,
-    'min': np.minimum,
+    "add": lambda x, y: x + y,
+    "sub": lambda x, y: x - y,
+    "mul": lambda x, y: x * y,
+    "div": lambda x, y: x / (y + 1e-10 * np.sign(y + 1e-10)),  # Protected division
+    "pow": lambda x, y: np.power(
+        np.abs(x) + 1e-10, np.clip(y, -10, 10)
+    ),  # Protected power
+    "max": np.maximum,
+    "min": np.minimum,
 }
 
 # SymPy equivalents for symbolic conversion
 SYMPY_UNARY: dict[str, Callable] = {
-    'sin': sp.sin,
-    'cos': sp.cos,
-    'tan': sp.tan,
-    'exp': sp.exp,
-    'log': sp.log,
-    'sqrt': sp.sqrt,
-    'abs': sp.Abs,
-    'neg': lambda x: -x,
-    'inv': lambda x: 1 / x,
-    'square': lambda x: x**2,
-    'cube': lambda x: x**3,
-    'sinh': sp.sinh,
-    'cosh': sp.cosh,
-    'tanh': sp.tanh,
+    "sin": sp.sin,
+    "cos": sp.cos,
+    "tan": sp.tan,
+    "exp": sp.exp,
+    "log": sp.log,
+    "sqrt": sp.sqrt,
+    "abs": sp.Abs,
+    "neg": lambda x: -x,
+    "inv": lambda x: 1 / x,
+    "square": lambda x: x**2,
+    "cube": lambda x: x**3,
+    "sinh": sp.sinh,
+    "cosh": sp.cosh,
+    "tanh": sp.tanh,
 }
 
 SYMPY_BINARY: dict[str, Callable] = {
-    'add': lambda x, y: x + y,
-    'sub': lambda x, y: x - y,
-    'mul': lambda x, y: x * y,
-    'div': lambda x, y: x / y,
-    'pow': lambda x, y: x**y,
-    'max': sp.Max,
-    'min': sp.Min,
+    "add": lambda x, y: x + y,
+    "sub": lambda x, y: x - y,
+    "mul": lambda x, y: x * y,
+    "div": lambda x, y: x / y,
+    "pow": lambda x, y: x**y,
+    "max": sp.Max,
+    "min": sp.Min,
 }
 
 
 @dataclass(eq=False)
 class ExpressionNode:
     """A node in an expression tree.
-    
+
     Attributes:
         node_type: Type of this node (CONSTANT, VARIABLE, UNARY_OP, BINARY_OP)
         value: For CONSTANT: the numeric value; for VARIABLE: the variable name;
@@ -98,16 +100,17 @@ class ExpressionNode:
         children: List of child nodes (empty for terminals, 1 for unary, 2 for binary)
         parent: Reference to parent node (None for root)
     """
+
     node_type: NodeType
     value: Any
     children: list[ExpressionNode] = field(default_factory=list)
     parent: ExpressionNode | None = field(default=None, repr=False)
-    
+
     def __post_init__(self):
         """Set parent references for children."""
         for child in self.children:
             child.parent = self
-    
+
     @property
     def arity(self) -> int:
         """Number of children this node should have."""
@@ -117,18 +120,18 @@ class ExpressionNode:
             return 1
         else:  # BINARY_OP
             return 2
-    
+
     @property
     def is_terminal(self) -> bool:
         """Whether this is a terminal (leaf) node."""
         return self.node_type in (NodeType.CONSTANT, NodeType.VARIABLE)
-    
+
     def evaluate(self, variables: dict[str, float | np.ndarray]) -> float | np.ndarray:
         """Evaluate this subtree with given variable values.
-        
+
         Args:
             variables: Dict mapping variable names to their values
-            
+
         Returns:
             Computed value (scalar or array)
         """
@@ -137,10 +140,10 @@ class ExpressionNode:
             if isinstance(next(iter(variables.values()), 0), np.ndarray):
                 return np.full_like(next(iter(variables.values())), self.value)
             return self.value
-            
+
         elif self.node_type == NodeType.VARIABLE:
             return variables.get(self.value, 0.0)
-            
+
         elif self.node_type == NodeType.UNARY_OP:
             child_val = self.children[0].evaluate(variables)
             op_func = UNARY_OPERATORS.get(self.value)
@@ -156,7 +159,7 @@ class ExpressionNode:
                 return result
             except Exception:
                 return 0.0
-                
+
         else:  # BINARY_OP
             left_val = self.children[0].evaluate(variables)
             right_val = self.children[1].evaluate(variables)
@@ -173,13 +176,13 @@ class ExpressionNode:
                 return result
             except Exception:
                 return 0.0
-    
+
     def to_sympy(self, symbols: dict[str, sp.Symbol]) -> sp.Expr:
         """Convert this subtree to a SymPy expression.
-        
+
         Args:
             symbols: Dict mapping variable names to SymPy symbols
-            
+
         Returns:
             SymPy expression
         """
@@ -195,17 +198,17 @@ class ExpressionNode:
             except Exception:
                 pass
             return sp.Float(self.value)
-            
+
         elif self.node_type == NodeType.VARIABLE:
             return symbols.get(self.value, sp.Symbol(self.value))
-            
+
         elif self.node_type == NodeType.UNARY_OP:
             child_expr = self.children[0].to_sympy(symbols)
             op_func = SYMPY_UNARY.get(self.value)
             if op_func is None:
                 raise ValueError(f"No SymPy equivalent for: {self.value}")
             return op_func(child_expr)
-            
+
         else:  # BINARY_OP
             left_expr = self.children[0].to_sympy(symbols)
             right_expr = self.children[1].to_sympy(symbols)
@@ -213,27 +216,27 @@ class ExpressionNode:
             if op_func is None:
                 raise ValueError(f"No SymPy equivalent for: {self.value}")
             return op_func(left_expr, right_expr)
-    
+
     def copy_subtree(self) -> ExpressionNode:
         """Create a deep copy of this subtree."""
         new_node = ExpressionNode(
             node_type=self.node_type,
             value=self.value,
             children=[child.copy_subtree() for child in self.children],
-            parent=None
+            parent=None,
         )
         return new_node
-    
+
     def count_nodes(self) -> int:
         """Count total nodes in this subtree."""
         return 1 + sum(child.count_nodes() for child in self.children)
-    
+
     def depth(self) -> int:
         """Calculate depth of this subtree."""
         if not self.children:
             return 1
         return 1 + max(child.depth() for child in self.children)
-    
+
     def __str__(self) -> str:
         """String representation of this subtree."""
         if self.node_type == NodeType.CONSTANT:
@@ -244,10 +247,15 @@ class ExpressionNode:
             return f"{self.value}({self.children[0]})"
         else:  # BINARY_OP
             op_symbol = {
-                'add': '+', 'sub': '-', 'mul': '*', 'div': '/',
-                'pow': '^', 'max': 'max', 'min': 'min'
+                "add": "+",
+                "sub": "-",
+                "mul": "*",
+                "div": "/",
+                "pow": "^",
+                "max": "max",
+                "min": "min",
             }.get(self.value, self.value)
-            if self.value in ('add', 'sub', 'mul', 'div', 'pow'):
+            if self.value in ("add", "sub", "mul", "div", "pow"):
                 return f"({self.children[0]} {op_symbol} {self.children[1]})"
             else:
                 return f"{op_symbol}({self.children[0]}, {self.children[1]})"
@@ -256,35 +264,36 @@ class ExpressionNode:
 @dataclass
 class ExpressionTree:
     """A complete expression tree representing a mathematical function.
-    
+
     This is the main class for genetic programming symbolic regression.
     Supports evaluation, mutation, crossover, and conversion to symbolic form.
-    
+
     Attributes:
         root: Root node of the expression tree
         variables: List of variable names (e.g., ['x', 'y'])
         fitness: Cached fitness value (lower is better)
         age: Generation when this tree was created
     """
+
     root: ExpressionNode
-    variables: list[str] = field(default_factory=lambda: ['x'])
-    fitness: float = field(default=float('inf'))
+    variables: list[str] = field(default_factory=lambda: ["x"])
+    fitness: float = field(default=float("inf"))
     age: int = field(default=0)
-    
+
     def evaluate(self, X: np.ndarray) -> np.ndarray:
         """Evaluate the expression tree on input data.
-        
+
         Args:
             X: Input data of shape (n_samples,) for single variable
                or (n_samples, n_variables) for multiple variables
-               
+
         Returns:
             Array of computed values, shape (n_samples,)
         """
         X = np.asarray(X)
         if X.ndim == 1:
             X = X.reshape(-1, 1)
-        
+
         # Build variables dict
         var_dict = {}
         for i, var_name in enumerate(self.variables):
@@ -292,24 +301,24 @@ class ExpressionTree:
                 var_dict[var_name] = X[:, i]
             else:
                 var_dict[var_name] = np.zeros(X.shape[0])
-        
+
         result = self.root.evaluate(var_dict)
-        
+
         # Ensure result is array of correct shape
         if isinstance(result, (int, float)):
             result = np.full(X.shape[0], result)
-        
+
         return result
-    
+
     def to_sympy(self) -> sp.Expr:
         """Convert to a SymPy expression (no simplification)."""
         symbols = {var: sp.Symbol(var) for var in self.variables}
         return self.root.to_sympy(symbols)
-    
+
     def to_string(self) -> str:
         """Get string representation of the expression."""
         return str(self.root)
-    
+
     def to_pretty_string(self) -> str:
         """Get a cleaned-up string representation."""
         try:
@@ -321,24 +330,24 @@ class ExpressionTree:
             return str(expr)
         except Exception:
             return self.to_string()
-    
+
     def copy(self) -> ExpressionTree:
         """Create a deep copy of this tree."""
         return ExpressionTree(
             root=self.root.copy_subtree(),
             variables=self.variables.copy(),
             fitness=self.fitness,
-            age=self.age
+            age=self.age,
         )
-    
+
     def complexity(self) -> int:
         """Return the complexity (number of nodes) of this tree."""
         return self.root.count_nodes()
-    
+
     def depth(self) -> int:
         """Return the depth of this tree."""
         return self.root.depth()
-    
+
     def get_all_nodes(self) -> list[ExpressionNode]:
         """Get a flat list of all nodes in the tree."""
         nodes = []
@@ -348,12 +357,12 @@ class ExpressionTree:
             nodes.append(node)
             stack.extend(node.children)
         return nodes
-    
+
     def get_random_node(self) -> ExpressionNode:
         """Get a random node from the tree."""
         nodes = self.get_all_nodes()
         return random.choice(nodes)
-    
+
     def get_random_subtree(self) -> ExpressionNode:
         """Get a random non-root subtree from the tree."""
         nodes = self.get_all_nodes()
@@ -361,10 +370,10 @@ class ExpressionTree:
         if not non_root:
             return self.root
         return random.choice(non_root)
-    
+
     def replace_subtree(self, old_node: ExpressionNode, new_subtree: ExpressionNode):
         """Replace a subtree with a new one.
-        
+
         Args:
             old_node: Node to replace
             new_subtree: New subtree to insert
@@ -384,55 +393,55 @@ class ExpressionTree:
             if idx is not None:
                 parent.children[idx] = new_subtree
                 new_subtree.parent = parent
-    
+
     @staticmethod
     def random_tree(
         variables: list[str],
         max_depth: int = 4,
         operators: list[str] | None = None,
-        method: str = 'grow'
+        method: str = "grow",
     ) -> ExpressionTree:
         """Generate a random expression tree.
-        
+
         Args:
             variables: List of variable names
             max_depth: Maximum tree depth
             operators: List of operator names to use (default: common set)
             method: 'grow' (variable depth) or 'full' (max depth for all branches)
-            
+
         Returns:
             New random ExpressionTree
         """
         if operators is None:
-            operators = ['add', 'sub', 'mul', 'div', 'sin', 'cos', 'exp', 'square']
-        
+            operators = ["add", "sub", "mul", "div", "sin", "cos", "exp", "square"]
+
         unary_ops = [op for op in operators if op in UNARY_OPERATORS]
         binary_ops = [op for op in operators if op in BINARY_OPERATORS]
-        
+
         def build_node(depth: int) -> ExpressionNode:
             # Terminal probability increases with depth
-            if depth >= max_depth or (method == 'grow' and depth > 1 and random.random() < 0.3):
+            if depth >= max_depth or (
+                method == "grow" and depth > 1 and random.random() < 0.3
+            ):
                 # Terminal node
                 if random.random() < 0.5 and variables:
                     # Variable
                     return ExpressionNode(
-                        node_type=NodeType.VARIABLE,
-                        value=random.choice(variables)
+                        node_type=NodeType.VARIABLE, value=random.choice(variables)
                     )
                 else:
                     # Constant
-                    const = random.choice([
-                        random.uniform(-10, 10),
-                        random.randint(-5, 5),
-                        math.pi,
-                        math.e,
-                        0.5,
-                        2.0
-                    ])
-                    return ExpressionNode(
-                        node_type=NodeType.CONSTANT,
-                        value=const
+                    const = random.choice(
+                        [
+                            random.uniform(-10, 10),
+                            random.randint(-5, 5),
+                            math.pi,
+                            math.e,
+                            0.5,
+                            2.0,
+                        ]
                     )
+                    return ExpressionNode(node_type=NodeType.CONSTANT, value=const)
             else:
                 # Operator node
                 if unary_ops and (not binary_ops or random.random() < 0.3):
@@ -440,31 +449,27 @@ class ExpressionTree:
                     op = random.choice(unary_ops)
                     child = build_node(depth + 1)
                     node = ExpressionNode(
-                        node_type=NodeType.UNARY_OP,
-                        value=op,
-                        children=[child]
+                        node_type=NodeType.UNARY_OP, value=op, children=[child]
                     )
                     child.parent = node
                     return node
                 else:
                     # Binary operator
-                    op = random.choice(binary_ops) if binary_ops else 'add'
+                    op = random.choice(binary_ops) if binary_ops else "add"
                     left = build_node(depth + 1)
                     right = build_node(depth + 1)
                     node = ExpressionNode(
-                        node_type=NodeType.BINARY_OP,
-                        value=op,
-                        children=[left, right]
+                        node_type=NodeType.BINARY_OP, value=op, children=[left, right]
                     )
                     left.parent = node
                     right.parent = node
                     return node
-        
+
         root = build_node(1)
         return ExpressionTree(root=root, variables=variables)
-    
+
     def __str__(self) -> str:
         return self.to_string()
-    
+
     def __repr__(self) -> str:
         return f"ExpressionTree({self.to_string()}, fitness={self.fitness:.6g})"

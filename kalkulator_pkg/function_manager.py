@@ -361,12 +361,12 @@ def define_function(name: str, params: list[str], body_expr: str) -> None:
         for symbol in body.free_symbols:
             symbol_str = str(symbol)
             if symbol_str not in params:
-                 # Check if it matches any param insensitively
-                 for param in params:
-                     if symbol_str.lower() == param.lower():
-                         # Mismatch found (e.g. X vs x). Fix it.
-                         body = body.subs(symbol, sp.Symbol(param))
-                         break
+                # Check if it matches any param insensitively
+                for param in params:
+                    if symbol_str.lower() == param.lower():
+                        # Mismatch found (e.g. X vs x). Fix it.
+                        body = body.subs(symbol, sp.Symbol(param))
+                        break
 
     # Store function definition
     _function_registry[name] = (params, body)

@@ -9,28 +9,23 @@ Components:
 """
 
 from .derivative_estimation import (
+    estimate_derivative,
     finite_difference,
     savgol_derivative,
     spectral_derivative,
     total_variation_derivative,
-    estimate_derivative,
 )
-from .sindy import (
-    SINDy,
-    SINDyConfig,
-    discover_ode,
-)
+from .sindy import SINDy, SINDyConfig, discover_ode
 
 __all__ = [
     # Derivative Estimation
-    'finite_difference',
-    'savgol_derivative',
-    'spectral_derivative',
-    'total_variation_derivative',
-    'estimate_derivative',
-    
+    "finite_difference",
+    "savgol_derivative",
+    "spectral_derivative",
+    "total_variation_derivative",
+    "estimate_derivative",
     # SINDy
-    'SINDy',
-    'SINDyConfig',
-    'discover_ode',
+    "SINDy",
+    "SINDyConfig",
+    "discover_ode",
 ]

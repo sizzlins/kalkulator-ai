@@ -19,53 +19,46 @@ Example:
 """
 
 from .expression_tree import (
-    ExpressionTree,
-    ExpressionNode,
-    NodeType,
-    UNARY_OPERATORS,
     BINARY_OPERATORS,
+    UNARY_OPERATORS,
+    ExpressionNode,
+    ExpressionTree,
+    NodeType,
 )
+from .genetic_engine import GeneticConfig, GeneticSymbolicRegressor, discover_equation
 from .operators import (
-    point_mutation,
-    subtree_mutation,
-    hoist_mutation,
-    shrink_mutation,
+    apply_mutation,
     constant_optimization,
     crossover,
+    hoist_mutation,
+    point_mutation,
+    shrink_mutation,
+    subtree_mutation,
     tournament_selection,
-    apply_mutation,
 )
 from .pareto_front import ParetoFront, ParetoSolution
-from .genetic_engine import (
-    GeneticSymbolicRegressor,
-    GeneticConfig,
-    discover_equation,
-)
 
 __all__ = [
     # Expression Trees
-    'ExpressionTree',
-    'ExpressionNode',
-    'NodeType',
-    'UNARY_OPERATORS',
-    'BINARY_OPERATORS',
-    
+    "ExpressionTree",
+    "ExpressionNode",
+    "NodeType",
+    "UNARY_OPERATORS",
+    "BINARY_OPERATORS",
     # Genetic Operators
-    'point_mutation',
-    'subtree_mutation',
-    'hoist_mutation',
-    'shrink_mutation',
-    'constant_optimization',
-    'crossover',
-    'tournament_selection',
-    'apply_mutation',
-    
+    "point_mutation",
+    "subtree_mutation",
+    "hoist_mutation",
+    "shrink_mutation",
+    "constant_optimization",
+    "crossover",
+    "tournament_selection",
+    "apply_mutation",
     # Pareto Optimization
-    'ParetoFront',
-    'ParetoSolution',
-    
+    "ParetoFront",
+    "ParetoSolution",
     # Main Algorithm
-    'GeneticSymbolicRegressor',
-    'GeneticConfig',
-    'discover_equation',
+    "GeneticSymbolicRegressor",
+    "GeneticConfig",
+    "discover_equation",
 ]

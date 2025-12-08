@@ -26,7 +26,7 @@ import numpy as np
 @dataclass
 class FeynmanEquation:
     """A Feynman benchmark equation.
-    
+
     Attributes:
         name: Equation identifier
         formula: Mathematical formula string
@@ -35,96 +35,97 @@ class FeynmanEquation:
         ranges: Dict of (min, max) ranges for each variable
         eval_func: Compiled evaluation function
     """
+
     name: str
     formula: str
     variables: list[str]
     description: str
     ranges: dict[str, tuple[float, float]] = field(default_factory=dict)
     eval_func: Callable | None = field(default=None, repr=False)
-    
+
     def __post_init__(self):
         """Compile the evaluation function."""
         if self.eval_func is None:
             self.eval_func = self._compile_formula()
-    
+
     def _compile_formula(self) -> Callable:
         """Compile formula into an evaluation function."""
         # Build namespace with numpy functions
         namespace = {
-            'sin': np.sin,
-            'cos': np.cos,
-            'tan': np.tan,
-            'exp': np.exp,
-            'log': np.log,
-            'sqrt': np.sqrt,
-            'abs': np.abs,
-            'pi': np.pi,
-            'e': np.e,
-            'arcsin': np.arcsin,
-            'arccos': np.arccos,
-            'arctan': np.arctan,
-            'sinh': np.sinh,
-            'cosh': np.cosh,
-            'tanh': np.tanh,
+            "sin": np.sin,
+            "cos": np.cos,
+            "tan": np.tan,
+            "exp": np.exp,
+            "log": np.log,
+            "sqrt": np.sqrt,
+            "abs": np.abs,
+            "pi": np.pi,
+            "e": np.e,
+            "arcsin": np.arcsin,
+            "arccos": np.arccos,
+            "arctan": np.arctan,
+            "sinh": np.sinh,
+            "cosh": np.cosh,
+            "tanh": np.tanh,
         }
-        
+
         # Create function
-        var_list = ', '.join(self.variables)
+        var_list = ", ".join(self.variables)
         code = f"lambda {var_list}: {self.formula}"
-        
+
         try:
             return eval(code, namespace)
-        except Exception as e:
+        except Exception:
             # Return a function that raises the error
             return lambda *args: np.nan
-    
+
     def evaluate(self, **kwargs) -> float | np.ndarray:
         """Evaluate the equation with given variable values.
-        
+
         Args:
             **kwargs: Variable name to value mapping
-            
+
         Returns:
             Computed result
         """
         args = [kwargs[var] for var in self.variables]
         return self.eval_func(*args)
-    
+
     def generate_data(
         self,
         n_samples: int = 100,
         noise_std: float = 0.0,
-        random_state: int | None = None
+        random_state: int | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Generate synthetic data for this equation.
-        
+
         Args:
             n_samples: Number of data points
             noise_std: Standard deviation of Gaussian noise to add
             random_state: Random seed
-            
+
         Returns:
             Tuple of (X, y) where X is (n_samples, n_vars)
         """
         if random_state is not None:
             np.random.seed(random_state)
-        
+
         n_vars = len(self.variables)
         X = np.zeros((n_samples, n_vars))
-        
+
         # Generate random values in specified ranges
         for i, var in enumerate(self.variables):
             low, high = self.ranges.get(var, (0.1, 10.0))
             X[:, i] = np.random.uniform(low, high, n_samples)
-        
+
         # Evaluate
         kwargs = {var: X[:, i] for i, var in enumerate(self.variables)}
         y = self.evaluate(**kwargs)
-        
+
         # Add noise
         if noise_std > 0:
             y = y + np.random.normal(0, noise_std * np.std(y), n_samples)
-        
+
         return X, y
 
 
@@ -154,9 +155,17 @@ FEYNMAN_EQUATIONS = [
         formula="G * m1 * m2 / ((x2 - x1)**2 + (y2 - y1)**2 + (z2 - z1)**2)",
         variables=["G", "m1", "m2", "x1", "x2", "y1", "y2", "z1", "z2"],
         description="Gravitational potential energy",
-        ranges={"G": (6.67e-11, 6.67e-11), "m1": (1, 100), "m2": (1, 100),
-                "x1": (0, 5), "x2": (5, 10), "y1": (0, 5), "y2": (5, 10),
-                "z1": (0, 5), "z2": (5, 10)},
+        ranges={
+            "G": (6.67e-11, 6.67e-11),
+            "m1": (1, 100),
+            "m2": (1, 100),
+            "x1": (0, 5),
+            "x2": (5, 10),
+            "y1": (0, 5),
+            "y2": (5, 10),
+            "z1": (0, 5),
+            "z2": (5, 10),
+        },
     ),
     FeynmanEquation(
         name="I.10.7",
@@ -170,8 +179,14 @@ FEYNMAN_EQUATIONS = [
         formula="x1 * y1 + x2 * y2 + x3 * y3",
         variables=["x1", "y1", "x2", "y2", "x3", "y3"],
         description="Dot product of 3D vectors",
-        ranges={"x1": (-5, 5), "y1": (-5, 5), "x2": (-5, 5),
-                "y2": (-5, 5), "x3": (-5, 5), "y3": (-5, 5)},
+        ranges={
+            "x1": (-5, 5),
+            "y1": (-5, 5),
+            "x2": (-5, 5),
+            "y2": (-5, 5),
+            "x3": (-5, 5),
+            "y3": (-5, 5),
+        },
     ),
     FeynmanEquation(
         name="I.12.1",
@@ -185,8 +200,12 @@ FEYNMAN_EQUATIONS = [
         formula="q1 * q2 / (4 * pi * epsilon * r**2)",
         variables=["q1", "q2", "epsilon", "r"],
         description="Coulomb's law",
-        ranges={"q1": (1e-9, 1e-6), "q2": (1e-9, 1e-6),
-                "epsilon": (8.85e-12, 8.85e-12), "r": (0.01, 1)},
+        ranges={
+            "q1": (1e-9, 1e-6),
+            "q2": (1e-9, 1e-6),
+            "epsilon": (8.85e-12, 8.85e-12),
+            "r": (0.01, 1),
+        },
     ),
     FeynmanEquation(
         name="I.12.4",
@@ -207,8 +226,13 @@ FEYNMAN_EQUATIONS = [
         formula="q * (Ef + B * v * sin(theta))",
         variables=["q", "Ef", "B", "v", "theta"],
         description="Lorentz force",
-        ranges={"q": (1e-9, 1e-6), "Ef": (1e3, 1e6), "B": (0.01, 1),
-                "v": (1, 1e6), "theta": (0, np.pi)},
+        ranges={
+            "q": (1e-9, 1e-6),
+            "Ef": (1e3, 1e6),
+            "B": (0.01, 1),
+            "v": (1, 1e6),
+            "theta": (0, np.pi),
+        },
     ),
     FeynmanEquation(
         name="I.13.4",
@@ -222,8 +246,13 @@ FEYNMAN_EQUATIONS = [
         formula="G * m1 * m2 * (1/r2 - 1/r1)",
         variables=["G", "m1", "m2", "r1", "r2"],
         description="Gravitational potential difference",
-        ranges={"G": (6.67e-11, 6.67e-11), "m1": (1e3, 1e6), "m2": (1e3, 1e6),
-                "r1": (1e6, 1e7), "r2": (1e7, 1e8)},
+        ranges={
+            "G": (6.67e-11, 6.67e-11),
+            "m1": (1e3, 1e6),
+            "m2": (1e3, 1e6),
+            "r1": (1e6, 1e7),
+            "r2": (1e7, 1e8),
+        },
     ),
     FeynmanEquation(
         name="I.14.3",
@@ -272,7 +301,12 @@ FEYNMAN_EQUATIONS = [
         formula="0.25 * m * (omega**2 + omega_0**2) * x**2",
         variables=["m", "omega", "omega_0", "x"],
         description="Energy of driven oscillator",
-        ranges={"m": (0.1, 10), "omega": (0.1, 10), "omega_0": (0.1, 10), "x": (0.1, 10)},
+        ranges={
+            "m": (0.1, 10),
+            "omega": (0.1, 10),
+            "omega_0": (0.1, 10),
+            "x": (0.1, 10),
+        },
     ),
     FeynmanEquation(
         name="I.25.13",
@@ -281,7 +315,6 @@ FEYNMAN_EQUATIONS = [
         description="Voltage across capacitor",
         ranges={"q": (1e-9, 1e-3), "C": (1e-12, 1e-6)},
     ),
-    
     # Volume I: Waves and Thermodynamics
     FeynmanEquation(
         name="I.26.2",
@@ -309,7 +342,12 @@ FEYNMAN_EQUATIONS = [
         formula="sqrt(x1**2 + x2**2 - 2*x1*x2*cos(theta1 - theta2))",
         variables=["x1", "x2", "theta1", "theta2"],
         description="Amplitude from two waves",
-        ranges={"x1": (0.1, 10), "x2": (0.1, 10), "theta1": (0, 2*np.pi), "theta2": (0, 2*np.pi)},
+        ranges={
+            "x1": (0.1, 10),
+            "x2": (0.1, 10),
+            "theta1": (0, 2 * np.pi),
+            "theta2": (0, 2 * np.pi),
+        },
     ),
     FeynmanEquation(
         name="I.30.3",
@@ -323,30 +361,43 @@ FEYNMAN_EQUATIONS = [
         formula="q**2 * a**2 / (6 * pi * epsilon * c**3)",
         variables=["q", "a", "epsilon", "c"],
         description="Larmor formula (power radiated)",
-        ranges={"q": (1e-19, 1e-18), "a": (1e10, 1e15), 
-                "epsilon": (8.85e-12, 8.85e-12), "c": (3e8, 3e8)},
+        ranges={
+            "q": (1e-19, 1e-18),
+            "a": (1e10, 1e15),
+            "epsilon": (8.85e-12, 8.85e-12),
+            "c": (3e8, 3e8),
+        },
     ),
     FeynmanEquation(
         name="I.34.8",
         formula="q * v * B / p",
         variables=["q", "v", "B", "p"],
         description="Cyclotron frequency",
-        ranges={"q": (1e-19, 1e-18), "v": (1e5, 1e8), "B": (0.01, 1), "p": (1e-25, 1e-20)},
+        ranges={
+            "q": (1e-19, 1e-18),
+            "v": (1e5, 1e8),
+            "B": (0.01, 1),
+            "p": (1e-25, 1e-20),
+        },
     ),
     FeynmanEquation(
         name="I.37.4",
         formula="I1 + I2 + 2*sqrt(I1*I2)*cos(delta)",
         variables=["I1", "I2", "delta"],
         description="Intensity from two sources",
-        ranges={"I1": (1, 100), "I2": (1, 100), "delta": (0, 2*np.pi)},
+        ranges={"I1": (1, 100), "I2": (1, 100), "delta": (0, 2 * np.pi)},
     ),
     FeynmanEquation(
         name="I.38.12",
         formula="4 * pi * epsilon * (h/(2*pi))**2 / (m * q**2)",
         variables=["epsilon", "h", "m", "q"],
         description="Bohr radius",
-        ranges={"epsilon": (8.85e-12, 8.85e-12), "h": (6.626e-34, 6.626e-34),
-                "m": (9.1e-31, 9.1e-31), "q": (1.6e-19, 1.6e-19)},
+        ranges={
+            "epsilon": (8.85e-12, 8.85e-12),
+            "h": (6.626e-34, 6.626e-34),
+            "m": (9.1e-31, 9.1e-31),
+            "q": (1.6e-19, 1.6e-19),
+        },
     ),
     FeynmanEquation(
         name="I.39.1",
@@ -367,23 +418,39 @@ FEYNMAN_EQUATIONS = [
         formula="n * kb * T / V",
         variables=["n", "kb", "T", "V"],
         description="Ideal gas law for pressure",
-        ranges={"n": (1, 100), "kb": (1.38e-23, 1.38e-23), "T": (200, 500), "V": (1e-3, 1)},
+        ranges={
+            "n": (1, 100),
+            "kb": (1.38e-23, 1.38e-23),
+            "T": (200, 500),
+            "V": (1e-3, 1),
+        },
     ),
     FeynmanEquation(
         name="I.40.1",
         formula="n_0 * exp(-m * g * x / (kb * T))",
         variables=["n_0", "m", "g", "x", "kb", "T"],
         description="Barometric formula",
-        ranges={"n_0": (1e19, 1e20), "m": (1e-26, 1e-25), "g": (9.8, 9.8),
-                "x": (0, 1e4), "kb": (1.38e-23, 1.38e-23), "T": (200, 350)},
+        ranges={
+            "n_0": (1e19, 1e20),
+            "m": (1e-26, 1e-25),
+            "g": (9.8, 9.8),
+            "x": (0, 1e4),
+            "kb": (1.38e-23, 1.38e-23),
+            "T": (200, 350),
+        },
     ),
     FeynmanEquation(
         name="I.41.16",
         formula="h * omega**3 / (pi**2 * c**2 * (exp(h * omega / (kb * T)) - 1))",
         variables=["h", "omega", "c", "kb", "T"],
         description="Planck's law",
-        ranges={"h": (1.05e-34, 1.05e-34), "omega": (1e12, 1e15), 
-                "c": (3e8, 3e8), "kb": (1.38e-23, 1.38e-23), "T": (1000, 6000)},
+        ranges={
+            "h": (1.05e-34, 1.05e-34),
+            "omega": (1e12, 1e15),
+            "c": (3e8, 3e8),
+            "kb": (1.38e-23, 1.38e-23),
+            "T": (1000, 6000),
+        },
     ),
     FeynmanEquation(
         name="I.43.16",
@@ -397,24 +464,40 @@ FEYNMAN_EQUATIONS = [
         formula="m * g * (kb * T) / (6 * pi * eta * r)",
         variables=["m", "g", "kb", "T", "eta", "r"],
         description="Einstein diffusion",
-        ranges={"m": (1e-26, 1e-20), "g": (9.8, 9.8), "kb": (1.38e-23, 1.38e-23),
-                "T": (200, 400), "eta": (1e-4, 1e-2), "r": (1e-9, 1e-6)},
+        ranges={
+            "m": (1e-26, 1e-20),
+            "g": (9.8, 9.8),
+            "kb": (1.38e-23, 1.38e-23),
+            "T": (200, 400),
+            "eta": (1e-4, 1e-2),
+            "r": (1e-9, 1e-6),
+        },
     ),
     FeynmanEquation(
         name="I.43.43",
         formula="kb * T * v / (6 * pi * eta * r)",
         variables=["kb", "T", "v", "eta", "r"],
         description="Stokes-Einstein",
-        ranges={"kb": (1.38e-23, 1.38e-23), "T": (200, 400), "v": (1e-3, 1),
-                "eta": (1e-4, 1e-2), "r": (1e-9, 1e-6)},
+        ranges={
+            "kb": (1.38e-23, 1.38e-23),
+            "T": (200, 400),
+            "v": (1e-3, 1),
+            "eta": (1e-4, 1e-2),
+            "r": (1e-9, 1e-6),
+        },
     ),
     FeynmanEquation(
         name="I.44.4",
         formula="n * kb * T * log(V2 / V1)",
         variables=["n", "kb", "T", "V1", "V2"],
         description="Work in isothermal expansion",
-        ranges={"n": (1, 100), "kb": (1.38e-23, 1.38e-23), "T": (200, 500),
-                "V1": (1e-3, 0.5), "V2": (0.5, 1)},
+        ranges={
+            "n": (1, 100),
+            "kb": (1.38e-23, 1.38e-23),
+            "T": (200, 500),
+            "V1": (1e-3, 0.5),
+            "V2": (0.5, 1),
+        },
     ),
     FeynmanEquation(
         name="I.47.23",
@@ -430,7 +513,6 @@ FEYNMAN_EQUATIONS = [
         description="Relativistic energy",
         ranges={"m": (1e-30, 1e-25), "v": (1e5, 2.9e8), "c": (3e8, 3e8)},
     ),
-    
     # More essential physics equations
     FeynmanEquation(
         name="I.50.26",
@@ -444,8 +526,13 @@ FEYNMAN_EQUATIONS = [
         formula="kappa * (T2 - T1) * A / d",
         variables=["kappa", "T1", "T2", "A", "d"],
         description="Heat conduction",
-        ranges={"kappa": (0.1, 400), "T1": (200, 300), "T2": (300, 400),
-                "A": (1e-4, 1), "d": (0.01, 1)},
+        ranges={
+            "kappa": (0.1, 400),
+            "T1": (200, 300),
+            "T2": (300, 400),
+            "A": (1e-4, 1),
+            "d": (0.01, 1),
+        },
     ),
     FeynmanEquation(
         name="II.3.24",
@@ -487,32 +574,53 @@ FEYNMAN_EQUATIONS = [
         formula="q * Ef / (m * (omega_0**2 - omega**2))",
         variables=["q", "Ef", "m", "omega_0", "omega"],
         description="Displacement in E field",
-        ranges={"q": (1e-19, 1e-18), "Ef": (1e3, 1e6), "m": (1e-30, 1e-25),
-                "omega_0": (1e12, 1e15), "omega": (1e11, 9e14)},
+        ranges={
+            "q": (1e-19, 1e-18),
+            "Ef": (1e3, 1e6),
+            "m": (1e-30, 1e-25),
+            "omega_0": (1e12, 1e15),
+            "omega": (1e11, 9e14),
+        },
     ),
     FeynmanEquation(
         name="II.11.17",
         formula="n_0 * (1 + p * d * Ef / (kb * T))",
         variables=["n_0", "p", "d", "Ef", "kb", "T"],
         description="Polarized density",
-        ranges={"n_0": (1e19, 1e21), "p": (1e-30, 1e-29), "d": (1e-10, 1e-9),
-                "Ef": (1e3, 1e6), "kb": (1.38e-23, 1.38e-23), "T": (200, 400)},
+        ranges={
+            "n_0": (1e19, 1e21),
+            "p": (1e-30, 1e-29),
+            "d": (1e-10, 1e-9),
+            "Ef": (1e3, 1e6),
+            "kb": (1.38e-23, 1.38e-23),
+            "T": (200, 400),
+        },
     ),
     FeynmanEquation(
         name="II.11.20",
         formula="n_rho * p**2 * Ef / (3 * kb * T)",
         variables=["n_rho", "p", "Ef", "kb", "T"],
         description="Polarization",
-        ranges={"n_rho": (1e19, 1e21), "p": (1e-30, 1e-29), "Ef": (1e3, 1e6),
-                "kb": (1.38e-23, 1.38e-23), "T": (200, 400)},
+        ranges={
+            "n_rho": (1e19, 1e21),
+            "p": (1e-30, 1e-29),
+            "Ef": (1e3, 1e6),
+            "kb": (1.38e-23, 1.38e-23),
+            "T": (200, 400),
+        },
     ),
     FeynmanEquation(
         name="II.21.32",
         formula="q / (4 * pi * epsilon * r * (1 - v/c))",
         variables=["q", "epsilon", "r", "v", "c"],
         description="Lienard-Wiechert potential",
-        ranges={"q": (1e-19, 1e-18), "epsilon": (8.85e-12, 8.85e-12),
-                "r": (0.01, 1), "v": (1e5, 1e8), "c": (3e8, 3e8)},
+        ranges={
+            "q": (1e-19, 1e-18),
+            "epsilon": (8.85e-12, 8.85e-12),
+            "r": (0.01, 1),
+            "v": (1e5, 1e8),
+            "c": (3e8, 3e8),
+        },
     ),
     FeynmanEquation(
         name="II.24.17",
@@ -561,39 +669,65 @@ FEYNMAN_EQUATIONS = [
         formula="q * h / (4 * pi * m)",
         variables=["q", "h", "m"],
         description="Bohr magneton",
-        ranges={"q": (1.6e-19, 1.6e-19), "h": (6.626e-34, 6.626e-34), "m": (9.1e-31, 9.1e-31)},
+        ranges={
+            "q": (1.6e-19, 1.6e-19),
+            "h": (6.626e-34, 6.626e-34),
+            "m": (9.1e-31, 9.1e-31),
+        },
     ),
     FeynmanEquation(
         name="II.34.29b",
         formula="g_ * mom * B / h",
         variables=["g_", "mom", "B", "h"],
         description="Zeeman splitting",
-        ranges={"g_": (1, 3), "mom": (9.27e-24, 9.27e-24), "B": (0.01, 1), "h": (1.05e-34, 1.05e-34)},
+        ranges={
+            "g_": (1, 3),
+            "mom": (9.27e-24, 9.27e-24),
+            "B": (0.01, 1),
+            "h": (1.05e-34, 1.05e-34),
+        },
     ),
     FeynmanEquation(
         name="II.35.18",
         formula="n_0 / (exp(mom * B / (kb * T)) + exp(-mom * B / (kb * T)))",
         variables=["n_0", "mom", "B", "kb", "T"],
         description="Magnetization",
-        ranges={"n_0": (1e19, 1e21), "mom": (9.27e-24, 9.27e-24), "B": (0.01, 1),
-                "kb": (1.38e-23, 1.38e-23), "T": (1, 100)},
+        ranges={
+            "n_0": (1e19, 1e21),
+            "mom": (9.27e-24, 9.27e-24),
+            "B": (0.01, 1),
+            "kb": (1.38e-23, 1.38e-23),
+            "T": (1, 100),
+        },
     ),
     FeynmanEquation(
         name="II.35.21",
         formula="n * mom * tanh(mom * B / (kb * T))",
         variables=["n", "mom", "B", "kb", "T"],
         description="Paramagnetism",
-        ranges={"n": (1e19, 1e21), "mom": (9.27e-24, 9.27e-24), "B": (0.01, 1),
-                "kb": (1.38e-23, 1.38e-23), "T": (1, 100)},
+        ranges={
+            "n": (1e19, 1e21),
+            "mom": (9.27e-24, 9.27e-24),
+            "B": (0.01, 1),
+            "kb": (1.38e-23, 1.38e-23),
+            "T": (1, 100),
+        },
     ),
     FeynmanEquation(
         name="II.36.38",
         formula="mom * H / (kb * T) + (mom * alpha) / (epsilon * c**2 * kb * T) * M",
         variables=["mom", "H", "kb", "T", "alpha", "epsilon", "c", "M"],
         description="Ferromagnetism",
-        ranges={"mom": (9.27e-24, 9.27e-24), "H": (1, 1e5), "kb": (1.38e-23, 1.38e-23),
-                "T": (100, 1000), "alpha": (1, 10), "epsilon": (8.85e-12, 8.85e-12),
-                "c": (3e8, 3e8), "M": (1e3, 1e6)},
+        ranges={
+            "mom": (9.27e-24, 9.27e-24),
+            "H": (1, 1e5),
+            "kb": (1.38e-23, 1.38e-23),
+            "T": (100, 1000),
+            "alpha": (1, 10),
+            "epsilon": (8.85e-12, 8.85e-12),
+            "c": (3e8, 3e8),
+            "M": (1e3, 1e6),
+        },
     ),
     FeynmanEquation(
         name="II.37.1",
@@ -616,23 +750,30 @@ FEYNMAN_EQUATIONS = [
         description="Shear modulus",
         ranges={"Y": (1e9, 1e11), "sigma": (0.1, 0.5)},
     ),
-    
     # Volume III: Quantum mechanics (selected)
     FeynmanEquation(
         name="III.4.32",
         formula="1 / (exp((h * omega) / (kb * T)) - 1)",
         variables=["h", "omega", "kb", "T"],
         description="Bose-Einstein distribution",
-        ranges={"h": (1.05e-34, 1.05e-34), "omega": (1e12, 1e15),
-                "kb": (1.38e-23, 1.38e-23), "T": (1, 1000)},
+        ranges={
+            "h": (1.05e-34, 1.05e-34),
+            "omega": (1e12, 1e15),
+            "kb": (1.38e-23, 1.38e-23),
+            "T": (1, 1000),
+        },
     ),
     FeynmanEquation(
         name="III.4.33",
         formula="h * omega / (exp(h * omega / (kb * T)) - 1)",
         variables=["h", "omega", "kb", "T"],
         description="Planck oscillator energy",
-        ranges={"h": (1.05e-34, 1.05e-34), "omega": (1e12, 1e15),
-                "kb": (1.38e-23, 1.38e-23), "T": (1, 1000)},
+        ranges={
+            "h": (1.05e-34, 1.05e-34),
+            "omega": (1e12, 1e15),
+            "kb": (1.38e-23, 1.38e-23),
+            "T": (1, 1000),
+        },
     ),
     FeynmanEquation(
         name="III.7.38",
@@ -653,15 +794,25 @@ FEYNMAN_EQUATIONS = [
         formula="p * d * Ef * sin(theta) / h",
         variables=["p", "d", "Ef", "theta", "h"],
         description="Stark effect",
-        ranges={"p": (1e-30, 1e-29), "d": (1e-10, 1e-9), "Ef": (1e5, 1e8),
-                "theta": (0, np.pi), "h": (1.05e-34, 1.05e-34)},
+        ranges={
+            "p": (1e-30, 1e-29),
+            "d": (1e-10, 1e-9),
+            "Ef": (1e5, 1e8),
+            "theta": (0, np.pi),
+            "h": (1.05e-34, 1.05e-34),
+        },
     ),
     FeynmanEquation(
         name="III.10.19",
         formula="mom * sqrt(Bx**2 + By**2 + Bz**2)",
         variables=["mom", "Bx", "By", "Bz"],
         description="Magnetic energy",
-        ranges={"mom": (9.27e-24, 9.27e-24), "Bx": (-1, 1), "By": (-1, 1), "Bz": (-1, 1)},
+        ranges={
+            "mom": (9.27e-24, 9.27e-24),
+            "Bx": (-1, 1),
+            "By": (-1, 1),
+            "Bz": (-1, 1),
+        },
     ),
     FeynmanEquation(
         name="III.12.43",
@@ -675,15 +826,25 @@ FEYNMAN_EQUATIONS = [
         formula="2 * E * d**2 * k / h",
         variables=["E", "d", "k", "h"],
         description="Band gap energy",
-        ranges={"E": (1e-21, 1e-18), "d": (1e-10, 1e-9), "k": (1e9, 1e11), "h": (1.05e-34, 1.05e-34)},
+        ranges={
+            "E": (1e-21, 1e-18),
+            "d": (1e-10, 1e-9),
+            "k": (1e9, 1e11),
+            "h": (1.05e-34, 1.05e-34),
+        },
     ),
     FeynmanEquation(
         name="III.14.14",
         formula="I_0 * (exp(q * V / (kb * T)) - 1)",
         variables=["I_0", "q", "V", "kb", "T"],
         description="Diode current",
-        ranges={"I_0": (1e-12, 1e-9), "q": (1.6e-19, 1.6e-19), "V": (-0.5, 1),
-                "kb": (1.38e-23, 1.38e-23), "T": (250, 400)},
+        ranges={
+            "I_0": (1e-12, 1e-9),
+            "q": (1.6e-19, 1.6e-19),
+            "V": (-0.5, 1),
+            "kb": (1.38e-23, 1.38e-23),
+            "T": (250, 400),
+        },
     ),
     FeynmanEquation(
         name="III.15.12",
@@ -718,26 +879,36 @@ FEYNMAN_EQUATIONS = [
         formula="-m * q**4 / (2 * (4 * pi * epsilon)**2 * h**2) * (1/n**2)",
         variables=["m", "q", "epsilon", "h", "n"],
         description="Hydrogen energy levels",
-        ranges={"m": (9.1e-31, 9.1e-31), "q": (1.6e-19, 1.6e-19),
-                "epsilon": (8.85e-12, 8.85e-12), "h": (1.05e-34, 1.05e-34), "n": (1, 10)},
+        ranges={
+            "m": (9.1e-31, 9.1e-31),
+            "q": (1.6e-19, 1.6e-19),
+            "epsilon": (8.85e-12, 8.85e-12),
+            "h": (1.05e-34, 1.05e-34),
+            "n": (1, 10),
+        },
     ),
     FeynmanEquation(
         name="III.21.20",
         formula="-rho * c * d * cos(theta) / r",
         variables=["rho", "c", "d", "theta", "r"],
         description="Scattering amplitude",
-        ranges={"rho": (1e19, 1e21), "c": (1e-10, 1e-9), "d": (1e-10, 1e-9),
-                "theta": (0, np.pi), "r": (1e-10, 1e-8)},
+        ranges={
+            "rho": (1e19, 1e21),
+            "c": (1e-10, 1e-9),
+            "d": (1e-10, 1e-9),
+            "theta": (0, np.pi),
+            "r": (1e-10, 1e-8),
+        },
     ),
 ]
 
 
 def get_equation(name: str) -> FeynmanEquation | None:
     """Get a specific Feynman equation by name.
-    
+
     Args:
         name: Equation identifier (e.g., "I.12.1")
-        
+
     Returns:
         FeynmanEquation or None if not found
     """
@@ -748,15 +919,14 @@ def get_equation(name: str) -> FeynmanEquation | None:
 
 
 def get_equations_by_complexity(
-    max_variables: int = 5,
-    exclude_constants: bool = True
+    max_variables: int = 5, exclude_constants: bool = True
 ) -> list[FeynmanEquation]:
     """Get equations filtered by number of variables.
-    
+
     Args:
         max_variables: Maximum number of variables
         exclude_constants: If True, exclude equations with constant values
-        
+
     Returns:
         List of matching equations
     """
@@ -778,16 +948,16 @@ def get_equations_by_complexity(
 
 def list_equations() -> list[dict]:
     """Get summary list of all equations.
-    
+
     Returns:
         List of dicts with name, description, n_variables
     """
     return [
         {
-            'name': eq.name,
-            'description': eq.description,
-            'n_variables': len(eq.variables),
-            'variables': eq.variables,
+            "name": eq.name,
+            "description": eq.description,
+            "n_variables": len(eq.variables),
+            "variables": eq.variables,
         }
         for eq in FEYNMAN_EQUATIONS
     ]

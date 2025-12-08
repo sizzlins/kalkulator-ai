@@ -134,9 +134,7 @@ GP_GENERATIONS = int(
 GP_PARSIMONY = float(
     os.getenv("KALKULATOR_GP_PARSIMONY", "0.001")
 )  # Complexity penalty coefficient
-GP_TIMEOUT = float(
-    os.getenv("KALKULATOR_GP_TIMEOUT", "30")
-)  # Timeout in seconds
+GP_TIMEOUT = float(os.getenv("KALKULATOR_GP_TIMEOUT", "30"))  # Timeout in seconds
 
 # SINDy (Sparse Identification of Nonlinear Dynamics) configuration
 SINDY_THRESHOLD = float(

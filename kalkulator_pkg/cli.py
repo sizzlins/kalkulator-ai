@@ -1026,7 +1026,7 @@ def repl_loop(output_format: str = "human") -> None:
                     for p in parts_check
                     if p.strip()
                 )
-                
+
                 # Check for function finding pattern: multiple func(numeric) = value
                 # with same function name (e.g., "g(1) = -4, g(2) = 0, g(0) = -6")
                 func_finding_pattern = re.compile(
@@ -1041,7 +1041,7 @@ def repl_loop(output_format: str = "human") -> None:
                         if m:
                             func_names_found.add(m.group(1))
                             # Check if argument contains at least one digit (numeric data point)
-                            if re.search(r'\d', m.group(2)):
+                            if re.search(r"\d", m.group(2)):
                                 numeric_args_count += 1
                     # If all parts match the pattern, same function name, and have numeric args
                     if len(func_names_found) == 1 and numeric_args_count >= 2:
@@ -1050,11 +1050,11 @@ def repl_loop(output_format: str = "human") -> None:
                 # Check for research-grade commands that should NOT be split
                 raw_lower_check = raw_input.lower().strip()
                 is_research_command = (
-                    raw_lower_check.startswith("evolve ") or
-                    raw_lower_check.startswith("find ode") or
-                    raw_lower_check.startswith("discover causal") or
-                    raw_lower_check.startswith("find dimensionless") or
-                    raw_lower_check.startswith("benchmark")
+                    raw_lower_check.startswith("evolve ")
+                    or raw_lower_check.startswith("find ode")
+                    or raw_lower_check.startswith("discover causal")
+                    or raw_lower_check.startswith("find dimensionless")
+                    or raw_lower_check.startswith("benchmark")
                 )
 
                 if is_research_command:
@@ -1185,82 +1185,101 @@ def repl_loop(output_format: str = "human") -> None:
         # =====================================================================
         # RESEARCH-GRADE SYMBOLIC REGRESSION COMMANDS
         # =====================================================================
-        
+
         # Evolve command: Use genetic programming to discover equations
         # Usage: evolve f(x) from x=[1,2,3,4], y=[2,4,6,8]
         if raw_lower.startswith("evolve "):
             import re
+
             try:
                 import numpy as np
-                from .symbolic_regression import GeneticSymbolicRegressor, GeneticConfig
-                
+
+                from .symbolic_regression import GeneticConfig, GeneticSymbolicRegressor
+
                 # Parse: evolve f(x) from x=[...], y=[...]
                 # or: evolve f(x,y) from x=[...], y=[...], z=[...]
                 evolve_match = re.match(
-                    r"evolve\s+(\w+)\s*\(([^)]+)\)\s+from\s+(.+)",
-                    raw, re.IGNORECASE
+                    r"evolve\s+(\w+)\s*\(([^)]+)\)\s+from\s+(.+)", raw, re.IGNORECASE
                 )
-                
+
                 if evolve_match:
                     func_name = evolve_match.group(1)
                     # These are the INPUT variable names from f(x) or f(a,b)
-                    input_var_names = [v.strip() for v in evolve_match.group(2).split(',')]
+                    input_var_names = [
+                        v.strip() for v in evolve_match.group(2).split(",")
+                    ]
                     data_part = evolve_match.group(3)
-                    
+
                     # Parse data arrays
                     data_dict = {}
                     array_pattern = re.compile(r"(\w+)\s*=\s*\[([^\]]+)\]")
                     for match in array_pattern.finditer(data_part):
                         var = match.group(1)
-                        values = [float(v.strip()) for v in match.group(2).split(',')]
+                        values = [float(v.strip()) for v in match.group(2).split(",")]
                         data_dict[var] = np.array(values)
-                    
+
                     if not data_dict:
-                        print("Error: No data arrays found. Use format: x=[1,2,3], y=[4,5,6]")
+                        print(
+                            "Error: No data arrays found. Use format: x=[1,2,3], y=[4,5,6]"
+                        )
                         continue
-                    
+
                     # Input variables are the ones in the function signature
                     # Output is any variable NOT in the signature (typically 'y' or 'z')
                     input_vars = [v for v in input_var_names if v in data_dict]
-                    output_candidates = [v for v in data_dict.keys() if v not in input_var_names]
-                    
+                    output_candidates = [
+                        v for v in data_dict.keys() if v not in input_var_names
+                    ]
+
                     if not input_vars:
                         # Maybe user provided x,y in data but only x in function signature
                         # Use all vars from signature that exist in data
                         input_vars = input_var_names[:1]  # Use first var as input
-                        output_candidates = [v for v in data_dict.keys() if v != input_vars[0]]
-                    
+                        output_candidates = [
+                            v for v in data_dict.keys() if v != input_vars[0]
+                        ]
+
                     if not output_candidates:
-                        print(f"Error: Need output variable. Provide data for a variable not in {func_name}({','.join(input_var_names)})")
-                        print(f"  Example: evolve f(x) from x=[1,2,3], y=[2,4,6]  (y is output)")
+                        print(
+                            f"Error: Need output variable. Provide data for a variable not in {func_name}({','.join(input_var_names)})"
+                        )
+                        print(
+                            "  Example: evolve f(x) from x=[1,2,3], y=[2,4,6]  (y is output)"
+                        )
                         continue
-                    
-                    output_var = output_candidates[0]  # First non-input variable is output
-                    
+
+                    output_var = output_candidates[
+                        0
+                    ]  # First non-input variable is output
+
                     # Validate all input vars have data
                     missing = [v for v in input_vars if v not in data_dict]
                     if missing:
                         print(f"Error: Missing data for input variable(s): {missing}")
                         continue
-                    
+
                     X = np.column_stack([data_dict[v] for v in input_vars])
                     y = data_dict[output_var]
-                    
-                    print(f"Evolving {func_name}({', '.join(input_vars)}) from {len(y)} data points...")
-                    
+
+                    print(
+                        f"Evolving {func_name}({', '.join(input_vars)}) from {len(y)} data points..."
+                    )
+
                     config = GeneticConfig(
                         population_size=200,
                         n_islands=2,
                         generations=50,
                         timeout=30,
-                        verbose=True
+                        verbose=True,
                     )
                     regressor = GeneticSymbolicRegressor(config)
                     pareto = regressor.fit(X, y, input_vars)
-                    
+
                     best = pareto.get_knee_point() or pareto.get_best()
                     if best:
-                        print(f"\nDiscovered: {func_name}({', '.join(input_vars)}) = {best.expression}")
+                        print(
+                            f"\nDiscovered: {func_name}({', '.join(input_vars)}) = {best.expression}"
+                        )
                         print(f"MSE: {best.mse:.6e}")
                         print(f"Complexity: {best.complexity} nodes")
                     else:
@@ -1273,52 +1292,55 @@ def repl_loop(output_format: str = "human") -> None:
             except Exception as e:
                 print(f"Error: {e}")
             continue
-        
+
         # Find ODE command: Discover differential equations using SINDy
         # Usage: find ode from t=[...], x=[...], v=[...]
         if raw_lower.startswith("find ode"):
             import re
+
             try:
                 import numpy as np
+
                 from .dynamics_discovery import SINDy, SINDyConfig
-                
+
                 # Parse: find ode from t=[...], x=[...], v=[...]
-                ode_match = re.match(
-                    r"find\s+ode\s+from\s+(.+)",
-                    raw, re.IGNORECASE
-                )
-                
+                ode_match = re.match(r"find\s+ode\s+from\s+(.+)", raw, re.IGNORECASE)
+
                 if ode_match:
                     data_part = ode_match.group(1)
-                    
+
                     # Parse data arrays
                     data_dict = {}
                     array_pattern = re.compile(r"(\w+)\s*=\s*\[([^\]]+)\]")
                     for match in array_pattern.finditer(data_part):
                         var = match.group(1)
-                        values = [float(v.strip()) for v in match.group(2).split(',')]
+                        values = [float(v.strip()) for v in match.group(2).split(",")]
                         data_dict[var] = np.array(values)
-                    
-                    if 't' not in data_dict:
+
+                    if "t" not in data_dict:
                         print("Error: Time variable 't' is required")
                         continue
-                    
-                    t = data_dict.pop('t')
+
+                    t = data_dict.pop("t")
                     state_vars = list(data_dict.keys())
                     X = np.column_stack([data_dict[v] for v in state_vars])
-                    
+
                     print(f"Discovering ODEs for {state_vars}...")
-                    
+
                     if len(t) < 10:
-                        print(f"Warning: Only {len(t)} data points provided. SINDy requires more data for reliable results.")
+                        print(
+                            f"Warning: Only {len(t)} data points provided. SINDy requires more data for reliable results."
+                        )
                         print("  With very few points, complex models will overfit.")
-                        print("  Restricting to LINEAR models only (poly_order=1) and higher threshold...")
+                        print(
+                            "  Restricting to LINEAR models only (poly_order=1) and higher threshold..."
+                        )
                         sindy = SINDy(SINDyConfig(threshold=0.5, poly_order=1))
                     else:
                         sindy = SINDy(SINDyConfig(threshold=0.1, poly_order=3))
-                        
+
                     sindy.fit(X, t, variable_names=state_vars)
-                    
+
                     print("\nDiscovered equations:")
                     sindy.print_equations()
                 else:
@@ -1328,51 +1350,52 @@ def repl_loop(output_format: str = "human") -> None:
             except Exception as e:
                 print(f"Error: {e}")
             continue
-        
+
         # Discover causal graph command
         # Usage: discover causal graph from x=[...], y=[...], z=[...]
         if raw_lower.startswith("discover causal"):
             import re
+
             try:
                 import numpy as np
+
                 from .causal_discovery import PCAlgorithm
-                
+
                 # Parse: discover causal graph from x=[...], y=[...], z=[...]
                 causal_match = re.match(
-                    r"discover\s+causal\s+(?:graph\s+)?from\s+(.+)",
-                    raw, re.IGNORECASE
+                    r"discover\s+causal\s+(?:graph\s+)?from\s+(.+)", raw, re.IGNORECASE
                 )
-                
+
                 if causal_match:
                     data_part = causal_match.group(1)
-                    
+
                     # Parse alpha parameter if present
                     alpha = 0.05
                     alpha_match = re.search(r"alpha\s*=\s*([\d.]+)", data_part)
                     if alpha_match:
                         alpha = float(alpha_match.group(1))
                         data_part = re.sub(r"alpha\s*=\s*[\d.]+,?\s*", "", data_part)
-                    
+
                     # Parse data arrays
                     data_dict = {}
                     array_pattern = re.compile(r"(\w+)\s*=\s*\[([^\]]+)\]")
                     for match in array_pattern.finditer(data_part):
                         var = match.group(1)
-                        values = [float(v.strip()) for v in match.group(2).split(',')]
+                        values = [float(v.strip()) for v in match.group(2).split(",")]
                         data_dict[var] = np.array(values)
-                    
+
                     if len(data_dict) < 2:
                         print("Error: At least 2 variables required")
                         continue
-                    
+
                     var_names = list(data_dict.keys())
                     X = np.column_stack([data_dict[v] for v in var_names])
-                    
+
                     print(f"Discovering causal structure for {var_names}...")
-                    
+
                     pc = PCAlgorithm(alpha=alpha)
                     graph = pc.fit(X, variable_names=var_names)
-                    
+
                     print(graph)
                 else:
                     print("Usage: discover causal graph from x=[...], y=[...], z=[...]")
@@ -1382,58 +1405,83 @@ def repl_loop(output_format: str = "human") -> None:
             except Exception as e:
                 print(f"Error: {e}")
             continue
-        
+
         # Dimensionless groups / Buckingham Pi
         # Usage: find dimensionless from F=force, rho=density, v=velocity, L=length
         if raw_lower.startswith("find dimensionless"):
             import re
+
             try:
                 from .dimensional_analysis import (
-                    Dimension, find_dimensionless_groups, format_pi_group,
-                    MASS, LENGTH, TIME, FORCE, VELOCITY, DENSITY, ENERGY, 
-                    POWER, PRESSURE, ACCELERATION, FREQUENCY
+                    ACCELERATION,
+                    DENSITY,
+                    ENERGY,
+                    FORCE,
+                    FREQUENCY,
+                    LENGTH,
+                    MASS,
+                    POWER,
+                    PRESSURE,
+                    TIME,
+                    VELOCITY,
+                    Dimension,
+                    find_dimensionless_groups,
+                    format_pi_group,
                 )
-                
+
                 dim_map = {
-                    'mass': MASS, 'm': MASS,
-                    'length': LENGTH, 'l': LENGTH,
-                    'time': TIME, 't': TIME,
-                    'force': FORCE, 'f': FORCE,
-                    'velocity': VELOCITY, 'v': VELOCITY,
-                    'density': DENSITY, 'rho': DENSITY,
-                    'energy': ENERGY, 'e': ENERGY,
-                    'power': POWER, 'p': POWER,
-                    'pressure': PRESSURE,
-                    'acceleration': ACCELERATION, 'a': ACCELERATION,
-                    'frequency': FREQUENCY, 'freq': FREQUENCY,
+                    "mass": MASS,
+                    "m": MASS,
+                    "length": LENGTH,
+                    "l": LENGTH,
+                    "time": TIME,
+                    "t": TIME,
+                    "force": FORCE,
+                    "f": FORCE,
+                    "velocity": VELOCITY,
+                    "v": VELOCITY,
+                    "density": DENSITY,
+                    "rho": DENSITY,
+                    "energy": ENERGY,
+                    "e": ENERGY,
+                    "power": POWER,
+                    "p": POWER,
+                    "pressure": PRESSURE,
+                    "acceleration": ACCELERATION,
+                    "a": ACCELERATION,
+                    "frequency": FREQUENCY,
+                    "freq": FREQUENCY,
                 }
-                
+
                 dim_match = re.match(
-                    r"find\s+dimensionless\s+from\s+(.+)",
-                    raw, re.IGNORECASE
+                    r"find\s+dimensionless\s+from\s+(.+)", raw, re.IGNORECASE
                 )
-                
+
                 if dim_match:
                     data_part = dim_match.group(1)
-                    
+
                     quantities = []
-                    for item in data_part.split(','):
+                    for item in data_part.split(","):
                         item = item.strip()
-                        if '=' in item:
-                            var, dim_name = item.split('=', 1)
+                        if "=" in item:
+                            var, dim_name = item.split("=", 1)
                             var = var.strip()
                             dim_name = dim_name.strip().lower()
                             if dim_name in dim_map:
                                 quantities.append((var, dim_map[dim_name]))
                             else:
                                 print(f"Unknown dimension: {dim_name}")
-                                print(f"Available: {', '.join(sorted(set(dim_map.keys())))}")
+                                print(
+                                    f"Available: {', '.join(sorted(set(dim_map.keys())))}"
+                                )
                                 continue
-                    
+
                     if quantities:
-                        print(f"Finding dimensionless groups for: {[q[0] for q in quantities]}")
+                        print(
+                            f"Finding dimensionless groups for: {[q[0] for q in quantities]}"
+                        )
                         groups = find_dimensionless_groups(quantities)
-                        
+
                         if groups:
                             print("\nDimensionless groups (Buckingham Pi):")
                             for i, g in enumerate(groups, 1):
@@ -1441,18 +1489,20 @@ def repl_loop(output_format: str = "human") -> None:
                         else:
                             print("No dimensionless groups found")
                 else:
-                    print("Usage: find dimensionless from F=force, rho=density, v=velocity, L=length")
+                    print(
+                        "Usage: find dimensionless from F=force, rho=density, v=velocity, L=length"
+                    )
             except ImportError as e:
                 print(f"Error: Required module not available: {e}")
             except Exception as e:
                 print(f"Error: {e}")
             continue
-        
+
         # Quick benchmark command
         if raw_lower.startswith("benchmark"):
             try:
-                from .benchmarks import quick_benchmark, FEYNMAN_EQUATIONS
-                
+                from .benchmarks import FEYNMAN_EQUATIONS, quick_benchmark
+
                 parts = raw.split()
                 n_eq = 5
                 if len(parts) > 1:
@@ -1460,11 +1510,11 @@ def repl_loop(output_format: str = "human") -> None:
                         n_eq = int(parts[1])
                     except ValueError:
                         pass
-                
+
                 print(f"Running benchmark on {n_eq} Feynman equations...")
                 print(f"(Total available: {len(FEYNMAN_EQUATIONS)} equations)")
-                
-                suite = quick_benchmark(method='lasso', n_equations=n_eq, timeout=10)
+
+                suite = quick_benchmark(method="lasso", n_equations=n_eq, timeout=10)
                 print(f"\nSuccess rate: {suite.success_rate:.1%}")
             except ImportError as e:
                 print(f"Error: Required module not available: {e}")
@@ -3084,13 +3134,13 @@ def repl_loop(output_format: str = "human") -> None:
         # Check for function finding command FIRST (e.g., find f(x,y) with data points)
         # This must come before any other processing to avoid parsing "find" as an expression
         # Define is_find_command outside try block so it's accessible in exception handler
-        
+
         # Normalize common typos: "= =" -> "=", multiple spaces around =
         raw = re.sub(r"=\s*=", "=", raw)  # Fix double equals typo
         raw = re.sub(r"\s*=\s*", " = ", raw)  # Normalize spaces around =
         raw = re.sub(r"\s+", " ", raw)  # Collapse multiple spaces
         raw = raw.strip()
-        
+
         is_find_command = "find" in raw.lower()
         find_func_cmd = None
 
@@ -6083,217 +6133,40 @@ def print_help_text() -> None:
     """Print help text for REPL commands."""
     from .config import VERSION
 
-    help_text = f"""kalkulator-ai version {VERSION}
+    help_text = f"""kalkulator-ai v{VERSION}
 
-════════════════════════════════════════════════════════
-BASIC USAGE (one-line input):
-════════════════════════════════════════════════════════
-• Expression evaluation:
-  → 2+3, (2+3)*4, sqrt(16), sin(pi/2)
+COMMANDS:
+  help, ?              Show this command list
+  quit, exit           Exit the calculator
+  health               Run health check
 
-• Equation solving:
-  → 2*x+3=7                    (solves for x)
-  → x^2-4=0, find x            (explicitly request variable)
-  → x^2+y^2=25, x+y=7          (system of equations)
+CACHE:
+  clearcache           Clear expression cache
+  showcache [all]      Show cached expressions
+  savecache [file]     Save cache to file
+  loadcache [file]     Load cache from file
 
-• Modulo operations:
-  → x % 2 = 0                  (solves modulo equations)
-  → x = 1 % 2, x = 3 % 6, x = 3 % 7  (system of congruences, Chinese Remainder Theorem)
+SETTINGS:
+  timing [on|off]      Toggle calculation timing
+  cachehits [on|off]   Toggle cache hit display
 
-• Inequalities:
-  → 1 < 2*x < 5                (compound inequality)
-  → x^2-4 >= 0                 (single inequality)
+MATH:
+  diff(expr, x)        Differentiate expression
+  integrate(expr, x)   Integrate expression
+  factor(expr)         Factor expression
+  expand(expr)         Expand expression
+  plot expr [opts]     Plot function
 
-• Chained assignments:
-  → a = 2, b = a+3             (evaluated right→left)
+FUNCTION FINDING:
+  f(1)=1, f(2)=4, find f(x)     Discover function from data
+  evolve f(x) from x=[...], y=[...]   Genetic programming
+  find ode from t=[...], x=[...]      ODE discovery (SINDy)
+  benchmark N                          Run Feynman benchmarks
 
-• Number formats:
-  → 0x123abc                   (hexadecimal numbers automatically detected)
-  → 123edc09f2                 (hex-like numbers automatically converted)
+EXPORT:
+  export <func> to <file.py>   Export function to Python
 
-════════════════════════════════════════════════════════
-COMMAND-LINE OPTIONS (run before starting REPL):
-════════════════════════════════════════════════════════
-  -e/--eval "<EXPR>"           Evaluate one expression and exit (non-interactive)
-  -j/--json                     Machine-friendly JSON output (deprecated)
-  --format json|human           Output format (default: human)
-  -v/--version                  Show program version
-  --health-check                Run health check to verify dependencies
-  --help                        Show this help message
-════════════════════════════════════════════════════════
-REPL COMMANDS (type in interactive mode):
-════════════════════════════════════════════════════════
-  help                          Show this help message
-  quit, exit                    Exit the calculator
-
-  clearcache                    Clear all cached expressions
-  showcache [all]               Show cached expressions (add 'all' for complete list)
-  savecache [file]              Save cache to file (default: cache_backup.json)
-  loadcache [replace] [file]    Load cache from file (add 'replace' to overwrite)
-
-  timing [on|off]               Enable/disable calculation time display
-  cachehits [on|off]            Enable/disable cache hit tracking
-  showcachehits                 Show which expressions used cache in recent computations
-
-  health                        Run health check to verify dependencies and operations
-
-  plot <expr> [options]        Plot a function (requires matplotlib)
-                                Options:
-                                  variable=x       Variable name (default: x)
-                                  x_min=-10         Minimum x value (default: -10)
-                                  x_max=10          Maximum x value (default: 10)
-                                  points=100        Number of plot points (default: 100)
-                                  --save filename   Save plot to file (auto-opens)
-                                Examples:
-                                  plot x^2
-                                  plot sin(x), x_min=-pi, x_max=pi
-                                  plot exp(-x^2), x_min=-3, x_max=3, --save gaussian.png
-
-════════════════════════════════════════════════════════
-FUNCTION FEATURES:
-════════════════════════════════════════════════════════
-• Define functions:
-  → f(x)=2*x                    (single variable)
-  → g(x,y)=x+y                  (multiple variables)
-  → f(x)=2x, g(x)=x/2           (multiple functions)
-
-• Evaluate functions:
-  → f(2)                        (substitute x=2)
-  → g(1,2)                      (substitute x=1, y=2)
-  → g(f(5))                     (nested function calls)
-
-• Find functions from data:
-  → f(1)=1, f(2)=2, find f(x)  (polynomial interpolation)
-  → f(2,5)=3, f(1,1)=2, find f(x,y)  (multi-parameter function finding)
-  → f(1)=1, f(2)=2, f(3)=3, f(4)=0, find f(x)  (exact polynomial fit)
-  → f(15, 299792458)=1348132768105226460, find f(x,y)  (discovers rational functions like x*y/z^2)
-
-  Advanced features:
-  - Extended basis with inverse terms (1/z, 1/z^2, x*y/z^2, etc.)
-  - Discovers rational functions automatically (e.g., Newton's gravitational law)
-  - Uses exact rational arithmetic for precise coefficients
-  - Sparse solution search for finding simple explanations
-  - Constant detection (π, e, sqrt(2), etc.) in coefficients
-
-════════════════════════════════════════════════════════
-RESEARCH-GRADE SYMBOLIC REGRESSION:
-════════════════════════════════════════════════════════
-• Genetic Programming (evolve equations):
-  → evolve f(x) from x=[1,2,3,4,5], y=[2,5,10,17,26]
-    Discovers complex compositional functions (e.g., x^2 + 1)
-
-• Differential Equation Discovery (SINDy):
-  → find ode from t=[0,0.1,0.2,...], x=[cos(0),cos(0.1),...], v=[-sin(0),...]
-    Discovers governing ODEs from time series data
-
-• Causal Discovery (PC Algorithm):
-  → discover causal graph from x=[...], y=[...], z=[...]
-    Infers causal structure from observational data
-
-• Dimensional Analysis (Buckingham Pi):
-  → find dimensionless from F=force, rho=density, v=velocity, L=length
-    Finds dimensionless groups (e.g., drag coefficient)
-
-• Benchmarking:
-  → benchmark 10
-    Tests against Feynman physics equations
-
-════════════════════════════════════════════════════════
-AGENTIC DISCOVERY (Intelligent Pattern Detection):
-════════════════════════════════════════════════════════
-• Sigmoid-family: Detects Softplus, Sigmoid, Tanh from saturation patterns
-  → S(-2)=0.127, S(0)=0.693, S(4)=4.018, find S(x)
-    Discovers: S(x) = log(1+exp(x))
-
-• Inverse powers: Detects from log-log slopes
-  → I(1)=100, I(2)=25, I(4)=6.25, find I(d)
-    Discovers: I(d) = 100*d^-2
-
-• Frequencies: Detects from zero-crossings
-• Quality checks: Only overrides when correlation > 0.9
-• Residual hints: For bad fits (R² < 0.7), suggests missing patterns
-
-════════════════════════════════════════════════════════
-CALCULUS & ALGEBRA:
-════════════════════════════════════════════════════════
-• Differentiation:
-  → diff(x^3, x)                → 3*x^2
-  → diff(sin(x), x)             → cos(x)
-
-• Integration:
-  → integrate(x^2, x)           → x^3/3
-  → integrate(sin(x), x)        → -cos(x)
-
-• Polynomial operations:
-  → factor(x^3 - 1)             → (x-1)*(x^2+x+1)
-  → expand((x+1)^3)            → x^3 + 3*x^2 + 3*x + 1
-
-• Matrix operations:
-  → Matrix([[1,2],[3,4]])      → Creates 2x2 matrix
-  → det(Matrix([[1,2],[3,4]])) → -2 (determinant)
-
-════════════════════════════════════════════════════════
-SPECIAL FEATURES:
-════════════════════════════════════════════════════════
-• Cache system:
-  → Sub-expressions and full evaluations are cached
-  → Speeds up repeated calculations
-  → Cache persists between sessions
-
-• Typo detection:
-  → Suggests correct commands for typos (e.g., "clearcachce" → "clearcache")
-
-• Error handling:
-  → Clear, user-friendly error messages with helpful hints
-  → Detects command names accidentally pasted in expressions
-  → Suggests corrections for common mistakes
-  → Handles incomplete expressions, backslashes, and syntax errors gracefully
-  → Automatic hexadecimal number detection and conversion
-
-════════════════════════════════════════════════════════
-EXAMPLES:
-════════════════════════════════════════════════════════
-  >>> 2+3*4
-  14
-
-  >>> x^2-4=0, find x
-  x = -2 or x = 2
-
-  >>> x+y=3, x-y=1
-  x = 2, y = 1
-
-  >>> f(x)=x^2+1
-  >>> f(3)
-  10
-
-  >>> f(1)=1, f(2)=4, f(3)=9, find f(x)
-  f(x) = x^2
-
-  >>> x % 2 = 0
-  x = 2*t (for integer t)
-  Examples: x = 0, 2, 4, 6, ...
-
-  >>> x = 1 % 2, x = 3 % 6, x = 3 % 7
-  Solution: x == 3 (mod 42)
-
-  >>> print("Hello world")
-  Hello world
-
-  >>> 0x123abc
-  1194684
-
-  >>> plot sin(x), x_min=-2*pi, x_max=2*pi
-  Plot saved and opened: /tmp/plot.png
-
-  >>> diff(exp(x)*sin(x), x)
-  exp(x)*sin(x) + exp(x)*cos(x)
-
-  >>> integrate(1/(1+x^2), x)
-  atan(x)
-
-════════════════════════════════════════════════════════
-For more information, visit: https://github.com/sizzlins/kalkulator-ai
-════════════════════════════════════════════════════════
+For full documentation: https://github.com/sizzlins/kalkulator-ai
 """
     print(help_text)
 

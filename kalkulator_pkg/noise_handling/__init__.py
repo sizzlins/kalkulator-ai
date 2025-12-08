@@ -9,32 +9,31 @@ Components:
 """
 
 from .robust_regression import (
-    huber_loss_regression,
-    ransac_regression,
-    iteratively_reweighted_lst_sq,
     detect_outliers,
+    huber_loss_regression,
+    iteratively_reweighted_lst_sq,
+    ransac_regression,
     robust_fit,
 )
 from .uncertainty import (
     bootstrap_confidence_interval,
-    prediction_interval,
     coefficient_significance,
-    monte_carlo_uncertainty,
     format_with_uncertainty,
+    monte_carlo_uncertainty,
+    prediction_interval,
 )
 
 __all__ = [
     # Robust Regression
-    'huber_loss_regression',
-    'ransac_regression',
-    'iteratively_reweighted_lst_sq',
-    'detect_outliers',
-    'robust_fit',
-    
+    "huber_loss_regression",
+    "ransac_regression",
+    "iteratively_reweighted_lst_sq",
+    "detect_outliers",
+    "robust_fit",
     # Uncertainty Quantification
-    'bootstrap_confidence_interval',
-    'prediction_interval',
-    'coefficient_significance',
-    'monte_carlo_uncertainty',
-    'format_with_uncertainty',
+    "bootstrap_confidence_interval",
+    "prediction_interval",
+    "coefficient_significance",
+    "monte_carlo_uncertainty",
+    "format_with_uncertainty",
 ]
