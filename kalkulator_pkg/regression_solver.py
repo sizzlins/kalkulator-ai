@@ -644,9 +644,7 @@ def solve_regression_stage(
         # Confidence Awareness: Warn user if R² is low
         confidence_note = ""
         if r_squared < 0.5:
-            confidence_note = (
-                f" [LOW CONFIDENCE: R²={r_squared:.2f}]" + residual_hint
-            )
+            confidence_note = f" [LOW CONFIDENCE: R²={r_squared:.2f}]" + residual_hint
         elif r_squared < 0.9:
             confidence_note = f" [R²={r_squared:.2f}]"
 

@@ -196,9 +196,7 @@ class Quantity:
     def __sub__(self, other):
         if isinstance(other, Quantity):
             if self.dimension != other.dimension:
-                raise ValueError(
-                    "Cannot subtract quantities with different dimensions"
-                )
+                raise ValueError("Cannot subtract quantities with different dimensions")
             return Quantity(value=self.value - other.value, dimension=self.dimension)
         raise TypeError("Can only subtract Quantity from Quantity")
 

@@ -11,10 +11,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .feynman_equations import (
-    FeynmanEquation,
-    get_equations_by_complexity,
-)
+from .feynman_equations import FeynmanEquation, get_equations_by_complexity
 
 
 @dataclass
