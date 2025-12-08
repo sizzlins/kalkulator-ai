@@ -182,7 +182,16 @@ graph TD
 ```
 kalkulator/
 ├── kalkulator_pkg/
-│   ├── cli.py                      # Interactive REPL
+│   ├── cli/                        # Interactive REPL (Package)
+│   │   ├── app.py                  # Main application logic
+│   │   ├── commands/               # Command handlers
+│   │   ├── ...
+│   ├── solver/                     # Solver engine (Package)
+│   │   ├── dispatch.py             # Equation solver dispatch
+│   │   ├── algebraic.py            # Algebraic solvers
+│   │   ├── numeric.py              # Numeric solvers
+│   │   ├── system.py               # System solver
+│   │   ├── ...
 │   ├── symbolic_regression/        # GP engine
 │   │   ├── expression_tree.py
 │   │   ├── operators.py

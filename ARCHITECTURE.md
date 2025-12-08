@@ -14,21 +14,25 @@ kalkulator_pkg/
 │   ├── worker (evaluate_safely)
 │   └── parser, calculus, plotting
 │
-├── cli.py
-│   ├── solver (solve_single_equation, solve_inequality, solve_system)
-│   └── worker (evaluate_safely)
+├── cli/ (Package)
+│   ├── app.py
+│   ├── commands/
+│   │   └── debug.py
+│   └── (Imports from solver, worker, etc.)
 │
-├── solver.py
-│   ├── worker (_worker_solve_cached, evaluate_safely)
-│   ├── parser (parse_preprocessed, prettify_expr)
-│   ├── config (constants)
-│   └── types (EvalResult, ParseError, ValidationError)
+├── solver/ (Package)
+│   ├── dispatch.py (solve_single_equation)
+│   ├── system.py (solve_system)
+│   ├── inequality.py (solve_inequality)
+│   ├── algebraic.py
+│   ├── numeric.py
+│   └── worker (_worker_solve_cached, evaluate_safely)
 │
 ├── worker.py
 │   ├── config (constants)
 │   ├── parser (parse_preprocessed)
 │   └── types (ValidationError)
-│   └── (NO IMPORTS FROM solver.py - NO CIRCULAR DEPENDENCY ✅)
+│   └── (NO IMPORTS FROM solver package - NO CIRCULAR DEPENDENCY ✅)
 │
 ├── parser.py
 │   ├── config (constants)
@@ -41,13 +45,13 @@ kalkulator_pkg/
 
 **Status**: ✅ **No Circular Dependencies**
 
-- `solver.py` imports from `worker.py` (`_worker_solve_cached`, `evaluate_safely`)
-- `worker.py` does **NOT** import from `solver.py`
+- `solver` package imports from `worker.py` (`_worker_solve_cached`, `evaluate_safely`)
+- `worker.py` does **NOT** import from `solver` package
 - Import direction: `solver` → `worker` (one-way dependency)
 
 **Why This Works**:
 - `worker.py` provides low-level evaluation and caching services
-- `solver.py` uses these services but doesn't need to be imported by `worker.py`
+- `solver` uses these services but doesn't need to be imported by `worker.py`
 - The dependency is intentionally one-way to avoid circular imports
 
 **Future Considerations**:
@@ -71,7 +75,7 @@ _WORKER_MANAGER = _WorkerManager()
 - Accessed globally within `worker.py`
 - Not passed as parameter to functions
 
-**Configuration Modification** (in `cli.py`):
+**Configuration Modification** (in `cli/app.py`):
 
 ```python
 # Direct module variable modification
@@ -117,17 +121,18 @@ _config.CACHE_SIZE_PARSE = int(args.cache_size)
 - Caching (evaluation, solving)
 - Request cancellation
 
-#### `solver.py`
-- Equation solving (single, systems)
-- Inequality solving
-- Pell equation detection and solving
-- Numeric root-finding fallbacks
+#### `solver/` (Package)
+- Equation solving (dispatch to sub-modules)
+- System solving (`system.py`)
+- Inequality solving (`inequality.py`)
+- Algebraic/Numeric strategies (`algebraic.py`, `numeric.py`)
 - Solution formatting
 
-#### `cli.py`
-- Command-line argument parsing
-- REPL (Read-Eval-Print Loop)
-- Output formatting (human-readable, JSON)
+#### `cli/` (Package)
+- Command-line argument parsing (`app.py`)
+- REPL logic (`app.py`, `context.py`)
+- Command handlers (`commands/`)
+- Output formatting
 - Health checks
 
 #### `api.py`
