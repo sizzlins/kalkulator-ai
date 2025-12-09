@@ -1,5 +1,24 @@
 # Release Notes
 
+## v1.1.0 (2025-12-09) - Persistence Refactor & Physics Tuning
+
+### ✨ New Features
+- **Enhanced Function Persistence**: 
+  - `clearfunction` now only clears functions from the *current session* (memory).
+  - New `clearsavefunction` command completely wipes the saved function file from disk.
+  - This separation prevents accidental data loss during experimentation.
+- **Symbolic Constant Display**: The engine now detects and displays constants like `pi`, `4/3*pi`, `e`, and `sqrt(2)` finding formulas (e.g., Sphere Volume displays as `4/3*pi*r^3` instead of `4.188*r^3`).
+- **New Basis Functions**: Added support for `x*log(x)` entropy-like terms.
+
+### 🧪 Physics Tuning
+- **Spacetime Interval Fix**: Adjusted structural boosting to correctly prefer pure squares for relativistic intervals (`-c^2t^2 + x^2 + y^2 + z^2`).
+- **Sphere Volume Fix**: Corrected pre-check logic that was bypassing symbolic coefficient detection.
+
+### 🐛 Bug Fixes
+- Fixed CLI issue where persistence commands could be parsed as math expressions (added to `REPL_COMMANDS`).
+
+---
+
 ## v1.0.2 (2025-12-08) - Agentic Discovery: Detection-Priority Override
 
 ### 🧠 Intelligent Pattern Detection

@@ -274,7 +274,11 @@ def repl_loop(output_format: str = "human") -> None:
                 if len(parts_check) > 1:
                     is_chainable_algebra = True
                     cmd_keywords = ("quit", "exit", "help", "clear", "list", "delete", "show", 
-                                  "find", "evolve", "benchmark", "savecache", "loadcache", "timing", "cachehits")
+                                  "find", "evolve", "benchmark", "savecache", "loadcache", "timing", "cachehits",
+                                  "save", "savefunction", "savefunctions",
+                                  "loadfunction", "loadfunctions",
+                                  "clearfunction", "clearfunctions",
+                                  "showfunction", "showfunctions")
                     for p in parts_check:
                         p_s = p.strip()
                         if not p_s: continue
@@ -433,6 +437,64 @@ def repl_loop(output_format: str = "human") -> None:
             if best_match and best_distance > 0:
                 print(f'Did you mean "{best_match}"?')
                 continue
+
+        # Function persistence commands
+        if raw_lower in ("save", "savefunction", "savefunctions"):
+            from ..function_manager import save_functions
+
+            success, msg = save_functions()
+            print(msg)
+            continue
+
+        if raw_lower in ("loadfunction", "loadfunctions"):
+            from ..function_manager import load_functions
+
+            success, msg = load_functions()
+            print(msg)
+            continue
+
+        if raw_lower in ("clearfunction", "clearfunctions"):
+            from ..function_manager import clear_functions
+
+            clear_functions()
+            print("Functions cleared from current session.")
+            continue
+
+        if raw_lower in ("clearsavefunction", "clearsavefunctions"):
+            from ..function_manager import clear_saved_functions
+
+            success, msg = clear_saved_functions()
+            print(msg)
+            continue
+
+        if raw_lower in ("showfunction", "showfunctions", "list"):
+            from ..function_manager import list_functions, BUILTIN_FUNCTION_NAMES
+
+            # Show user functions first
+            funcs = list_functions()
+            if funcs:
+                print("User functions:")
+                # Use strict sorting if available, otherwise just default
+                for name in sorted(funcs.keys()):
+                    params, body = funcs[name]
+                    print(f"{name}({', '.join(params)})={body}")
+            else:
+                print("User functions: None")
+
+            # Show built-ins
+            print("\nBuilt-in functions:")
+            builtins = sorted(list(BUILTIN_FUNCTION_NAMES))
+            # Grid display for builtins
+            line = "  "
+            for i, b in enumerate(builtins):
+                entry = f"{b}(...)"
+                if len(line) + len(entry) + 2 > 80:
+                    print(line.rstrip(", "))
+                    line = "  "
+                line += entry + ", "
+            if line.strip():
+                print(line.rstrip(", "))
+            continue
 
         # Export command: export <function_name> to <filename>
         # Generates Python file from discovered function

@@ -151,6 +151,20 @@ REPL_COMMANDS = {
     "quit",
     "exit",
     "eval",  # For --eval command
+    "savefunction",
+    "savefunctions",
+    "loadfunction",
+    "loadfunctions",
+    "clearfunction",
+    "clearfunctions",
+    "clearsavefunction",
+    "clearsavefunctions",
+    "showfunction",
+    "showfunctions",
+    "list",
+    "export",
+    "evolve",
+    "benchmark",
 }
 
 # Basic denylist to avoid dangerous tokens before SymPy parsing

@@ -31,54 +31,35 @@ def eval_to_float(val):
 
 def _symbolify_coefficient(val):
     try:
-        if abs(val) < 1e-6:
-            return None  # Suppress near-zero coefficients (fixes 0*pi)
+        if abs(val) < 1e-9:
+            return None  # Suppress near-zero
 
-        # Check for near-integer values first (snaps -4.999 to -5)
+        # 1. Fast Path: Integers
         rounded = round(val)
-        if abs(val - rounded) < 0.001 and abs(rounded) > 0.5:
-            if rounded == 1:
-                return None  # Will be handled specially
-            if rounded == -1:
-                return None  # Will be handled specially
-            return str(int(rounded))
+        if abs(val - rounded) < 1e-9:
+             if rounded == 1: return None # Will be handled as implicit 1
+             if rounded == -1: return None # Will be handled as implicit -1
+             return str(int(rounded))
 
-        # Check for simple fractions (like 1/3)
-        for denom in [2, 3, 4, 5, 6, 8, 10]:
-            for num in range(-20, 21):
-                if num == 0:
-                    continue
+        # 2. Fast Path: Simple Fractions
+        # (detect_symbolic_constant covers this, but this is faster for common cases)
+        for denom in [2, 3, 4, 5, 6, 8, 10, 12]:
+            for num in range(-24, 25):
+                if num == 0: continue
                 frac_val = num / denom
-                if abs(val - frac_val) < 0.001:
-                    if denom == 1:
-                        return str(num)
+                if abs(val - frac_val) < 1e-9:
+                    if denom == 1: return str(num)
                     return f"{num}/{denom}" if num > 0 else f"({num}/{denom})"
 
-        # Check for common Pi fractions explicitly (4/3*pi, 1/3*pi, 1/2*pi, etc.)
-        pi_val = float(sp.pi.evalf())
-        for denom in [1, 2, 3, 4, 6]:
-            for num in range(-15, 16):
-                if num == 0:
-                    continue
-                expected = (num / denom) * pi_val
-                if abs(val - expected) < 0.001:  # Loosened tolerance
-                    if denom == 1:
-                        if num == 1:
-                            return "pi"
-                        if num == -1:
-                            return "-pi"
-                        return f"{num}*pi"
-                    else:
-                        return f"{num}/{denom}*pi" if num > 0 else f"({num}/{denom})*pi"
+        # 3. Robust Symbolic Detection (Pi, e, sqrt, etc.)
+        from .function_finder_advanced import detect_symbolic_constant
+        sym = detect_symbolic_constant(val, tolerance=1e-4)
+        if sym is not None:
+             s = str(sym).replace(" ", "")
+             # SymPy might return "1*pi", clean it up
+             s = s.replace("1*pi", "pi")
+             return s
 
-        # Fallback: General Pi multiples using sympy
-        ratio_pi = val / pi_val
-        simplified_pi = sp.nsimplify(ratio_pi, tolerance=1e-4, rational=True)
-        if simplified_pi != ratio_pi:
-            den = sp.denom(simplified_pi)
-            num = sp.numer(simplified_pi)
-            if abs(den) < 100 and abs(num) < 100 and num != 0:
-                return f"{simplified_pi}*pi".replace("1*pi", "pi")
         return None
     except Exception:
         return None
@@ -171,7 +152,10 @@ def solve_regression_stage(
                         if c == 0:
                             continue
                         name = param_names[i]
-                        if c == 1:
+                        sym = _symbolify_coefficient(c)
+                        if sym:
+                            term = f"{sym}*{name}"
+                        elif c == 1:
                             term = name
                         elif c == -1:
                             term = f"-{name}"
@@ -259,11 +243,24 @@ def solve_regression_stage(
         if col_max > 20 * y_max:
             penalty_factors[i] = max(penalty_factors[i], 5.0)
 
-        # Physics Bias: Reduce penalty for Rationals and Squares
+        # Physics Bias Scale
+        # 1. Interactions are complex -> Penalize
+        if "*" in name:
+            penalty_factors[i] *= 2.0
+            
+        # 2. Rationals are physical (Inverse laws) -> Boost
         if "/" in name:
-            penalty_factors[i] *= 0.1
-        elif "^2" in name:
-            penalty_factors[i] *= 0.5
+            penalty_factors[i] *= 0.5 # Moderate Boost
+            
+        # 3. Squares (x^2)
+        if "^2" in name:
+            if "*" not in name and "/" not in name:
+                # Pure square (A^2) -> Strong Boost
+                penalty_factors[i] *= 0.2
+            elif "/" in name:
+                # Inverse square (1/r^2) -> Boost
+                penalty_factors[i] *= 0.5
+            # Else: Interaction square (B*C^2) -> Leave as is (retains * penalty)
 
     X_weighted = X_norm / penalty_factors
     y_std = np.std(y_data)
@@ -277,7 +274,11 @@ def solve_regression_stage(
     if len(data_points) <= 20:
         # OMP with Physics Boost
         X_omp = X_norm.copy()
-        omp_boosts = np.ones(X_norm.shape[1])
+        
+        # Apply the same penalty/boost logic as Lasso
+        # penalty < 1.0 means Boost > 1.0
+        omp_boosts = 1.0 / penalty_factors
+        
         if include_transcendentals:
             # print(f"DEBUG FEATURES ({len(feature_names)}): {feature_names[:10]} ... {feature_names[-10:]}", flush=True)
             pass
@@ -358,8 +359,13 @@ def solve_regression_stage(
                 scale = 20.0
 
             if scale > 1.0:
-                X_omp[:, i] *= scale
-            omp_boosts[i] = scale
+                omp_boosts[i] *= scale 
+        
+        # Apply the final boosts to X_omp columns
+        # OMP selects based on dot product, so scaling up the column increases its selection probability
+        for i in range(X_omp.shape[1]):
+            if omp_boosts[i] != 1.0:
+                X_omp[:, i] *= omp_boosts[i]
 
         # --- BFSS: Brute Force Subset Search (Anti-Greedy) ---
         # For small data, check EXACT combinations of top correlated features

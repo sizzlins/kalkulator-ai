@@ -36,22 +36,15 @@ from .config import (
 # Set high precision for Decimal
 getcontext().prec = 50
 
-# Library of known constants for detection
+# Library of known constants for detection 
+# (Restricted to common physics constants to avoid false positives like EulerGamma)
 KNOWN_CONSTANTS = {
     "pi": sp.pi,
     "e": sp.E,
-    "E": sp.E,
+    "E": sp.E, 
     "sqrt(2)": sp.sqrt(2),
     "sqrt(3)": sp.sqrt(3),
-    "sqrt(5)": sp.sqrt(5),
-    "log(2)": sp.log(2),
-    "log(10)": sp.log(10),
-    "ln(2)": sp.log(2),
-    "ln(10)": sp.log(10),
-    "gamma": sp.EulerGamma,
-    "EulerGamma": sp.EulerGamma,
-    "catalan": sp.Catalan,
-    "Catalan": sp.Catalan,
+    # Removed rarer constants to prevent hallucinations in regression
 }
 
 
@@ -76,48 +69,57 @@ def detect_symbolic_constant(
     else:
         float_val = float(value)
 
-    # First, try SymPy's nsimplify
-    try:
-        # Try to simplify to a known constant
-        simplified = sp.nsimplify(
-            float_val,
-            tolerance=tolerance,
-            full=True,
-        )
-
-        # Check if it matches any known constant
-        for _const_name, const_symbol in KNOWN_CONSTANTS.items():
-            const_val = float(sp.N(const_symbol))
-            if abs(float_val - const_val) / (abs(const_val) + 1e-10) < tolerance:
-                return const_symbol
-
-        # Check if simplified is close to the original
-        if isinstance(simplified, (sp.Number, sp.Rational, sp.Integer)):
-            simplified_val = float(sp.N(simplified))
-            if (
-                abs(float_val - simplified_val) / (abs(simplified_val) + 1e-10)
-                < tolerance
-            ):
-                # Check if it's a known constant expression
-                if abs(simplified_val - math.pi) < tolerance * abs(math.pi):
-                    return sp.pi
-                elif abs(simplified_val - math.e) < tolerance * abs(math.e):
-                    return sp.E
-                elif abs(simplified_val - math.sqrt(2)) < tolerance * abs(math.sqrt(2)):
-                    return sp.sqrt(2)
-                elif abs(simplified_val - math.sqrt(3)) < tolerance * abs(math.sqrt(3)):
-                    return sp.sqrt(3)
-    except (ValueError, TypeError, AttributeError):
-        pass
-
     # Direct comparison with known constants
     for _const_name, const_symbol in KNOWN_CONSTANTS.items():
         try:
             const_val = float(sp.N(const_symbol))
+            # 1. Check if value is close to constant directly
             if abs(float_val - const_val) / (abs(const_val) + 1e-10) < tolerance:
                 return const_symbol
+
+            # 2. Check if value is a rational multiple (e.g. 4/3 * pi)
+            # Avoid division by zero
+            if abs(const_val) > 1e-9:
+                ratio = float_val / const_val
+                # Check if ratio is close to a SIMPLE rational
+                try:
+                    # RESTRICT DENOMINATOR: We only want nice multiples like pi/2, 4/3*pi
+                    # NOT 209/67 * pi.
+                    frac = Fraction(ratio).limit_denominator(12) 
+                    if abs(ratio - float(frac)) < tolerance:
+                        # Success! Return fraction * constant
+                        if frac == 1:
+                            return const_symbol
+                        return frac * const_symbol
+                except (ValueError, TypeError):
+                    pass
         except (ValueError, TypeError):
             continue
+
+    # 3. Fallback to nsimplify (it handles some cases but not others)
+    try:
+        # Try to simplify to a known constant using sympy's nsimplify
+        # We need to provide constants explicitly for best results
+        constants_list = [sp.pi, sp.E, sp.sqrt(2), sp.sqrt(3), sp.sqrt(5)]
+        simplified = sp.nsimplify(
+            float_val,
+            tolerance=tolerance,
+            constants=constants_list,
+            rational=True
+        )
+
+        # Check if simplified result actually contains our constants
+        # (nsimplify sometimes just returns a fraction)
+        if simplified.has(sp.pi) or simplified.has(sp.E) or simplified.has(sp.sqrt):
+             # Double check numerical accuracy
+             if abs(float_val - float(simplified.evalf())) < tolerance:
+                 # Extra check: Is it simple?
+                 den = sp.denom(simplified)
+                 if abs(den) <= 24: # Reject weird denominators
+                     return simplified
+
+    except (ValueError, TypeError, AttributeError):
+        pass
 
     return None
 
@@ -1097,6 +1099,7 @@ def generate_candidate_features(
                 feature_names.append(f"exp(-{name})*cos(2*{name})")
 
         # Logarithm (log(x))
+        # Logarithm (log(x))
         # Only valid for positive inputs
         if np.all(col > 0):
             features.append(np.log(col))
@@ -1109,10 +1112,6 @@ def generate_candidate_features(
             # log10(x) - Decibels, pH, etc.
             features.append(np.log10(col))
             feature_names.append(f"log10({name})")
-
-            # x * log(x) - Entropy, information theory
-            features.append(col * np.log(col))
-            feature_names.append(f"{name}*log({name})")
 
             # --- NEW: LOG-NORMAL (exp(-log(x)^2)) ---
             # Common in distribution of sizes
@@ -1127,6 +1126,24 @@ def generate_candidate_features(
                 log_norm_2 = np.exp(-log_sq / 2.0)
                 features.append(log_norm_2)
                 feature_names.append(f"exp(-log({name})^2/2)")
+
+        # x * log(x) - Entropy, Information Theory
+        # Valid for x >= 0 (limit x->0 is 0)
+        if np.all(col >= 0):
+            # Compute x * log(x) safely
+            with np.errstate(invalid="ignore", divide="ignore"):
+                # Use a mask where x > 0
+                x_log_x = np.zeros_like(col)
+                mask_pos = col > 1e-12
+                if np.any(mask_pos):
+                    x_log_x[mask_pos] = col[mask_pos] * np.log(col[mask_pos])
+                
+                features.append(x_log_x)
+                feature_names.append(f"{name}*log({name})")
+                
+                # Also add (x*log(x))^2
+                features.append(x_log_x**2)
+                feature_names.append(f"({name}*log({name}))^2")
 
         # --- NEW: VARIABLE-TRANSCENDENTAL PRODUCTS (Growing Wave, Modulated Signals) ---
         # These are CRITICAL for physics: x*sin(x), x*cos(x), x*exp(x)

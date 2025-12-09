@@ -287,3 +287,15 @@ All critical improvements from the checklist have been implemented and tested:
 
 **Next Phase**: Integration into main function finding pipeline and additional high-priority features.
 
+
+## 🌍 Global Updates (2025-12-09)
+
+### Function Persistence ✅
+- **Status**: IMPLEMENTED
+- **Features**: `savefunction`, `loadfunction`, `clearfunction` commands.
+- **Location**: `function_manager.py` + `app.py`.
+
+### Solver Refactor ✅
+- **Status**: COMPLETED
+- **Description**: Split `solver_legacy.py` into modular `solver/` package.
+

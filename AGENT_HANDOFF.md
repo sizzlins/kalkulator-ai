@@ -83,3 +83,25 @@ For really bad fits (R² < 0.7), analyze residuals and suggest missed patterns:
 - `regression_solver.py` line 260: Fixed `< 20` to `<= 20`
 - `regression_solver.py` lines 279-306: Override with quality check (corr > 0.9)
 - `regression_solver.py` lines 570-610: Residual hints for R² < 0.7 only
+
+## Recent Refinements (2025-12-09)
+
+### 1. Function Persistence
+- Implemented `savefunction`, `loadfunction`, `clearfunction` commands.
+- Functions are serialized to `~/.kalkulator_cache/functions.json`.
+- This allows reusing complex function definitions across sessions and restarts.
+
+### 2. Solver Architecture Refactor
+- Monolithic `solver_legacy.py` refactored into `kalkulator_pkg/solver/` package.
+- Specialized solvers: `algebraic.py`, `modular.py`, `system.py`, `inequality.py`.
+- **Learnings**: When refactoring a core component that is imported everywhere, ensure `__init__.py` explicitly exports the original API to avoid breaking import paths.
+
+### 3. Critical Fix: Floating-Point "Snap-to-Zero"
+- **Issue**: `e^(i*pi)+1` resulted in `3.0e-30 - 2.2e-15*I` instead of `0`.
+- **Fix**: Added epsilon check in `worker.py:_format_evaluation_result`.
+- **Learning**: SymPy's `evalf` / `N()` inevitably introduces floating-point noise. ALWAYS implement a "snap-to-zero" threshold (e.g., `1e-9`) for user-facing output.
+
+### 4. Critical Fix: Function Substitution
+- **Issue**: `e^f(x)` where `f(x)=i*pi` evaluated incorrectly because `f(x)` was substituted as `i*pi`, yielding `e^i*pi` (interpreted as `(e^i)*pi`).
+- **Fix**: `parser.py:expand_function_calls` now wraps substituted bodies in parentheses: `(i*pi)`.
+- **Learning**: When substituting expressions textually or structurally, **ALWAYS** wrap in parentheses to preserve operator precedence.

@@ -29,6 +29,8 @@ from __future__ import annotations
 
 import math
 import re
+import json
+from pathlib import Path
 from fractions import Fraction
 from typing import Any
 
@@ -1756,7 +1758,18 @@ def find_function_from_data(
                     if abs(a - 1.0) < 1e-4:
                         func_str = term
                     else:
-                        func_str = f"{a}*{term}"
+                        # Try symbolic constant detection for 'a'
+                        try:
+                            from .function_finder_advanced import detect_symbolic_constant
+                            sym_a = detect_symbolic_constant(a, tolerance=1e-4)
+                            if sym_a is not None:
+                                s_a = str(sym_a).replace(" ", "")
+                                s_a = s_a.replace("1*pi", "pi")
+                                func_str = f"{s_a}*{term}"
+                            else:
+                                func_str = f"{a}*{term}"
+                        except ImportError:
+                            func_str = f"{a}*{term}"
 
                     return (True, func_str, None, None)
         except Exception:
@@ -4901,3 +4914,86 @@ def _detect_required_imports(python_expr: str) -> set[str]:
         imports.add("e")
 
     return imports
+
+
+# Persistence Logic
+
+FUNCTION_STORAGE_PATH = Path.home() / ".kalkulator_cache" / "functions.json"
+
+
+def save_functions() -> tuple[bool, str]:
+    """Save all user-defined functions to persistent storage.
+
+    Returns:
+        Tuple of (success, message)
+    """
+    try:
+        if not _function_registry:
+            return (True, "No functions to save.")
+
+        FUNCTION_STORAGE_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+        data = {}
+        for name, (params, body) in _function_registry.items():
+            data[name] = {"params": params, "body": str(body)}
+
+        with open(FUNCTION_STORAGE_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+
+        return (True, f"Saved {len(data)} function(s).")
+    except Exception as e:
+        return (False, f"Error saving functions: {e}")
+
+
+def load_functions() -> tuple[bool, str]:
+    """Load user-defined functions from persistent storage.
+
+    Returns:
+        Tuple of (success, message)
+    """
+    try:
+        if not FUNCTION_STORAGE_PATH.exists():
+            return (False, "No saved functions found.")
+
+        with open(FUNCTION_STORAGE_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        if not isinstance(data, dict):
+            return (False, "Invalid function storage format.")
+
+        count = 0
+        errors = []
+        for name, info in data.items():
+            try:
+                params = info.get("params", [])
+                body_str = info.get("body", "")
+
+                # Use define_function to parse and validate
+                define_function(name, params, body_str)
+                count += 1
+            except Exception as e:
+                errors.append(f"{name}: {str(e)}")
+
+        msg = f"Loaded {count} function(s)."
+        if errors:
+            msg += f" Skipped {len(errors)} with errors."
+
+        return (True, msg)
+    except Exception as e:
+        return (False, f"Error loading functions: {e}")
+
+
+def clear_saved_functions() -> tuple[bool, str]:
+    """Clear saved functions from persistent storage.
+
+    Returns:
+        Tuple of (success, message)
+    """
+    try:
+        if FUNCTION_STORAGE_PATH.exists():
+            FUNCTION_STORAGE_PATH.unlink()
+            return (True, "Saved functions cleared.")
+        else:
+            return (True, "No saved functions to clear.")
+    except Exception as e:
+        return (False, f"Error clearing saved functions: {e}")

@@ -141,6 +141,11 @@ _config.CACHE_SIZE_PARSE = int(args.cache_size)
 - Error handling
 - Documentation and examples
 
+#### `function_manager.py`
+- Function definition and registry
+- Persistence (save/load functions to JSON)
+- Function finding logic (interpolation/regression)
+
 #### `config.py`
 - Centralized configuration
 - Environment variable support
@@ -331,5 +336,5 @@ See `SECURITY.md` for complete security documentation.
 
 ---
 
-**Last Updated**: 2025-11-02  
-**Version**: 1.0.0
+**Last Updated**: 2025-12-09  
+**Version**: 1.1.0

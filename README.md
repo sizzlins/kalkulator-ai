@@ -46,6 +46,7 @@ Kalkulator just did Galileo's life's work in 0.02 seconds.
 | **Physics-Aware** | Detects quadratic interactions (`m*v²`) and geometry (`π*r²*h`) |
 | **Calculus Engine** | Differentiates (`diff`) and Integrates (`integrate`) symbolically |
 | **Code Export** | Transpiles discovered math into Python code (`.py`) for production |
+| **Function Persistence** | Save/Load custom functions to disk (`savefunction`, `loadfunction`) |
 | **80 Feynman Benchmarks** | Test against physics equations from the Feynman Lectures |
 
 ---
@@ -139,6 +140,32 @@ V(r, h) = 3.142*r^2*h
 
 >>> export V to cylinder.py
 Function 'V' exported to cylinder.py
+```
+
+### 9. Function Persistence
+
+```
+>>> f(x) = x^2 + 2*x + 1
+Function 'f(x)' defined as: x**2 + 2*x + 1
+
+>>> save
+Saved 1 function(s).
+
+>>> quit
+...
+(restart)
+>>> loadfunction
+Loaded 1 function(s).
+
+>>> showfunction
+User functions:
+f(x)=x**2 + 2*x + 1
+
+>>> clearfunction
+Functions cleared from current session.
+
+>>> clearsavefunction
+Saved functions cleared.
 ```
 
 ---

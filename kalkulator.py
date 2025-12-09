@@ -14,7 +14,7 @@ Usage:
     python kalkulator.py -e "2+2"           # Evaluate expression
     python kalkulator.py --help             # Show help
 
-For PyInstaller:
+Terminal command to create an .EXE file using PyInstaller:
     pyinstaller --onefile --console --collect-all sympy kalkulator.py
 """
 
