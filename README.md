@@ -66,6 +66,9 @@ pip install -r requirements.txt
 ```bash
 python kalkulator.py
 ```
+### Or
+
+Download the .EXE file (kalkulator.exe) and simply run it
 
 ---
 
