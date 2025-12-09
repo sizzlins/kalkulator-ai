@@ -71,6 +71,11 @@ python kalkulator.py
 
 ## 🧪 Examples
 
+Garbage in -> Garbage out
+Make sure your data is accurate
+The more accurate data you give, the more accurate the output is
+If it is a float, the more accurate decimal places you give, the more accurate the output will be
+
 ### 1. Discovering Physics (Kinetic Energy)
 
 ```
