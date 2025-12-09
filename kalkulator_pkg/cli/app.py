@@ -895,16 +895,16 @@ def repl_loop(output_format: str = "human") -> None:
                                 )
                                 if cache_time is not None:
                                     print(
-                                        f"  {expr} → {value_formatted:20} [time: {cache_time:.4f}s]"
+                                        f"  {expr} -> {value_formatted:20} [time: {cache_time:.4f}s]"
                                     )
                                 else:
-                                    print(f"  {expr} → {value_formatted}")
+                                    print(f"  {expr} -> {value_formatted}")
                             else:
                                 # Old format
                                 value_formatted = _format_number_no_trailing_zeros(
                                     entry
                                 )
-                                print(f"  {expr} → {value_formatted}")
+                                print(f"  {expr} -> {value_formatted}")
                     else:
                         print("\n=== Sub-expression Cache (showing first 20) ===")
                         for _i, (expr, entry) in enumerate(
@@ -919,16 +919,16 @@ def repl_loop(output_format: str = "human") -> None:
                                 )
                                 if cache_time is not None:
                                     print(
-                                        f"  {expr} → {value_formatted:20} [time: {cache_time:.4f}s]"
+                                        f"  {expr} -> {value_formatted:20} [time: {cache_time:.4f}s]"
                                     )
                                 else:
-                                    print(f"  {expr} → {value_formatted}")
+                                    print(f"  {expr} -> {value_formatted}")
                             else:
                                 # Old format
                                 value_formatted = _format_number_no_trailing_zeros(
                                     entry
                                 )
-                                print(f"  {expr} → {value_formatted}")
+                                print(f"  {expr} -> {value_formatted}")
                         if len(subexpr_cache) > 20:
                             print(f"  ... and {len(subexpr_cache) - 20} more entries")
                             print("  Use 'showcache all' to see all entries")
