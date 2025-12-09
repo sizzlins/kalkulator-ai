@@ -107,13 +107,27 @@ def _format_evaluation_result(expr: sp.Basic) -> str:
     # Try numeric evaluation first for exact results
     try:
         num_val = sp.N(expr, 15)
+        
+        # Check for practically zero (works for complex Add expressions too)
+        try:
+            magnitude = abs(num_val)
+            if hasattr(magnitude, 'evalf'):
+                magnitude = float(magnitude.evalf())
+            if magnitude < 1e-9:
+                return "0"
+        except (ValueError, TypeError, AttributeError):
+            pass
+        
         if hasattr(num_val, "is_Number") and num_val.is_Number:
             # Check if it's real (imaginary part is negligible)
             try:
                 imag_part = abs(sp.im(num_val))
-                if imag_part > 1e-10:
+                if imag_part > 1e-9:
                     # Has significant imaginary part - return symbolic form
                     return str(expr)
+                else:
+                    # Insignificant imaginary part - discard it by taking real part
+                    num_val = sp.re(num_val)
             except (AttributeError, TypeError):
                 pass
 

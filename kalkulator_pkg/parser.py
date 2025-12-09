@@ -1263,7 +1263,7 @@ def expand_function_calls(expr_str: str) -> str:
                                     result = evaluate_function(
                                         call_func_name, expanded_args
                                     )
-                                    result_parts.append(str(result))
+                                    result_parts.append("(" + str(result) + ")")
                                     start_pos = i
                                     continue
                                 except ValidationError as ve:
