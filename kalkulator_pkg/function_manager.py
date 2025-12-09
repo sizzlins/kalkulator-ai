@@ -1302,7 +1302,8 @@ def _symbolify_coefficient(val):
 
 
 def find_function_from_data(
-    data_points: list[tuple[Any, Any]], param_names: list[str] | None = None
+    data_points: list[tuple[Any, Any]], param_names: list[str] | None = None,
+    skip_linear: bool = False,
 ) -> tuple[bool, str | None, dict[str, Any] | None, str | None]:
     """Find a function from data points using interpolation/regression.
 
@@ -1393,14 +1394,130 @@ def find_function_from_data(
         except Exception as e:
             raise ValueError(f"Could not convert '{val}' to a numeric value") from e
 
-    # 0. Check for conflicting data points (Impossible Data)
-    input_map = {}
+    # --- Partition data into Numeric and Symbolic sets ---
+    import sympy as sp
+    numeric_data = []
+    symbolic_data = []
+    
     for x_tuple, y_val in data_points:
-        # Create a hashable key for the input
-        # Round floats to avoid tiny precision differences causing false mismatches
-        x_key = tuple(round(eval_to_float(x), 9) for x in x_tuple)
+        is_symbolic = False
+        parsed_x_tuple = []
+        for x_arg in x_tuple:
+            try:
+                val_float = float(x_arg)
+                parsed_x_tuple.append(val_float)
+            except (ValueError, TypeError):
+                try:
+                    val_float = eval_to_float(x_arg)
+                    parsed_x_tuple.append(val_float)
+                except ValueError:
+                    is_symbolic = True
+                    try:
+                        expr = sp.sympify(x_arg)
+                        parsed_x_tuple.append(expr)
+                    except:
+                        parsed_x_tuple.append(x_arg)
+        
+        try:
+            y_float = eval_to_float(y_val)
+        except ValueError:
+            is_symbolic = True
+            y_float = y_val
 
-        y_float = eval_to_float(y_val)
+        if is_symbolic:
+            symbolic_data.append((parsed_x_tuple, y_float))
+        else:
+            numeric_data.append((parsed_x_tuple, y_float))
+
+    # --- Hybrid Mode: If mixed data, use numeric to find function, validate with symbolic ---
+    # Note: Requires at least 3 numeric points for reliable regression
+    if len(numeric_data) >= 3 and len(symbolic_data) > 0:
+        for try_skip in [False, True]:
+            success, func_str, factored, msg = find_function_from_data(numeric_data, param_names, skip_linear=try_skip)
+            
+            if success:
+                try:
+                    local_ns = {"sin": sp.sin, "cos": sp.cos, "tan": sp.tan,
+                               "exp": sp.exp, "log": sp.log, "sqrt": sp.sqrt,
+                               "pi": sp.pi, "e": sp.E}
+                    param_syms = [sp.Symbol(p) for p in param_names]
+                    f_expr = sp.sympify(func_str, locals=local_ns)
+                    
+                    symbol_values = {}
+                    consistent = True
+                    
+                    for x_row_sym, y_val in symbolic_data:
+                        if len(param_syms) == 1:
+                            sym_arg = x_row_sym[0]
+                            eq_lhs = f_expr.subs(param_syms[0], sym_arg)
+                            eq_rhs = y_val
+                            
+                            free_syms = eq_lhs.free_symbols
+                            if len(free_syms) == 1:
+                                var = list(free_syms)[0]
+                                try:
+                                    sols = sp.solve(eq_lhs - eq_rhs, var)
+                                    real_sols = [float(s.evalf()) for s in sols if s.is_real]
+                                    
+                                    if not real_sols:
+                                        consistent = False
+                                        break
+                                    
+                                    if str(var) not in symbol_values:
+                                        symbol_values[str(var)] = []
+                                    symbol_values[str(var)].append(real_sols)
+                                except Exception:
+                                    consistent = False
+                                    break
+                            elif len(free_syms) > 1:
+                                consistent = False
+                                break
+                        else:
+                            consistent = False
+                            break
+                    
+                    if consistent:
+                        inferred_vars = {}
+                        for var_name, lists in symbol_values.items():
+                            if lists:
+                                candidates = lists[0]
+                                for cand in candidates:
+                                    if all(any(np.isclose(cand, o, atol=0.1) for o in other) for other in lists[1:]):
+                                        inferred_vars[var_name] = cand
+                                        break
+                                else:
+                                    consistent = False
+                                    break
+                        
+                        if consistent and inferred_vars:
+                            inference_msg = ", ".join([f"{k} = {v}" for k, v in inferred_vars.items()])
+                            return (True, func_str, factored, (msg or "") + f" (Inferred: {inference_msg})")
+                        elif consistent:
+                            return (True, func_str, factored, msg)
+                    
+                    if not consistent and not try_skip:
+                        continue
+                except Exception:
+                    if not try_skip:
+                        continue
+        
+        if numeric_data:
+            success, func_str, factored, msg = find_function_from_data(numeric_data, param_names, skip_linear=True)
+            if success:
+                return (True, func_str, factored, msg)
+    
+    # Use numeric data if available, otherwise use all data
+    active_data = numeric_data if numeric_data else data_points
+
+    # 0. Check for conflicting data points
+    input_map = {}
+    for x_tuple, y_val in active_data:
+        try:
+            x_key = tuple(round(x if isinstance(x, float) else eval_to_float(x), 9) for x in x_tuple)
+            y_float = y_val if isinstance(y_val, float) else eval_to_float(y_val)
+        except ValueError:
+            continue
+        
         if x_key in input_map:
             prev_y = input_map[x_key]
             if not np.isclose(prev_y, y_float, atol=1e-7):
@@ -1412,6 +1529,9 @@ def find_function_from_data(
                 )
         else:
             input_map[x_key] = y_float
+    
+    # Override data_points with active_data for rest of function
+    data_points = active_data
 
     if not data_points:
         return (False, None, None, "No data points provided")
@@ -1442,7 +1562,7 @@ def find_function_from_data(
     # --- NEW: PRE-CHECK - Linear Fit (Occam's Razor for sparse data) ---
     # Moved to TOP PRIORITY to prevent log-linear checks from claiming imperfect exponential fits
     # For single-variable, always check for perfect linear fit first.
-    if n_params == 1:
+    if n_params == 1 and not skip_linear:
         try:
             X_vals = [
                 (
