@@ -1,5 +1,5 @@
 ![Demo](demo.png)
-# Kalkulator: Symbolic Regression & Science Engine
+# Kalkulator-ai
 
 <div align="center">
 
@@ -16,11 +16,11 @@
 
 ## What is Kalkulator?
 
-Kalkulator is a **Research-Grade Symbolic Regression** engine capable of discovering mathematical formulas, physical laws, differential equations, and causal relationships from raw data.
+Kalkulator is a simple **Symbolic Regression** engine capable of discovering mathematical formulas, physical laws, differential equations, and causal relationships from raw data.
 
 It's also a "Computational Scientist" that can verify the laws of nature, discover ODEs from time series, and perform dimensional analysis.
 
-What it can do is, you throw raw, noisy chaos at it. You just say "find the pattern."
+What it can do is, you throw raw data to it, then you just say "find the pattern."
 
 `>>> d(0)=0, d(1)=4.9033250000, d(2)=19.6133000000, d(3)=44.1299250000, find d(t)`
 
@@ -28,7 +28,11 @@ It looks at the data and asks: "Is this gravity?" (Polynomial) "Is this a popula
 
 Kalkulator just did Galileo's life's work in 0.02 seconds.
 
-`d(t) = 4.903325*t^2`
+`d(t) = 4.903325*t^2` The output
+
+`>>> diff(4.903325*t^2)` Differentiate it
+
+`diff(4.903325*t^2) = 9.80665*t` behold, the gravity of earth
 
 ---
 
@@ -66,10 +70,18 @@ pip install -r requirements.txt
 ```bash
 python kalkulator.py
 ```
+### Or
+
+Download the .EXE file (kalkulator.exe) and simply run it
 
 ---
 
 ## 🧪 Examples
+
+Garbage in -> Garbage out
+Make sure your data is accurate
+The more accurate data you give, the more accurate the output is
+If it is a float, the more accurate decimal places you give, the more accurate the output will be
 
 ### 1. Discovering Physics (Kinetic Energy)
 
@@ -283,3 +295,6 @@ This project was architected and engineered by **Syahbana**. LLMs were utilized 
 ## License
 
 MIT License - feel free to use this in your own projects!
+
+
+# You know on second thought, maybe kalkulator-ai isn't really a good name for this. I just couldn't think of any other name
