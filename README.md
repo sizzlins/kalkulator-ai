@@ -295,3 +295,6 @@ This project was architected and engineered by **Syahbana**. LLMs were utilized 
 ## License
 
 MIT License - feel free to use this in your own projects!
+
+
+# You know on second thought, maybe kalkulator-ai isn't really a good name for this. I just couldn't think of any other name
