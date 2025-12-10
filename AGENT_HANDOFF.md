@@ -44,6 +44,7 @@ When a spurious feature (like `1/(340-x)`) numerically fits better than the dete
 2. **Detection, Not Prescription**: Let detectors find patterns, then boost matches
 3. **Transparency Over Certainty**: Report alternatives with warnings
 4. **Fail Gracefully**: Low R² should warn, not crash
+5. **Root Cause First**: Never patch a bug with a quick fix. Always identify the fundamental flaw and refactor the architecture ("replace the wall") rather than applying band-aids.
 
 ## Test Commands
 ```bash
@@ -105,3 +106,24 @@ For really bad fits (R² < 0.7), analyze residuals and suggest missed patterns:
 - **Issue**: `e^f(x)` where `f(x)=i*pi` evaluated incorrectly because `f(x)` was substituted as `i*pi`, yielding `e^i*pi` (interpreted as `(e^i)*pi`).
 - **Fix**: `parser.py:expand_function_calls` now wraps substituted bodies in parentheses: `(i*pi)`.
 - **Learning**: When substituting expressions textually or structurally, **ALWAYS** wrap in parentheses to preserve operator precedence.
+
+## Engineering Standards (The Kalkulator Constitution)
+Adapted from NASA/JPL's "Power of 10" rules for safety-critical systems:
+
+1.  **Simple Control Flow**: Avoid complex "magic" (metaclasses, dynamic attribute injection, `exec`). Keep logic linear.
+2.  **Bounded Loops**: All loops (especially in genetic programming and numerical solvers) must have a fixed `max_iterations` failsafe.
+3.  **Object Stability**: Avoid runtime structure modification ("monkey patching"). Treat initialized objects as immutable where possible.
+4.  **Small Units**: Functions should fit on a single screen (~60 lines). If larger, refactor.
+5.  **Defensive Design**: Minimum 2 assertions per function. Validate assumptions (e.g., `assert x > 0`) to catch impossible states early.
+6.  **Encapsulation**: Minimize global state. Keep variables scoped as locally as possible.
+7.  **Explicit Error Handling**: Never swallow exceptions (`try: ... except: pass`). Handle failures explicitly or let them crash visibly.
+8.  **No "Magic" Preprocessing**: Limit complex decorators that obscure function signatures. Code should be transparent.
+9.  **Shallow Nesting**: Avoid deep nesting of `if/else/for`. Flatten logic to reduce cyclomatic complexity.
+10. **Zero Tolerance for Warnings**: Treat strict `mypy` errors and `ruff` warnings as blocking bugs.
+11. **Deep Assessment (The "Pondering" Rule)**: Before writing a single line of code, we MUST:
+    - 100% understand the Root Cause (not just the symptom).
+    - Plan the fix in detail.
+    - "Double Think": Critically evaluate if the fix is actually a good idea or just a band-aid.
+    - Only then, execute.
+12. **Future-Proofing (The "Anti-Dev-Hell" Rule)**: Always design for the future. Ask: "Will this change make life miserable for the next developer?" If yes, don't do it. Avoid shortcuts that lead to technical debt or "development hell." Decouple concerns (e.g., calculation vs. presentation) to ensure long-term maintainability.
+
