@@ -25,13 +25,13 @@ from sympy.parsing.sympy_parser import (
 
 # Version is defined in pyproject.toml [project] section
 # Import here for backward compatibility
-try:
-    import importlib.metadata
-
-    VERSION = importlib.metadata.version("kalkulator")
-except Exception:
-    # Fallback if package not installed
-    VERSION = "1.0.0"
+# try:
+#     import importlib.metadata
+#
+#     VERSION = importlib.metadata.version("kalkulator")
+# except Exception:
+#     # Fallback if package not installed
+VERSION = "1.2.0"
 
 # Resource limits (can be overridden via environment variables)
 WORKER_CPU_SECONDS = int(os.getenv("KALKULATOR_WORKER_CPU_SECONDS", "30"))
@@ -192,6 +192,8 @@ ALLOWED_SYMPY_NAMES = {
     "Matrix": sp.Matrix,
     "matrix": sp.Matrix,  # lowercase alias for convenience
     "det": sp.det,
+    # Special functions
+    "LambertW": sp.LambertW,
 }
 
 TRANSFORMATIONS = standard_transformations + (

@@ -14,7 +14,11 @@ except ImportError:
 
 ZERO_TOL = 1e-12
 
-def solve_system(raw_no_find: str, find_token: str | None) -> dict[str, Any]:
+def solve_system(
+    raw_no_find: str,
+    find_token: str | None,
+    allowed_functions: frozenset[str] | None = None,
+) -> dict[str, Any]:
     """
     Solve a system of equations.
 
@@ -40,14 +44,14 @@ def solve_system(raw_no_find: str, find_token: str | None) -> dict[str, Any]:
         lhs, rhs = p.split("=", 1)
         lhs_s = lhs.strip()
         rhs_s = rhs.strip()
-        lhs_eval = evaluate_safely(lhs_s)
+        lhs_eval = evaluate_safely(lhs_s, allowed_functions=allowed_functions)
         if not lhs_eval.get("ok"):
             return {
                 "ok": False,
                 "error": f"LHS parse error: {lhs_eval.get('error')}",
                 "error_code": lhs_eval.get("error_code", "PARSE_ERROR"),
             }
-        rhs_eval = evaluate_safely(rhs_s)
+        rhs_eval = evaluate_safely(rhs_s, allowed_functions=allowed_functions)
         if not rhs_eval.get("ok"):
             return {
                 "ok": False,

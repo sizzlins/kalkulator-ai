@@ -8,7 +8,6 @@ from typing import Any
 from kalkulator_pkg.parser import (
     format_inequality_solution,
     format_number,
-    format_solution,
     format_superscript,
 )
 
@@ -359,10 +358,172 @@ def print_result_pretty(res: dict[str, Any], output_format: str = "human") -> No
     elif typ == "congruence_system":
         # Handled inside the solver logic really, but here for completeness
         print(f"Solution: {res.get('solution')}")
+    elif typ == "system":
+        solutions = res.get("solutions", [])
+        if not solutions:
+            print("No solutions found.")
+        else:
+            for idx, sol in enumerate(solutions):
+                if len(solutions) > 1:
+                    print(f"\nSolution {idx + 1}:")
+                
+                # Format each variable assignment in the solution
+                # sol is a dict like {'x': '6', 'y': '4'}
+                parts = []
+                for var, val in sol.items():
+                    formatted = format_solution(str(val))
+                    parts.append(f"{var} = {formatted}")
+                print(", ".join(parts))
     else:
+        # Default value handling
         # Default value handling
         formatted_val = format_solution(str(res.get("result", "")))
         try:
             print(f"Result: {formatted_val}")
         except UnicodeEncodeError:
             print(f"Result: {formatted_val.encode('ascii', 'replace').decode()}")
+
+
+def format_solution(val: Any) -> str:
+    """
+    Format a solution value (string, number, or SymPy object) into a 'pretty' string.
+    
+    Philosophy: 
+    - readability > precision for display (but keep precision reasonably high)
+    - standard math notation (x^2 not x**2)
+    - remove unnecessary noise (.0)
+    
+    Transformations:
+    1. x**y -> x^y
+    2. sqrt(x) -> √x (or √(x))
+    3. 1.0 -> 1 (if integer)
+    4. 2*x -> 2x (implicit multiplication for number-variable)
+    5. I -> i (imaginary unit)
+    """
+    # Apply algebraic simplifications first (if it's a SymPy expression)
+    if hasattr(val, "subs") or isinstance(val, sp.Expr):
+        try:
+            val = simplify_exponential_bases(val)
+        except Exception:
+            # Fallback if simplification fails
+            pass
+            
+    s = str(val)
+    
+    # 1. Replace '**' with '^'
+    s = s.replace("**", "^")
+    
+    # 2. Replace 'sqrt' with '√'
+    # Simple replacement first: sqrt(x) -> √x. 
+    # SymPy usually outputs sqrt(expr). We'll map 'sqrt(' to '√('.
+    s = s.replace("sqrt(", "√(")
+    
+    # 3. Handle floats ending in .0
+    # Regex to find numbers like "123.0" not followed by other digits
+    # matches 12.0, -5.0 but not 12.05
+    s = re.sub(r"(\d+)\.0(?!\d)", r"\1", s)
+    
+    # 4. Implicit multiplication checks (SAFE ONLY)
+    # 2*x -> 2x
+    # digit followed by * followed by letter
+    s = re.sub(r"(\d)\*([a-zA-Z])", r"\1\2", s)
+    
+    # 5. Paren multiplication
+    # (expr)*(expr) -> (expr)(expr)
+    s = s.replace(")*(", ")(")
+    
+    # 6. Imaginary unit
+    # SymPy uses 'I'. Math notation usually 'i'.
+    # Only replace isolated I, not "Image" or "III". 
+    # SymPy output usually puts I at the end or coefficient * I.
+    # We'll validly assume 'I' as a standalone token is imaginary unit.
+    s = re.sub(r"(?<![a-zA-Z])I(?![a-zA-Z])", "i", s)
+    
+    # 7. Variable-Paren multiplication
+    # x*(... -> x(... 
+    # letter followed by * followed by (
+    s = re.sub(r"([a-zA-Z])\*\((?=.+)", r"\1(", s)
+
+    return s
+
+
+def simplify_exponential_bases(expr: sp.Expr) -> sp.Expr:
+    """
+    Transform exp(c*x) -> (base)^x where base = exp(c) is a clean integer/rational.
+    
+    Example:
+        exp(0.693147... * x) -> 2^x
+        exp(1.098612... * x) -> 3^x
+        
+    Engineering Standards:
+    - Bounded Logic: Uses SymPy's structural replacement (bounded complexity)
+    - No Magic: Explicit mathematical transformation
+    """
+    if not isinstance(expr, sp.Expr):
+        return expr
+        
+    # Engineering Standards: Explicit Recursion for Bounded Logic and No Magic
+    
+    # 1. Base case: Atomic or non-Expr objects
+    if not isinstance(expr, sp.Basic):
+        return expr
+    
+    # 2. Recursively simplify arguments first (Bottom-Up)
+    new_args = [simplify_exponential_bases(arg) for arg in expr.args]
+    
+    # Reconstruct expression with simplified arguments if they changed
+    if new_args != list(expr.args):
+        try:
+            expr = expr.func(*new_args)
+        except Exception:
+            # Fallback for weird SymPy internal structures
+            pass
+            
+    # 3. Transform current node if it matches pattern: exp(c*x) or exp(c)
+    if expr.func == sp.exp:
+        arg = expr.args[0]
+        
+        # Check for exp(c * x) pattern
+        if arg.is_Mul:
+            coeffs = [a for a in arg.args if a.is_number]
+            non_coeffs = [a for a in arg.args if not a.is_number]
+            
+            if coeffs and non_coeffs:
+                # Combine all numeric coefficients
+                total_coeff = sp.Mul(*coeffs)
+                remaining = sp.Mul(*non_coeffs)
+                
+                # Check if exp(total_coeff) is close to an integer/simple rational
+                try:
+                    val = sp.exp(total_coeff)
+                    val_f = float(val.evalf())
+                    
+                    # Check for integer closeness (tolerance 1e-9)
+                    if abs(val_f - round(val_f)) < 1e-9:
+                        base = int(round(val_f))
+                        if base > 1:
+                            return sp.Pow(base, remaining)
+                            
+                    # Additional check for 1/integer (e.g. 0.5^x)
+                    if abs(val_f) > 1e-9: # Avoid division by zero
+                        inv_val_f = 1.0 / val_f
+                        if abs(inv_val_f - round(inv_val_f)) < 1e-9:
+                            inv_base = int(round(inv_val_f))
+                            if inv_base > 1:
+                                return sp.Pow(sp.Rational(1, inv_base), remaining)
+                except Exception:
+                    pass
+        
+        # Check for simple exp(c) -> integer pattern
+        elif arg.is_number:
+            try:
+               val_f = float(expr.evalf())
+               if abs(val_f - round(val_f)) < 1e-9:
+                   base = int(round(val_f))
+                   return sp.Integer(base)
+            except Exception:
+                pass
+                    
+    return expr
+
+

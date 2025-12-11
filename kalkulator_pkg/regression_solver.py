@@ -227,6 +227,8 @@ def solve_regression_stage(
                 penalty_factors[i] = 1.0
             elif "exp(-" in name:
                 penalty_factors[i] = 1.5
+            elif "LambertW" in name:
+                penalty_factors[i] = 0.5  # Boost LambertW (Genius Feature)
             else:
                 penalty_factors[i] = (
                     5.0  # Increased from 2.5 to penalize complex transcendentals
@@ -383,7 +385,11 @@ def solve_regression_stage(
             # Increased limit to 500 to allow Genius Features scan
             # Pass OMP Boosts as priorities to screen features differently
             exact_indices = find_best_subset_small_data(
-                X_norm, y_centered, max_subset_size=3, top_k=60, priorities=omp_boosts
+                X_norm,
+                y_centered,
+                feature_names=feature_names,
+                top_k=60,
+                priorities=omp_boosts,
             )
 
         if exact_indices:
@@ -574,6 +580,7 @@ def solve_regression_stage(
                 "log": sp.log,
                 "sinh": sp.sinh,
                 "cosh": sp.cosh,
+                "LambertW": sp.LambertW,
             }
         )
         func_expr = sp.sympify(func_str, locals=local_dict)
@@ -654,7 +661,7 @@ def solve_regression_stage(
         elif r_squared < 0.9:
             confidence_note = f" [R²={r_squared:.2f}]"
 
-        return (True, func_str + confidence_note, None, mse)
+        return (True, func_str, confidence_note, mse)
     except Exception:
         return (False, func_str, None, 1e9)
 
@@ -689,9 +696,37 @@ def find_best_subset_small_data(X, y, max_subset_size=3, top_k=50, priorities=No
 
         correlations.append((corr, i))
 
+def find_best_subset_small_data(
+    X, y, feature_names=None, max_subset_size=3, top_k=50, priorities=None
+):
+    from itertools import combinations
+
+    n_features = X.shape[1]
+
+    # 1. Screen features by correlation with y
+    correlations = []
+    y_norm = np.linalg.norm(y)
+    if y_norm < 1e-9:
+        return []
+
+    for i in range(n_features):
+        col = X[:, i]
+        col_norm = np.linalg.norm(col)
+        if col_norm < 1e-9:
+            corr = 0.0
+        else:
+            corr = abs(np.dot(col, y) / (col_norm * y_norm))
+
+        # Apply Priority Boost if provided
+        if priorities is not None:
+            corr *= priorities[i]
+
+        correlations.append((corr, i))
+
     # Sort and take top K candidates
     correlations.sort(key=lambda x: x[0], reverse=True)
     top_indices = [idx for _, idx in correlations[:top_k]]
+    # print(f"DEBUG: Top indices: {top_indices[:10]}", flush=True)
 
     best_mse = float("inf")
     best_subset = None
@@ -705,7 +740,41 @@ def find_best_subset_small_data(X, y, max_subset_size=3, top_k=50, priorities=No
         try:
             coef, _, _, _ = np.linalg.lstsq(X_sub, y, rcond=None)
             pred = X_sub @ coef
-            return np.mean((y - pred) ** 2)
+            mse_val = np.mean((y - pred) ** 2)
+            if mse_val < 1e-15:
+                mse_val = 1e-15
+
+            # --- Complexity Penalty (Occam's Razor) ---
+            # Breaking Ties: If MSEs are very close ("perfect fits"), prefer simpler features.
+            # We inflate MSE of complex features so they lose against simpler ones.
+            penalty = 1.0
+            if feature_names:
+                for idx in indices:
+                    name = feature_names[idx]
+                    # Rationals (1/...) -> +10% penalty
+                    if "/" in name:
+                        penalty *= 1.1
+                    # Transcendentals (exp, sin, log, tanh) -> +20% penalty
+                    if any(t in name for t in ["exp(", "log(", "sin(", "cos(", "tanh("]):
+                        penalty *= 1.2
+                    # Complex Interactions (x*y)...
+                    if "*" in name and "^2" not in name:  # Interactions
+                        penalty *= 1.05
+                    # High power (x^10) -> +50% penalty
+                    if "^" in name:
+                        try:
+                            # e.g. x^10
+                            base, power = name.split("^", 1)
+                            # Handle parenthesis like (x-c)^2
+                            power_val = float(
+                                "".join(c for c in power if c.isdigit() or c == ".")
+                            )
+                            if power_val >= 4:
+                                penalty *= 1.5
+                        except:
+                            pass
+
+            return mse_val * penalty
         except:
             return float("inf")
 
@@ -723,23 +792,24 @@ def find_best_subset_small_data(X, y, max_subset_size=3, top_k=50, priorities=No
     # 3. Check 2-term
     if max_subset_size >= 2:
         for c in combinations(top_indices, 2):
-            mse = _fit_mse(list(c))
-            if mse < best_mse * 0.95:  # Strict improvement required
+            subset = list(c)
+            mse = _fit_mse(subset)
+            if mse < best_mse * 0.99:  # Strictness (changed 0.95 -> 0.99 to find similar)
                 best_mse = mse
-                best_subset = list(c)
+                best_subset = subset
 
     # 4. Check 3-term (limit to top 25 features to keep it fast)
     if max_subset_size >= 3:
         top_25 = top_indices[:25]
         for c in combinations(top_25, 3):
-            mse = _fit_mse(list(c))
-            if mse < best_mse * 0.95:
+            subset = list(c)
+            mse = _fit_mse(subset)
+            if mse < best_mse * 0.99:
                 best_mse = mse
-                best_subset = list(c)
+                best_subset = subset
 
     # 5. Acceptance Check
-    # If MSE is < 1% of variance (R2 > 0.99) OR significantly better than null
-    if best_mse / y_var < 0.05:  # Accept decent fits
+    if best_mse / y_var < 0.05:
         return best_subset
 
     return None

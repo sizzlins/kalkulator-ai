@@ -1,5 +1,8 @@
 # Kalkulator Architecture Documentation
 
+> [!IMPORTANT]
+> **GOVERNING LAW**: All development in this repository must strictly adhere to the [Engineering Standards (The Kalkulator Constitution)](CONSTITUTION.md).
+
 ## Module Dependencies
 
 ### Import Graph

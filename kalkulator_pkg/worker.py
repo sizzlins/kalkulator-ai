@@ -109,14 +109,6 @@ def _format_evaluation_result(expr: sp.Basic) -> str:
         num_val = sp.N(expr, 15)
         
         # Check for practically zero (works for complex Add expressions too)
-        try:
-            magnitude = abs(num_val)
-            if hasattr(magnitude, 'evalf'):
-                magnitude = float(magnitude.evalf())
-            if magnitude < 1e-9:
-                return "0"
-        except (ValueError, TypeError, AttributeError):
-            pass
         
         if hasattr(num_val, "is_Number") and num_val.is_Number:
             # Check if it's real (imaginary part is negligible)
@@ -331,7 +323,9 @@ def _get_user_friendly_error_message(
     return (f"{error_msg}. Please check your input syntax.", "PARSE_ERROR")
 
 
-def worker_evaluate(preprocessed_expr: str) -> dict[str, Any]:
+def worker_evaluate(
+    preprocessed_expr: str, allowed_functions: frozenset[str] | None = None
+) -> dict[str, Any]:
     """Evaluate a preprocessed expression in a sandboxed worker."""
     logger.debug(f"Evaluating expression: {preprocessed_expr[:100]}...")
     if HAS_RESOURCE:
@@ -341,7 +335,7 @@ def worker_evaluate(preprocessed_expr: str) -> dict[str, Any]:
         except (OSError, ValueError) as e:
             logger.warning(f"Failed to apply resource limits: {e}")
     try:
-        expr = parse_preprocessed(preprocessed_expr)
+        expr = parse_preprocessed(preprocessed_expr, allowed_functions=allowed_functions)
     except ValidationError as e:
         logger.warning(f"Validation error: {e.code} - {e.message}")
         return {"ok": False, "error": str(e), "error_code": e.code}
@@ -772,8 +766,14 @@ def _worker_daemon_main(
                         # We can't easily log to main process logger from here, so just ignore
                         pass
 
+                # Extract allowed_functions from payload if present
+                allowed_funcs_list = msg.get("allowed_functions")
+                allowed_funcs = (
+                    frozenset(allowed_funcs_list) if allowed_funcs_list else None
+                )
+
                 try:
-                    out = worker_evaluate(pre)
+                    out = worker_evaluate(pre, allowed_functions=allowed_funcs)
                 except Exception as eval_error:
                     # Handle any errors in worker_evaluate gracefully
                     out = {
@@ -1073,6 +1073,7 @@ def _worker_eval_cached(
     preprocessed_expr: str,
     context_hash: str | None = None,
     registry_dump_json: str | None = None,
+    allowed_functions: frozenset[str] | None = None,
 ) -> str:
     """Evaluate expression with persistent cache support."""
     # Check persistent cache first
@@ -1127,6 +1128,7 @@ def _worker_eval_cached(
             "type": "eval",
             "preprocessed": preprocessed_expr,
             "registry_dump_json": registry_dump_json,
+            "allowed_functions": list(allowed_functions) if allowed_functions else None,
         },
         timeout=WORKER_TIMEOUT,
     )
@@ -1248,7 +1250,9 @@ def _worker_solve_cached(payload_json: str) -> str:
         return proc.stdout.decode("utf-8", errors="replace") if proc.stdout else ""
 
 
-def evaluate_safely(expr: str, timeout: int = WORKER_TIMEOUT) -> dict[str, Any]:
+def evaluate_safely(
+    expr: str, timeout: int = WORKER_TIMEOUT, allowed_functions: frozenset[str] | None = None
+) -> dict[str, Any]:
     """Safely evaluate an expression string via worker sandbox."""
     from .cache_manager import clear_cache_hits, get_cache_hits
     from .parser import preprocess
@@ -1268,7 +1272,7 @@ def evaluate_safely(expr: str, timeout: int = WORKER_TIMEOUT) -> dict[str, Any]:
         registry_dump = get_function_registry_dump()
         registry_dump_json = json.dumps(registry_dump)
 
-        pre = preprocess(expr)
+        pre = preprocess(expr, allowed_functions=allowed_functions)
         # Capture sub-expression cache hits from preprocessing (in main process)
         subexpr_cache_hits = get_cache_hits()
     except ValidationError as e:
@@ -1291,7 +1295,9 @@ def evaluate_safely(expr: str, timeout: int = WORKER_TIMEOUT) -> dict[str, Any]:
             pass
         return {"ok": False, "error": "Preprocess error", "error_code": "UNKNOWN_ERROR"}
     try:
-        stdout_text = _worker_eval_cached(pre, context_hash, registry_dump_json)
+        stdout_text = _worker_eval_cached(
+            pre, context_hash, registry_dump_json, allowed_functions=allowed_functions
+        )
         # Cache hits are now embedded in the JSON response from _worker_eval_cached
         # So we'll extract them after parsing JSON below
     except subprocess.TimeoutExpired:

@@ -22,7 +22,9 @@ except ImportError:
     import logging
     logger = logging.getLogger("solver.dispatch")
 
-def solve_single_equation(eq_str: str, find_var: str | None = None) -> dict[str, Any]:
+def solve_single_equation(
+    eq_str: str, find_var: str | None = None, allowed_functions: frozenset[str] | None = None
+) -> dict[str, Any]:
     """
     Solve a single equation.
 
@@ -50,7 +52,7 @@ def solve_single_equation(eq_str: str, find_var: str | None = None) -> dict[str,
     # Handle empty RHS: treat as evaluation of LHS
     if not rhs_s:
         # If RHS is empty, evaluate the LHS expression
-        lhs_eval = evaluate_safely(lhs_s)
+        lhs_eval = evaluate_safely(lhs_s, allowed_functions=allowed_functions)
         if lhs_eval.get("ok"):
             return {
                 "ok": True,
@@ -73,7 +75,7 @@ def solve_single_equation(eq_str: str, find_var: str | None = None) -> dict[str,
         clear_cache_hits()
     except ImportError:
         pass
-    lhs = evaluate_safely(lhs_s)
+    lhs = evaluate_safely(lhs_s, allowed_functions=allowed_functions)
     # Capture cache hits from LHS evaluation
     cache_hits: list[tuple[str, str]] = []
     cache_hits.extend(lhs.get("cache_hits", []))
@@ -99,7 +101,7 @@ def solve_single_equation(eq_str: str, find_var: str | None = None) -> dict[str,
             "error": error_msg,
             "error_code": error_code,
         }
-    rhs = evaluate_safely(rhs_s)
+    rhs = evaluate_safely(rhs_s, allowed_functions=allowed_functions)
     # Capture cache hits from RHS evaluation
     cache_hits.extend(rhs.get("cache_hits", []))
     if not rhs.get("ok"):
@@ -131,8 +133,8 @@ def solve_single_equation(eq_str: str, find_var: str | None = None) -> dict[str,
             "error_code": error_code,
         }
     try:
-        left_expr = parse_preprocessed(lhs["result"])
-        right_expr = parse_preprocessed(rhs["result"])
+        left_expr = parse_preprocessed(lhs["result"], allowed_functions=allowed_functions)
+        right_expr = parse_preprocessed(rhs["result"], allowed_functions=allowed_functions)
     except (ParseError, ValidationError) as e:
         logger.warning("Parse error assembling SymPy expressions", exc_info=True)
         return {"ok": False, "error": f"Parse error: {e}", "error_code": "PARSE_ERROR"}
@@ -706,7 +708,7 @@ def solve_single_equation(eq_str: str, find_var: str | None = None) -> dict[str,
                             "error_code": "NO_REAL_SOLUTIONS",
                         }
                 except NotImplementedError as e:
-                    logger.info(
+                    logger.debug(
                         f"Symbolic solve not implemented, trying numeric fallback: {e}"
                     )
                     if NUMERIC_FALLBACK_ENABLED:

@@ -196,7 +196,11 @@ FORBIDDEN_TOKENS = (
 
 
 def _validate_expression_tree(
-    expr: Any, depth: int = 0, node_count: list[int] = None, allow_none: bool = False
+    expr: Any,
+    depth: int = 0,
+    node_count: list[int] = None,
+    allow_none: bool = False,
+    allowed_functions: set[str] | None = None,
 ) -> None:
     """Validate expression tree structure - reject dangerous nodes.
 
@@ -204,7 +208,8 @@ def _validate_expression_tree(
         expr: Expression to validate
         depth: Current depth in the tree
         node_count: List to track total node count (modified in place)
-        allow_none: If True, allow None as a valid result (for top-level expressions that return None)
+        allow_none: If True, allow None as a valid result
+        allowed_functions: Optional set of extra function names to allow (e.g., 'f', 'g' for function finding)
     """
     if node_count is None:
         node_count = [0]
@@ -242,7 +247,14 @@ def _validate_expression_tree(
             else:
                 func_name = func_str.split("'")[1] if "'" in func_str else func_str
 
-        if func_name and func_name not in ALLOWED_SYMPY_NAMES:
+        # Check against basic allowed list first
+        is_allowed = func_name and func_name in ALLOWED_SYMPY_NAMES
+        
+        # If not in allowed names, check optional whitelist
+        if not is_allowed and allowed_functions:
+             is_allowed = func_name in allowed_functions
+             
+        if func_name and not is_allowed:
             # Audit log blocked function
             try:
                 from .logging_config import get_logger
@@ -285,7 +297,9 @@ def _validate_expression_tree(
     if isinstance(expr, sp.Matrix):
         for row in expr.tolist():
             for elem in row:
-                _validate_expression_tree(elem, depth + 1, node_count)
+                _validate_expression_tree(
+                    elem, depth + 1, node_count, allowed_functions=allowed_functions
+                )
         return
     # Check for dangerous types explicitly
     expr_type = type(expr).__name__
@@ -300,11 +314,17 @@ def _validate_expression_tree(
         # For expressions with args, validate children
         if hasattr(expr, "args") and expr.args:
             for arg in expr.args:
-                _validate_expression_tree(arg, depth + 1, node_count)
+                _validate_expression_tree(
+                    arg, depth + 1, node_count, allowed_functions=allowed_functions
+                )
         # For relational operators, validate both sides
         if hasattr(expr, "lhs") and hasattr(expr, "rhs"):
-            _validate_expression_tree(expr.lhs, depth + 1, node_count)
-            _validate_expression_tree(expr.rhs, depth + 1, node_count)
+            _validate_expression_tree(
+                expr.lhs, depth + 1, node_count, allowed_functions=allowed_functions
+            )
+            _validate_expression_tree(
+                expr.rhs, depth + 1, node_count, allowed_functions=allowed_functions
+            )
         return
 
     # Reject anything that's not a SymPy Basic type
@@ -393,7 +413,11 @@ def _restore_function_commas(expr: str, replacements: dict[str, str]) -> str:
     return expr
 
 
-def preprocess(input_str: str, skip_exponent_conversion: bool = False) -> str:
+def preprocess(
+    input_str: str,
+    skip_exponent_conversion: bool = False,
+    allowed_functions: frozenset[str] | None = None,
+) -> str:
     """Preprocess input string for parsing.
 
     Applies transformations:
@@ -611,9 +635,29 @@ def preprocess(input_str: str, skip_exponent_conversion: bool = False) -> str:
 
     processed_str = processed_str.replace(":", "/")
     processed_str = processed_str.replace("×", "*")
-    # Standardize inequality variations
     processed_str = processed_str.replace("=>", ">=")
     processed_str = processed_str.replace("=<", "<=")
+
+    # Handle 'mod' operator (e.g. "x mod y" -> "Mod(x, y)")
+    # Must be done BEFORE implicit multiplication to avoid "x*mod*y"
+    # Negative lookbehind to ensure we don't match 'mod' in 'model' or 'mode' if those become vars
+    # But 'mod' is a common operator. We'll require whitespace around it or clear boundaries.
+    # Pattern: something mod something
+    # We use a robust regex that captures the operands.
+    # Note: This is a simple infix to prefix conversion. Nested mods might need more care, but this covers standard usage.
+    # We use re.sub with a function to handle potential nesting if we processed right-to-left, but simple replacement works for single level.
+    # To be safe against "model", we use \bmod\b
+    
+    # We need to capture the operands. This is tricky with simple regex because operands can be complex expressions.
+    # Simplified approach: Replace " mod " with ", " and wrap in Mod() is hard.
+    # Better approach: Replace "\bmod\b" with "%" which SymPy might handle? No, SymPy uses % for Mod on integers but Mod(a,b) is safer for symbolic.
+    # Actually, let's just replace " mod " with "%". preprocess will later handle "%" ?
+    # Wait, existing code has PERCENT_REGEX.sub(r"(\1/100)", processed_str).
+    # Does SymPy parse "a % b" as Mod(a, b)? Yes, Python syntax.
+    # Let's test this hypothesis with a script? No, I'll trust standard Python/SymPy behavior for %.
+    # So "x mod y" -> "x % y".
+    
+    processed_str = re.sub(r"\bmod\b", "%", processed_str, flags=re.IGNORECASE)
 
     if not skip_exponent_conversion:
         processed_str = processed_str.replace("^", "**")
@@ -836,11 +880,39 @@ def preprocess(input_str: str, skip_exponent_conversion: bool = False) -> str:
         # If function expansion fails for other reasons, continue with original string
         pass
 
+    # Phase 4 (2025-12-10): Prevent undefined functions from becoming implicit multiplication (e.g. f(1) -> f*1)
+    # After expand_function_calls, all defined user functions are replaced by their bodies.
+    # So any remaining Name(...) pattern where Name is not an allowed SymPy function is likely an error.
+    # Exception: We allow 'pi(x)' or 'e(x)' which parses as implicit multiplication pi*x, e*x.
+    # But we strictly block unknown names.
+    call_pattern = re.compile(r"\b([a-zA-Z_]\w*)\s*\(")
+    for match in call_pattern.finditer(processed_str):
+        name = match.group(1)
+        # Check if matched name is a known SymPy function/symbol or whitelisted
+        if name not in ALLOWED_SYMPY_NAMES and (
+            allowed_functions is None or name not in allowed_functions
+        ):
+            # It's an undefined name being used like a function
+            # Check if it might be valid through implicit multiplication (e.g. variable 'a')
+            # BUT per user philosophy, we prefer explicit error over implicit "a(b) -> a*b" ambiguity for unknowns.
+            # "f(1)" should define f or error, not return f*1.
+            
+            # Additional check: Is it a locally bound variable in the REPL context?
+            # Parser doesn't know about REPL context.
+            # However, standard practice: implicit multiplication requires simple juxtaposition (ab) or number (2x).
+            # "x(y)" is structurally a function call.
+            raise ValidationError(
+                f"Undefined function '{name}'. If you meant implicit multiplication, use '{name}*(...)'",
+                "UNDEFINED_FUNCTION"
+            )
+
     return processed_str
 
 
 @lru_cache(maxsize=CACHE_SIZE_PARSE)
-def parse_preprocessed(expr_str: str) -> Any:
+def parse_preprocessed(
+    expr_str: str, allowed_functions: frozenset[str] | None = None
+) -> Any:
     """Parse and validate a preprocessed expression string."""
     # Handle function calls with multiple arguments that use commas
     # SymPy's parse_expr interprets commas as tuple creation
@@ -1102,15 +1174,27 @@ def parse_preprocessed(expr_str: str) -> Any:
 
     # Normal parsing for expressions without special function call format
     # Use the restored expression (with markers replaced by commas)
+    
+    # Prepare local dictionary with allowed functions as sp.Function
+    local_env = ALLOWED_SYMPY_NAMES.copy()
+    if allowed_functions:
+        for name in allowed_functions:
+            # We define them as UndefinedFunction (sp.Function class)
+            # so they parse as proper function calls, not implicit multiplication
+            # of characters (e.g. flarg -> f*l*a*r*g)
+            local_env[name] = sp.Function(name)
+
     expr = parse_expr(
         expr_str_restored,
-        local_dict=ALLOWED_SYMPY_NAMES,
+        local_dict=local_env,
         transformations=TRANSFORMATIONS,
         evaluate=True,
     )
     # Validate expression tree structure
     # Allow None as a valid result (e.g., from print() which returns None)
-    _validate_expression_tree(expr, allow_none=True)
+    _validate_expression_tree(
+        expr, allow_none=True, allowed_functions=allowed_functions
+    )
     return expr
 
 

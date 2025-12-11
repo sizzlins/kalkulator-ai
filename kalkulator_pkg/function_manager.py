@@ -312,6 +312,9 @@ def get_function_registry_hash() -> str:
     return hashlib.md5(registry_str.encode()).hexdigest()
 
 
+
+
+
 def define_function(name: str, params: list[str], body_expr: str) -> None:
     """Define a function.
 
@@ -340,6 +343,14 @@ def define_function(name: str, params: list[str], body_expr: str) -> None:
 
     # Parse body expression
     try:
+        # Preprocess body to handle unicode symbols (Unicode sqrt -> sqrt, etc.) and implicit multiplication
+        # Use local import to avoid circular dependency
+        from .parser import preprocess
+        
+        # Preprocess the body string (converts √ -> sqrt, etc.)
+        params_set = set(params)
+        body_expr = preprocess(body_expr)
+        
         # Create a local dict with parameter symbols
         local_dict = {**ALLOWED_SYMPY_NAMES}
         for param in params:
@@ -370,8 +381,20 @@ def define_function(name: str, params: list[str], body_expr: str) -> None:
                         body = body.subs(symbol, sp.Symbol(param))
                         break
 
+
     # Store function definition
     _function_registry[name] = (params, body)
+
+
+def define_variable(name: str, value: str) -> None:
+    """Define a variable (0-arity function).
+    
+    Args:
+        name: Variable name (e.g., "x", "y")
+        value: Value string (e.g., "10", "x+5")
+    """
+    define_function(name, [], value)
+
 
 
 def evaluate_function(name: str, args: list[Any]) -> sp.Basic:
@@ -436,9 +459,11 @@ def parse_function_definition(expr: str) -> tuple[str, list[str], str] | None:
     """
     # Pattern: function_name(param1,param2,...) = body
     # Allow spaces: f(x, y) = 2*x
-    # Must match the ENTIRE string (no trailing content after the body)
-    # The body should not contain another function definition pattern
+    # expr_stripped = expr.strip()
     expr_stripped = expr.strip()
+    # Support explicit "define" keyword
+    if expr_stripped.lower().startswith("define "):
+        expr_stripped = expr_stripped[7:].strip()
 
     # First, check if there's a comma followed by another function pattern
     # This would indicate incomplete or malformed input like "f(x)=2x, f(x)="
@@ -934,18 +959,18 @@ def _find_sparse_polynomial_solution(
             vars_not_used = len(data_vars - uses_variables)
 
             # Prefer subsets that:
-            # 1. Have rational terms (x*y/z^2) - highest priority
-            # 2. Use variables present in data
-            # 3. Have product terms
-            # 4. Have lower total degree
-            # Score: (not has_rational, vars_not_used, has_quadratic, not has_product, total_degree)
+            # 1. Use variables present in the data (most important)
+            # 2. Have lower total degree (complexity) - Occam's Razor
+            # 3. Have product terms (often physically meaningful)
+            # 4. Have rational terms (tie-breaker)
+            # Score: (vars_not_used, total_degree, not has_product, not has_rational, has_quadratic)
             # Lower score = better
             return (
-                not has_rational,
                 vars_not_used,
-                has_quadratic,
-                not has_product,
                 total_degree,
+                not has_product,
+                not has_rational,
+                has_quadratic,
             )
 
         # Try subsets of increasing size, starting from the smallest
@@ -1384,7 +1409,18 @@ def find_function_from_data(
             except Exception as e:
                 raise ValueError(f"Could not convert '{val}' to a numeric value") from e
         # For SymPy expressions
+        # For SymPy expressions
         try:
+            # Check if it's a known constant symbol (like pi or e) passed as a Symbol object
+            if isinstance(val, sp.Symbol):
+                local_ns = {
+                    "pi": sp.pi,
+                    "e": sp.E,
+                    "E": sp.E,
+                }
+                if val.name in local_ns:
+                    val = local_ns[val.name]
+
             result = val.evalf()
             if hasattr(result, "free_symbols") and result.free_symbols:
                 raise ValueError(
@@ -2864,7 +2900,7 @@ def find_function_from_data(
             )
 
             if res and res[0]:
-                success, func_str, coeffs, mse = res
+                success, func_str, confidence_note, mse = res
 
                 # Calculate R² to determine if Phase 1 is "good enough"
                 y_var = sum((y - sum(y_data) / len(y_data)) ** 2 for y in y_data) / len(
@@ -2875,14 +2911,14 @@ def find_function_from_data(
                 # If Simple Stage finds a GOOD fit (R² > 0.99), STOP.
                 # This prevents Phase 2 transcendentals from overfitting.
                 if not include_transcendentals and r_squared > 0.99:
-                    return (True, func_str, coeffs, None)
+                    return (True, func_str, None, confidence_note)
 
                 # Otherwise, keep as candidate
                 best_result = res
 
         if best_result:
-            success, func_str, coeffs, mse = best_result
-            return (success, func_str, coeffs, None)
+            success, func_str, confidence_note, mse = best_result
+            return (success, func_str, None, confidence_note)
 
         print("DEBUG: Advanced Solver failed to find a model.", file=sys.stderr)
         return (False, None, None, None)

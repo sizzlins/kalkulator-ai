@@ -1396,8 +1396,48 @@ def generate_candidate_features(
                         # print(f"DEBUG GEN: {name_new}", flush=True)
 
                         # x * y / z^2 (Inverse Square Product)
+                        # x * y / z^2 (Inverse Square Product)
                         features.append((col_i * col_j) / (col_k**2))
                         feature_names.append(f"{name_i}*{name_j}/{name_k}^2")
+                        # print(f"DEBUG GEN: {name_i}*{name_j}/{name_k}^2", flush=True)
+
+    # --- NEW: LAMBERT W FUNCTION (x*e^x = y => x = W(y)) ---
+    # Critical for inverting x^x, x*log(x), etc.
+    if include_transcendentals:
+        try:
+            from scipy.special import lambertw
+            
+            for i in range(n_vars):
+                col = X_data[:, i]
+                name = variable_names[i]
+                
+                # Standard W(x) - principal branch
+                # Real branch only
+                with np.errstate(all="ignore"):
+                    # lambertw returns complex, we want real part if imag is negligible
+                    w_val = lambertw(col)
+                    if np.all(np.abs(np.imag(w_val)) < 1e-9):
+                        w_real = np.real(w_val)
+                        if np.all(np.isfinite(w_real)):
+                            features.append(w_real)
+                            feature_names.append(f"LambertW({name})")
+
+                # GENIUS FEATURE: Inverse of x^x
+                # x^x = y  =>  x = exp(W(log(y)))
+                # This pattern is specifically requested and mathematically significant.
+                if np.all(col > 0):
+                    with np.errstate(all="ignore"):
+                        log_col = np.log(col)
+                        w_log = lambertw(log_col)
+                        if np.all(np.abs(np.imag(w_log)) < 1e-9):
+                            # exp(W(log(x)))
+                            feat = np.exp(np.real(w_log))
+                            if np.all(np.isfinite(feat)):
+                                features.append(feat)
+                                feature_names.append(f"exp(LambertW(log({name})))")
+                                # print(f"DEBUG: Generated exp(LambertW(log({name})))", flush=True)
+        except ImportError:
+            pass
                         # print(f"DEBUG GEN: {name_i}*{name_j}/{name_k}^2", flush=True)
 
     # Feature: x * y * z / w (Triple Product Ratio for Reynolds Number)

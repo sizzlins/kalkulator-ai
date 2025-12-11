@@ -12,6 +12,7 @@ from math import gcd
 from typing import Any
 
 import sympy as sp
+import kalkulator_pkg.parser as kparser
 
 # Helper for Python < 3.9 compatibility
 try:
@@ -31,7 +32,6 @@ from ..config import VAR_NAME_RE, VERSION
 from ..parser import (
     format_inequality_solution,
     format_number,
-    format_solution,
     format_superscript,
     parse_preprocessed,
     split_top_level_commas,
@@ -56,6 +56,7 @@ from ..utils.formatting import (
     convert_to_pi_fraction as _convert_to_pi_fraction,
     format_special_values as _format_special_values,
     print_result_pretty,
+    format_solution,
 )
 
 
@@ -187,23 +188,27 @@ def _health_check() -> int:
 
 
 def repl_loop(output_format: str = "human") -> None:
-    """Interactive REPL loop with graceful interrupt handling."""
+    """
+    Legacy entry point delegating to the new modular REPL class.
+    Refactored to enforce Engineering Standard #4 (Small Units) and #5 (Wall Rule).
+    """
+    from .repl_core import REPL
+    from .context import ReplContext
+    
+    # Initialize context (global vs local handling logic has been moved)
+    repl = REPL()
+    repl.start()
 
-    global logger  # Use module-level logger
-
-    try:
-        import readline  # noqa: F401
-    except (ImportError, ModuleNotFoundError):
-        # readline not available on Windows - that's fine
-        pass
-
-    # Pre-warm worker processes to avoid startup delay on first calculation
-    try:
-        from ..worker import warmup_workers
-
-        warmup_workers()
-    except ImportError:
-        pass
+    # Ensure consistent encoding for REPL interaction (Fix for Windows Unicode issues)
+    # This prevents 'mod' or 'sqrt' symbols from breaking on Windows Console
+    import sys
+    if sys.platform == "win32":
+        try:
+            sys.stdin.reconfigure(encoding='utf-8')
+            sys.stdout.reconfigure(encoding='utf-8')
+        except AttributeError:
+             # Older python versions might not support reconfigure
+             pass
 
     # Ensure evaluate_safely and parse_preprocessed are always available in this function scope
     # Import them here to avoid any scoping issues in nested blocks
@@ -273,12 +278,15 @@ def repl_loop(output_format: str = "human") -> None:
                 is_chainable_algebra = False
                 if len(parts_check) > 1:
                     is_chainable_algebra = True
+                    # DEBUG PRINT REMOVED
+
                     cmd_keywords = ("quit", "exit", "help", "clear", "list", "delete", "show", 
                                   "find", "evolve", "benchmark", "savecache", "loadcache", "timing", "cachehits",
                                   "save", "savefunction", "savefunctions",
                                   "loadfunction", "loadfunctions",
                                   "clearfunction", "clearfunctions",
-                                  "showfunction", "showfunctions")
+                                  "showfunction", "showfunctions",
+                                  "solve")
                     for p in parts_check:
                         p_s = p.strip()
                         if not p_s: continue
@@ -303,23 +311,74 @@ def repl_loop(output_format: str = "human") -> None:
 
                 # Check for function finding pattern: multiple func(numeric) = value
                 # with same function name (e.g., "g(1) = -4, g(2) = 0, g(0) = -6")
-                func_finding_pattern = re.compile(
-                    r"^([a-zA-Z_][a-zA-Z0-9_]*)\s*\(([^)]+)\)\s*=\s*(.+)$"
-                )
+                # NEW STRATEGY (Phase 4): Evaluate arguments to distinguish Def vs Find
+                # Regex was brittle for "f(pi)=3" or "f(x)=2" where x=5.
                 is_function_finding = False
-                if len(parts_check) >= 2:
+                
+                # Only check if we have enough parts and they behave like equations
+                if len(parts_check) >= 2 and all("=" in p for p in parts_check):
                     func_names_found = set()
                     numeric_args_count = 0
+                    valid_structure = True
+                    
+                    # Regex to extract potential function name and argument part
+                    # We still use regex for structure "name(arg) = val" but NOT for "arg is digit"
+                    structure_pattern = re.compile(r"^([a-zA-Z_][a-zA-Z0-9_]*)\s*\(([^)]+)\)\s*=\s*(.+)$")
+                    
                     for p in parts_check:
-                        m = func_finding_pattern.match(p.strip())
-                        if m:
-                            func_names_found.add(m.group(1))
-                            # Check if argument contains at least one digit (numeric data point)
-                            if re.search(r"\d", m.group(2)):
+                        m = structure_pattern.match(p.strip())
+                        if not m:
+                            valid_structure = False
+                            break
+                            
+                        func_name = m.group(1)
+                        arg_str = m.group(2)
+                        
+                        func_names_found.add(func_name)
+                        
+                        # EVALUATION CHECK: Is arg_str numeric?
+                        # We use evaluate_safely but purely for numeric check (fast path?)
+                        # Actually, just use sp.sympify with context variables.
+                        try:
+                            # 1. Substitute known variables
+                            # We can't easily use sympify with dict subs directly on string, 
+                            # but evaluate_safely does the heavy lifting.
+                            # For speed/simplicity here, we try to see if it's a number locally.
+                            
+                            # Pre-evaluate check: Is it a known constant?
+                            if arg_str.strip() in ("pi", "e", "E"):
+                                is_numeric = True
+                            else:
+                                # Try parsing the arg string itself
+                                try:
+                                    # Use basic sympify (unsafe? somewhat, but we just check is_number)
+                                    # We don't execute code, just parse math.
+                                    # Allow 'pi', 'e'
+                                    parsed_arg = sp.sympify(arg_str, locals={"pi": sp.pi, "e": sp.E})
+                                    
+                                    # Better approach: check for free symbols
+                                    # If it has free symbols, it's likely NOT numeric (unless those symbols are constants)
+                                    # Since we don't track variable values in ctx, we assume any other symbol makes it non-numeric
+                                    free_syms = parsed_arg.free_symbols
+                                    if not free_syms:
+                                        # All symbols are known constants -> Numeric Data Point
+                                        is_numeric = True
+                                    else:
+                                        # Has undefined symbols -> Function Definition
+                                        is_numeric = False
+                                except:
+                                    # Parse fail -> likely not a simple math arg
+                                    is_numeric = False
+                                    
+                            if is_numeric:
                                 numeric_args_count += 1
-                    # If all parts match the pattern, same function name, and have numeric args
-                    if len(func_names_found) == 1 and numeric_args_count >= 2:
-                        is_function_finding = True
+                        except:
+                            # Fallback: assume not numeric
+                            pass
+                            
+                    # Decision Logic
+                    if valid_structure and len(func_names_found) == 1 and numeric_args_count >= 2:
+                         is_function_finding = True
 
                 # Check for research-grade commands that should NOT be split
                 raw_lower_check = raw_input.lower().strip()
@@ -494,6 +553,67 @@ def repl_loop(output_format: str = "human") -> None:
                 line += entry + ", "
             if line.strip():
                 print(line.rstrip(", "))
+        if raw_lower.startswith("calc "):
+            # Format: calc <expression>
+            # e.g. calc 2^100
+            # Just strip 'calc ' and process as normal expression
+            # Use raw to preserve case of variables if needed, though raw_lower used for check
+            raw = raw[5:].strip()
+            # Update raw_lower for subsequent checks
+            raw_lower = raw.lower()
+            # Fall through to expression evaluation
+            pass
+
+        if raw_lower.startswith("solve "):
+            # Format: solve <equation>
+            # e.g. solve x^2 - 1 = 0
+            eq_str = raw[6:].strip()
+            print(f"Solving equation: {eq_str}")
+            try:
+                # Use global imports (already present at top of file)
+                
+                # Manually handle equation structure since parse_preprocessed 
+                # might not support "lhs = rhs" syntax directly
+                if "=" in eq_str:
+                    lhs_str, rhs_str = eq_str.split("=", 1)
+                    lhs_parsed = kparser.parse_preprocessed(kparser.preprocess(lhs_str))
+                    rhs_parsed = kparser.parse_preprocessed(kparser.preprocess(rhs_str))
+                    parsed = sp.Eq(lhs_parsed, rhs_parsed)
+                else:
+                    # Implicit "= 0"
+                    expr_parsed = kparser.parse_preprocessed(kparser.preprocess(eq_str))
+                    parsed = sp.Eq(expr_parsed, 0)
+                
+                if isinstance(parsed, sp.Eq):
+                     # Find variable
+                     free_syms = list(parsed.free_symbols)
+                     if not free_syms:
+                         print("Equation has no variables.")
+                         continue
+                     # Heuristic: solve for first symbol
+                     target_var = free_syms[0]
+                     
+                     target_var = free_syms[0]
+                     
+                     result = solve_single_equation(eq_str, str(target_var))
+                     # Engineer Standard: Use centralized pretty printer
+                     print_result_pretty(result, output_format=output_format)
+                     
+                else:
+                    # Maybe it's an expression like "x^2 - 1" implied "=0"
+                    # Or maybe parse failed to see it as Eq.
+                    # Attempt to solve expression = 0
+                    free_syms = list(parsed.free_symbols)
+                    if not free_syms:
+                         print(f"Result: {parsed}") # Constant evaluation
+                    else:
+                         target_var = free_syms[0]
+                         result = solve_single_equation(eq_str, str(target_var))
+                         # Engineer Standard: Use centralized pretty printer
+                         print_result_pretty(result, output_format=output_format)
+                         
+            except Exception as e:
+                print(f"Error solving equation: {e}")
             continue
 
         # Export command: export <function_name> to <filename>
@@ -1418,13 +1538,19 @@ def repl_loop(output_format: str = "human") -> None:
 
                                     arg_strings_preserved.append(arg_str_preserved)
 
-                                    arg_expr = _parse_preprocessed(arg_stripped)
+                                    arg_expr = kparser.parse_preprocessed(arg_stripped)
+                                    # Ensure constants are treated as such
+                                    arg_expr = arg_expr.subs({sp.Symbol('pi'): sp.pi, sp.Symbol('e'): sp.E})
                                     try:
                                         arg_val = float(sp.N(arg_expr))
                                     except (ValueError, TypeError):
                                         arg_val = arg_expr
+                                    with open("debug_log_app.txt", "a") as dbg:
+                                        dbg.write(f"DEBUG REPL: Parsed {arg_stripped} -> {arg_val} (type {type(arg_val)})\n")
                                     args.append(arg_val)
-                                except Exception:
+                                except Exception as e:
+                                    with open("debug_log_app.txt", "a") as dbg:
+                                        dbg.write(f"DEBUG REPL: Failed {arg_stripped}: {e}\n")
                                     break
 
                             if len(args) == len(param_names):
@@ -1432,7 +1558,7 @@ def repl_loop(output_format: str = "human") -> None:
                                     if value_str_preserved:
                                         value = value_str_preserved
                                     else:
-                                        value_expr = _parse_preprocessed(value_str)
+                                        value_expr = kparser.parse_preprocessed(value_str)
                                         try:
                                             value = float(sp.N(value_expr))
                                         except (ValueError, TypeError):
@@ -1545,6 +1671,10 @@ def repl_loop(output_format: str = "human") -> None:
                         print(f"[Time: {time.perf_counter() - start_time:.4f}s]")
                     continue
 
+                # Initialize context and buffer for this iteration at the top level
+                chained_context = {}
+                results_buffer = []  
+                
                 # Check for assignment with equation mixed (e.g., "a=(expr=0)")
                 if "," in expr:
                     parts = split_top_level_commas(expr)
@@ -1566,67 +1696,74 @@ def repl_loop(output_format: str = "human") -> None:
                                 continue
 
                 # Check for function definition or mixed definitions/calls in --eval mode
-                if "," in expr:
-                    parts = split_top_level_commas(expr)
-                    handled_all = True
-                    for part in parts:
-                        part = part.strip()
-                        if not part:
-                            continue
-                        # Check if it's a function definition
-                        try:
-                            from ..function_manager import (
-                                define_function,
-                                parse_function_definition,
-                            )
+                    if "," in expr:
+                        parts = split_top_level_commas(expr)
+                        handled_all = True
+                        results_to_display = []
+                        
+                        for part in parts:
+                            part = part.strip()
+                            if not part:
+                                continue
+                            # Check if it's a function definition
+                            try:
+                                from ..function_manager import (
+                                    define_function,
+                                    parse_function_definition,
+                                )
 
-                            func_def = parse_function_definition(part)
-                            if func_def is not None:
-                                func_name, params, body = func_def
-                                try:
-                                    define_function(func_name, params, body)
-                                    params_str = ", ".join(params) if params else ""
-                                    if output_format == "json":
-                                        print(
-                                            json.dumps(
-                                                {
-                                                    "ok": True,
-                                                    "function_defined": func_name,
-                                                    "params": params,
-                                                    "body": body,
-                                                }
-                                            )
-                                        )
-                                    else:
-                                        print(
-                                            f"Function '{func_name}({params_str})' defined as: {body}"
-                                        )
-                                    continue
-                                except ValidationError as e:
-                                    print(f"Error: {e.message}")
-                                    handled_all = False
-                                    break
-                        except Exception:
-                            pass
+                                func_def = parse_function_definition(part)
+                                if func_def is not None:
+                                    func_name, params, body = func_def
+                                    try:
+                                        define_function(func_name, params, body)
+                                        params_str = ", ".join(params) if params else ""
+                                        if output_format == "json":
+                                            results_to_display.append(json.dumps(
+                                                    {
+                                                        "ok": True,
+                                                        "function_defined": func_name,
+                                                        "params": params,
+                                                        "body": body,
+                                                    }
+                                                ))
+                                        else:
+                                            results_to_display.append(f"Function '{func_name}({params_str})' defined as: {body}")
+                                        continue
+                                    except ValidationError as e:
+                                        print(f"Error: {e.message}")
+                                        handled_all = False
+                                        break
+                            except Exception:
+                                pass
 
-                        # If not a function definition, evaluate it
-                        eva = _evaluate_safely(part)
-                        elapsed = time.perf_counter() - start_time
-                        if eva.get("ok"):
-                            res_str = eva.get("result")
-                            if output_format == "json":
-                                print(json.dumps({"ok": True, "result": res_str}))
+                            # If not a function definition, evaluate it
+                            eva = _evaluate_safely(part)
+                            # elapsed = time.perf_counter() - start_time # Aggregate time?
+                            if eva.get("ok"):
+                                res_str = eva.get("result")
+                                if output_format == "json":
+                                    results_to_display.append(json.dumps({"ok": True, "result": res_str}))
+                                else:
+                                    formatted_res = _format_special_values(res_str)
+                                    results_to_display.append(f"{part} = {format_superscript(formatted_res)}")
                             else:
-                                formatted_res = _format_special_values(res_str)
-                                print(f"{part} = {format_superscript(formatted_res)}")
-                        else:
-                            print(f"Error: {eva.get('error', 'Unknown error')}")
-                            handled_all = False
+                                print(f"Error: {eva.get('error', 'Unknown error')}")
+                                handled_all = False
+                        
+                        # Print all collected results on one line
+                        if results_to_display:
+                            if output_format == "json":
+                                for res in results_to_display:
+                                    print(res)
+                            else:
+                                print(", ".join(results_to_display))
 
-                    if handled_all:
-                        if ctx.timing_enabled:
-                            print(f"[Time: {elapsed:.4f}s]")
-                        continue
+                        if handled_all:
+                            if ctx.timing_enabled:
+                                elapsed = time.perf_counter() - start_time
+                                print(f"[Time: {elapsed:.4f}s]")
+                            continue
 
                 # Check for single function definition in --eval mode
                 try:
@@ -1678,6 +1815,13 @@ def repl_loop(output_format: str = "human") -> None:
                     if ctx.timing_enabled:
                         print(f"[Time: {elapsed:.4f}s]")
                 elif "=" in expr:
+                    # Check for empty assignment/definition (trailing =)
+                    if expr.strip().endswith("=") and not expr.strip().startswith(("solve", "find")):
+                         print("Error: Empty assignment or definition. You must provide a value or expression after '='.")
+                         if ctx.timing_enabled:
+                             print(f"[Time: {time.perf_counter() - start_time:.4f}s]")
+                         continue
+
                     # Clear cache hits tracking before new computation
                     if ctx.cache_hits_enabled:
                         try:
@@ -2014,12 +2158,30 @@ def repl_loop(output_format: str = "human") -> None:
                             ):
                                 same_variable_system = True
 
-                        # Decision logic:
-                        # 1. Same Variable System -> Try modular solver
-                        # 2. Sequential/Chain -> If mixed types or not an explicit system, execute sequentially
-                        # 3. Explicit System -> Use solve_system
-
-                        should_chain = not is_assignment_list
+                        # Initialize context and buffer for this iteration
+                        chained_context = {}
+                        results_buffer = []  
+                        
+                        # Decision logic for Systems vs Chained Execution:
+                        # 1. Chained Execution: 
+                        #    - Simple assignments (x=1)
+                        #    - Pure expressions (2+2)
+                        #    - Mixed (x=1, x+2)
+                        # 2. System Solver:
+                        #    - Complex equations (x+y=10)
+                        #    - Modular systems (checked above)
+                        
+                        has_complex_equations = False
+                        for p in pts:
+                            if "=" in p:
+                                lhs_check = p.split("=", 1)[0].strip()
+                                # IF assignment to valid variable -> OK for chain
+                                # IF assignment to expression (x+y) -> Complex Equation -> System
+                                if not VAR_NAME_RE.match(lhs_check):
+                                    has_complex_equations = True
+                                    break
+                                    
+                        should_chain = not has_complex_equations and not same_variable_system
 
                         if same_variable_system:
                             var = assigned_vars_check[0]
@@ -2039,7 +2201,7 @@ def repl_loop(output_format: str = "human") -> None:
                         
                         if should_chain:
                             # Chained execution with local context propagation
-                            chained_context = {}
+                            # chained_context and results_buffer are already initialized above
                             start_time_chain = time.perf_counter()
                             
                             for p in pts:
@@ -2082,6 +2244,16 @@ def repl_loop(output_format: str = "human") -> None:
                                         # Update context for subsequent commands
                                         if val_str:
                                             chained_context[var_name] = val_str
+                                            # GLOBAL PERSISTENCE FIX:
+                                            # Assignments in a chain should behave like top-level assignments.
+                                            try:
+                                                from ..function_manager import define_variable
+                                                # We need to pass the raw value or the result?
+                                                # define_variable takes name and value.
+                                                # We use val_str which is the evaluated result.
+                                                define_variable(var_name, val_str)
+                                            except ImportError:
+                                                pass
                                             
                                         if output_format == "json":
                                             print(
@@ -2098,7 +2270,9 @@ def repl_loop(output_format: str = "human") -> None:
                                                 print(f"{var_name} = {val_str}")
                                                 print(f"  Decimal: {approx_str}")
                                             else:
-                                                print(f"{var_name} = {val_str}")
+                                                # Instead of printing, buffer
+                                                # print(f"{var_name} = {val_str}")
+                                                results_buffer.append(f"{var_name} = {val_str}")
                                     except Exception as e:
                                         print(
                                             f"Error formatting result for '{var_name} = {rhs_sub}': {e}"
@@ -2106,8 +2280,21 @@ def repl_loop(output_format: str = "human") -> None:
                                         continue
                                 else:
                                     # Treat as expression/equation using substituted string
+                                    # Treat as expression/equation using substituted string
                                     res = solve_single_equation(p_subbed, None)
-                                    print_result_pretty(res, output_format=output_format)
+                                    # Buffer result
+                                    # print_result_pretty(res, output_format=output_format)
+                                    from ..utils.formatting import format_solution
+                                    if res.get("ok"):
+                                        val_str = format_solution(str(res.get("result", "")))
+                                        # DEBUG BUFFER removed
+                                        # print(f"DEBUG: Buffering {p} = {val_str}")
+                                        results_buffer.append(f"{p} = {val_str}")
+                                    else:
+                                        print_result_pretty(res, output_format=output_format) # Panic print error
+
+                            if results_buffer:
+                                print(", ".join(results_buffer))
 
                             if ctx.timing_enabled:
                                 print(
@@ -2138,9 +2325,18 @@ def repl_loop(output_format: str = "human") -> None:
                             except ImportError:
                                 pass
                     else:
+                        print(f"DEBUG: Reached last resort with expr='{expr}'")
                         res = solve_single_equation(expr, None)
                         elapsed = time.perf_counter() - start_time
-                        print_result_pretty(res, output_format=output_format)
+                        
+                        # Check if result is empty or None before printing
+                        if res and res.get('ok'):
+                             # If we have a valid result, format and buffer it if we are in a chain-like context?
+                             # Actually, this is the single equation fallback. We should just print.
+                             print_result_pretty(res, output_format=output_format)
+                        else:
+                             print_result_pretty(res, output_format=output_format)
+
                         if ctx.timing_enabled:
                             print(f"[Time: {elapsed:.4f}s]")
                         # Show cache hits if enabled
@@ -2655,8 +2851,8 @@ def repl_loop(output_format: str = "human") -> None:
                                 )
                                 if args_match_check:
                                     args_str_check = args_match_check.group(1).strip()
-                                    # Check if any argument contains a digit or numeric operator
-                                    if re.search(r"[-+]?\d", args_str_check):
+                                    # Check if any argument contains a digit or numeric operator OR symbolic constant (pi, e)
+                                    if re.search(r"[-+]?\d|pi|e", args_str_check, re.IGNORECASE):
                                         is_func_finding = True
 
                             if is_func_finding:
@@ -2685,8 +2881,9 @@ def repl_loop(output_format: str = "human") -> None:
                                     else:
                                         param_names.append(f"x{i+1}")
 
-                                # Process first function finding
-                                raw_with_find = f"{first_part}, find {func_name}({', '.join(param_names)})"
+                                # Process function finding (include all parts)
+                                all_parts_str = ", ".join(function_finding_parts)
+                                raw_with_find = f"{all_parts_str}, find {func_name}({', '.join(param_names)})"
                                 find_func_cmd = parse_find_function_command(
                                     raw_with_find
                                 )
@@ -2793,8 +2990,13 @@ def repl_loop(output_format: str = "human") -> None:
                     # Track solve requests separately (where arguments are parameter names)
                     solve_requests = []
 
+                    with open("debug_log_app.txt", "a") as dbg:
+                        dbg.write(f"DEBUG REPL 3: func_name={func_name}, data_str={data_str}\n")
+
                     for part in parts:
                         part = part.strip()
+                        with open("debug_log_app.txt", "a") as dbg:
+                                dbg.write(f"DEBUG REPL 3: Processing part '{part}'\n")
                         if not part:
                             continue
                         # Pattern: func_name(arg1,arg2,...) = value
@@ -2889,13 +3091,18 @@ def repl_loop(output_format: str = "human") -> None:
                                     arg_strings_preserved.append(arg_str_preserved)
 
                                     # Try parsing as SymPy expression first (handles pi, e, etc.)
-                                    arg_expr = _parse_preprocessed(arg_stripped)
+                                    # Try parsing as SymPy expression first (handles pi, e, etc.)
+                                    arg_expr = kparser.parse_preprocessed(arg_stripped)
+                                    # Ensure constants are treated as such
+                                    arg_expr = arg_expr.subs({sp.Symbol('pi'): sp.pi, sp.Symbol('e'): sp.E})
                                     # Convert to numeric if possible, otherwise keep as symbolic
                                     try:
                                         arg_val = float(sp.N(arg_expr))
                                     except (ValueError, TypeError):
                                         # Keep as symbolic expression
                                         arg_val = arg_expr
+                                    with open("debug_log_app.txt", "a") as dbg:
+                                        dbg.write(f"DEBUG REPL 3: Parsed {arg_stripped} -> {arg_val} (type {type(arg_val)})\n")
                                     args.append(arg_val)
                                 except Exception as e:
                                     print(
@@ -2909,7 +3116,7 @@ def repl_loop(output_format: str = "human") -> None:
                                         # Use preserved string
                                         value = value_str_preserved
                                     else:
-                                        value_expr = _parse_preprocessed(value_str)
+                                        value_expr = kparser.parse_preprocessed(value_str)
                                         # Convert to numeric if possible, otherwise keep as symbolic
                                         try:
                                             value = float(sp.N(value_expr))
@@ -5698,39 +5905,38 @@ def print_help_text() -> None:
 
     help_text = f"""kalkulator-ai v{VERSION}
 
-COMMANDS:
-  help, ?              Show this command list
-  quit, exit           Exit the calculator
-  health               Run health check
+COMMANDS
+  help      Show commands
+  quit      Exit
+  health    System check
 
-CACHE:
-  clearcache           Clear expression cache
-  showcache [all]      Show cached expressions
-  savecache [file]     Save cache to file
-  loadcache [file]     Load cache from file
+MATH
+  diff(y,x)      Differentiate
+  integrate(y,x) Integrate
+  factor(y)      Factor
+  expand(y)      Expand
+  solve <eq>     Solve equation
+  plot <expr>    Plot function
 
-SETTINGS:
-  debug [on|off]       Toggle debug mode (timing, cachehits, logging)
-  timing [on|off]      Toggle calculation timing
-  cachehits [on|off]   Toggle cache hit display
+DISCOVERY
+  f(1)=1... find f(x)    Find function from data
+  find ode               Find ODE (SINDy)
+  evolve                 Genetic evolution
+  benchmark              Run benchmarks
 
-MATH:
-  diff(expr, x)        Differentiate expression
-  integrate(expr, x)   Integrate expression
-  factor(expr)         Factor expression
-  expand(expr)         Expand expression
-  plot expr [opts]     Plot function
+DATA
+  clearcache     Clear cache
+  showcache      List cache
+  savecache      Save cache
+  loadcache      Load cache
+  export         Export to file
 
-FUNCTION FINDING:
-  f(1)=1, f(2)=4, find f(x)     Discover function from data
-  evolve f(x) from x=[...], y=[...]   Genetic programming
-  find ode from t=[...], x=[...]      ODE discovery (SINDy)
-  benchmark N                          Run Feynman benchmarks
+SETTINGS
+  debug [on|off]    Debug mode
+  timing [on|off]   Timing stats
+  cachehits [on|off] Show hits
 
-EXPORT:
-  export <func> to <file.py>   Export function to Python
-
-For full documentation: https://github.com/sizzlins/kalkulator-ai
+Full Docs: https://github.com/sizzlins/kalkulator-ai
 """
     print(help_text)
 
@@ -6131,13 +6337,17 @@ def main_entry(argv: list[str] | None = None) -> int:
                                     pass
 
                                 arg_strings_preserved.append(arg_str_preserved)
-                                arg_expr = _parse_preprocessed(arg_stripped)
+                                arg_expr = kparser.parse_preprocessed(arg_stripped)
+                                # Ensure constants are treated as such
+                                arg_expr = arg_expr.subs({sp.Symbol('pi'): sp.pi, sp.Symbol('e'): sp.E})
                                 try:
                                     arg_val = float(sp.N(arg_expr))
                                 except (ValueError, TypeError):
                                     arg_val = arg_expr
                                 args.append(arg_val)
-                            except Exception:
+                                print(f"DEBUG: Successfully parsed {arg_stripped} -> {arg_val}", flush=True)
+                            except Exception as e:
+                                print(f"DEBUG: Failed to parse arg {arg_stripped}: {e}", flush=True)
                                 break
 
                         if len(args) == len(param_names):
@@ -6145,7 +6355,7 @@ def main_entry(argv: list[str] | None = None) -> int:
                                 if value_str_preserved:
                                     value = value_str_preserved
                                 else:
-                                    value_expr = _parse_preprocessed(value_str)
+                                    value_expr = kparser.parse_preprocessed(value_str)
                                     try:
                                         value = float(sp.N(value_expr))
                                     except (ValueError, TypeError):
