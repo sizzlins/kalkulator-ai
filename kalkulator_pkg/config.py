@@ -17,6 +17,7 @@ import os
 import re
 
 import sympy as sp
+from .utils.custom_functions import log2, log10
 from sympy.parsing.sympy_parser import (
     convert_xor,
     implicit_multiplication_application,
@@ -171,6 +172,9 @@ ALLOWED_SYMPY_NAMES = {
     "atan": sp.atan,
     "log": sp.log,
     "ln": sp.log,
+    # Use custom classes to ensure proper parsing behavior (lambdas can cause TypeErrors with implicit multiplication)
+    "log2": log2,
+    "log10": log10,
     "exp": sp.exp,
     "Abs": sp.Abs,
     "abs": sp.Abs,  # lowercase alias for convenience
@@ -194,6 +198,33 @@ ALLOWED_SYMPY_NAMES = {
     "det": sp.det,
     # Special functions
     "LambertW": sp.LambertW,
+    "min": sp.Min,
+    "max": sp.Max,
+    # Factorial and combinatorics
+    "factorial": sp.factorial,
+    "binomial": sp.binomial,
+    # Rounding functions
+    "floor": sp.floor,
+    "ceiling": sp.ceiling,
+    "ceil": sp.ceiling,  # alias
+    # Number theory
+    "gcd": sp.gcd,
+    "lcm": sp.lcm,
+    # Sign and gamma
+    "sign": sp.sign,
+    "gamma": sp.gamma,
+    # Missing trig functions
+    "sec": sp.sec,
+    "csc": sp.csc,
+    # Inverse hyperbolic functions
+    "asinh": sp.asinh,
+    "acosh": sp.acosh,
+    "atanh": sp.atanh,
+    # Two-argument arctangent
+    "atan2": sp.atan2,
+    # Roots
+    "root": sp.root,
+    "cbrt": sp.cbrt,
 }
 
 TRANSFORMATIONS = standard_transformations + (
@@ -205,5 +236,5 @@ VAR_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 PERCENT_REGEX = re.compile(r"(\d+(?:\.\d+)?)%")
 SQRT_UNICODE_REGEX = re.compile(r"√\s*\(")
-DIGIT_LETTERS_REGEX = re.compile(r"(\d)\s*([A-Za-z(])")
+DIGIT_LETTERS_REGEX = re.compile(r"(?<![a-zA-Z_])(\d)\s*([A-Za-z(])")
 AMBIG_FRACTION_REGEX = re.compile(r"\(([^()]+?)/([^()]+?)\)")
