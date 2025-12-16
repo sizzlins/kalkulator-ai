@@ -509,7 +509,15 @@ def _handle_evolve(text, variables=None):
                         
                         # Basic float parsing
                         p_args = [float(a.strip()) for a in p_args_str.split(",")]
-                        p_val = float(p_val_str)
+                        
+                        # Handle infinity values (zoo, oo, inf) for pole detection
+                        p_val_lower = p_val_str.lower()
+                        if p_val_lower in ('zoo', 'oo', 'inf', 'infinity', 'complexinfinity'):
+                            p_val = float('inf')
+                        elif p_val_lower in ('nan',):
+                            p_val = float('nan')
+                        else:
+                            p_val = float(p_val_str)
                         
                         # DATA ARITY AUTO-CORRECTION (Genius Mode)
                         current_arity = len(input_var_names)
