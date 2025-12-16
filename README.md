@@ -105,6 +105,15 @@ Warning: 4 data point(s) with complex/imaginary values were skipped.
 
 **Workaround:** Use only real-valued data points for regression.
 
+### Numerical Limits
+
+High-power polynomials (`x^10`, `x^11`, etc.) may hit numerical precision limits:
+
+- `find` works for `x^10` but may struggle with `x^11` and above (values exceed 10^11)
+- `evolve` finds approximate exponents (e.g., `x^10.16` instead of `x^10`)
+
+**Workaround:** Use `find` for high-power polynomials with moderate data ranges.
+
 ## Architecture
 
 - **Core**: `kalkulator_pkg`
