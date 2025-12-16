@@ -185,28 +185,39 @@ class GeneticSymbolicRegressor:
         """
         population = []
         
-        # Strategy 1: Inject seeds
+        # Strategy 1: Inject seeds with multiple copies for survival
+        # Single seeds get overwhelmed by random population - inject ~10% as seed copies
         injected_count = 0
+        seed_copies_target = max(10, n_individuals // 10)  # At least 10, or 10% of population
+        
         if self.config.seeds:
             for seed_str in self.config.seeds:
                 try:
                     import sympy as sp
-                    # Use standard sympify but maybe check for safety?
-                    # Since it's user input from CLI, standard sympify is "safe enough" for local
-                    # We assume variables are valid symbols
-                    # We might need to define local_dict for symbols
                     local_dict = {v: sp.Symbol(v) for v in variables}
                     expr = sp.sympify(seed_str, locals=local_dict)
                     tree = ExpressionTree.from_sympy(expr, variables)
                     tree.age = 0
+                    
+                    # Add original seed
                     population.append(tree)
                     injected_count += 1
+                    
+                    # Add mutated copies to fill ~10% of population
+                    copies_to_add = min(seed_copies_target - 1, n_individuals - len(population))
+                    for _ in range(copies_to_add):
+                        # Make a copy with slight mutation for diversity
+                        copy = tree.copy()
+                        copy.age = 0
+                        population.append(copy)
+                        injected_count += 1
+                        
                 except Exception as e:
                     if self.config.verbose:
                         print(f"Warning: Failed to seed '{seed_str[:50]}...': {e}")
             
             if self.config.verbose and injected_count > 0:
-                print(f"Injected {injected_count} seed expression(s) into population")
+                print(f"Injected {injected_count} seed expressions (including copies) into population")
 
         # Ramped half-and-half: vary depth and method
         depths = range(2, self.config.max_depth + 1)
