@@ -119,7 +119,15 @@ class GeneticSymbolicRegressor:
             Fitness value (lower is better)
         """
         try:
-            predictions = tree.evaluate(X)
+            # Timeout wrapper to prevent SymPy evaluation hangs on complex expressions
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(tree.evaluate, X)
+                try:
+                    predictions = future.result(timeout=2.0)  # 2 second max per evaluation
+                except concurrent.futures.TimeoutError:
+                    return float("inf")
+            
             # Use Huber loss for robustness against outliers
             # This prevents a single outlier from dominating the fitness
             loss = huber_loss(y, predictions, delta=1.35)
@@ -283,12 +291,12 @@ class GeneticSymbolicRegressor:
                 offspring.age = 0
                 new_population.append(offspring)
 
-        # Occasionally optimize constants
-        if random.random() < self.config.constant_optimization_rate:
-            for i in range(min(5, len(new_population))):
+        # Occasionally optimize constants (reduced rate to prevent timeout issues)
+        if random.random() < 0.02:  # Reduced from 0.1 to prevent long runs
+            for i in range(min(2, len(new_population))):  # Reduced from 5
                 idx = random.randrange(len(new_population))
                 new_population[idx] = constant_optimization(
-                    new_population[idx], X, y, learning_rate=0.1, iterations=5
+                    new_population[idx], X, y, learning_rate=0.1, iterations=2  # Reduced from 5
                 )
 
         return new_population
