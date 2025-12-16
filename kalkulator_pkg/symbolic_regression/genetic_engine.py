@@ -1,26 +1,12 @@
-"""Genetic Programming Symbolic Regression Engine.
-
-This is the main evolutionary algorithm for discovering mathematical expressions
-from data. It evolves a population of expression trees, selecting for both
-accuracy (low MSE) and simplicity (low complexity).
-
-Key Features:
-- Multi-population island model for diversity
-- Pareto optimization for accuracy vs complexity trade-off
-- Age-based population management to prevent premature convergence
-- Automatic constant optimization
-"""
-
-from __future__ import annotations
-
+"""Genetic Programming Symbolic Regression Engine."""
 import random
 import time
 from dataclasses import dataclass, field
 
 import numpy as np
 import sympy as sp
+from sklearn.base import BaseEstimator, RegressorMixin
 
-from ..noise_handling.robust_regression import huber_loss
 from .expression_tree import BINARY_OPERATORS, UNARY_OPERATORS, ExpressionTree
 from .operators import (
     constant_optimization,
@@ -29,29 +15,24 @@ from .operators import (
     point_mutation,
     shrink_mutation,
     subtree_mutation,
-    tournament_selection,
 )
 from .pareto_front import ParetoFront, ParetoSolution
 
 
+def huber_loss(y_true, y_pred, delta=1.0):
+    """Calculate Huber loss."""
+    error = y_true - y_pred
+    # Clip error to prevent overflow in square
+    error = np.clip(error, -1e100, 1e100)
+    is_small_error = np.abs(error) <= delta
+    squared_loss = 0.5 * error**2
+    linear_loss = delta * (np.abs(error) - 0.5 * delta)
+    return np.where(is_small_error, squared_loss, linear_loss).mean()
+
+
 @dataclass
 class GeneticConfig:
-    """Configuration for the genetic symbolic regression algorithm.
-
-    Attributes:
-        population_size: Number of individuals per island
-        n_islands: Number of parallel populations
-        generations: Maximum generations to evolve
-        tournament_size: Size of selection tournaments
-        crossover_rate: Probability of crossover vs mutation
-        mutation_rate: Probability per node for point mutation
-        parsimony_coefficient: Penalty per complexity unit
-        max_depth: Maximum allowed tree depth
-        operators: List of allowed operators
-        timeout: Maximum seconds to run (None for no limit)
-        early_stop_mse: Stop if MSE drops below this threshold
-        verbose: Print progress information
-    """
+    """Configuration for Genetic Symbolic Regression."""
 
     population_size: int = 500
     n_islands: int = 4
@@ -67,6 +48,7 @@ class GeneticConfig:
             "sub",
             "mul",
             "div",
+            "pow",  # Enable a^x patterns like 2^x
             "sin",
             "cos",
             "exp",
@@ -75,9 +57,12 @@ class GeneticConfig:
             "sqrt",
             "neg",
             "abs",
+            "max",
+            "min",
         ]
     )
     timeout: float | None = 60.0
+    seeds: list[str] = field(default_factory=list)  # Strategy 1: Seeding
     early_stop_mse: float = 1e-10
     verbose: bool = True
 
@@ -86,6 +71,7 @@ class GeneticConfig:
     migration_rate: float = 0.1  # Rate of migration between islands
     migration_interval: int = 10  # Generations between migrations
     elitism: int = 5  # Number of best individuals to preserve
+    boosting_rounds: int = 1  # Strategy 7: Symbolic Gradient Boosting (1 = off/normal)
 
 
 class GeneticSymbolicRegressor:
@@ -161,7 +147,17 @@ class GeneticSymbolicRegressor:
         """
         try:
             predictions = tree.evaluate(X)
-            return float(np.mean((predictions - y) ** 2))
+            # Clip predictions to avoid overflow in square
+            # Use float64 max sqrt approx 1e150, but let's be safer 1e100
+            np.clip(predictions, -1e100, 1e100, out=predictions)
+            
+            diff = predictions - y
+            # Further protection against squaring large diffs
+            np.clip(diff, -1e100, 1e100, out=diff)
+            
+            return float(np.mean(diff ** 2))
+        except (OverflowError, ValueError, RuntimeWarning):
+            return float("inf")
         except Exception:
             return float("inf")
 
@@ -180,12 +176,32 @@ class GeneticSymbolicRegressor:
             List of random ExpressionTrees
         """
         population = []
+        
+        # Strategy 1: Inject seeds
+        if self.config.seeds:
+            for seed_str in self.config.seeds:
+                try:
+                    import sympy as sp
+                    # Use standard sympify but maybe check for safety?
+                    # Since it's user input from CLI, standard sympify is "safe enough" for local
+                    # We assume variables are valid symbols
+                    # We might need to define local_dict for symbols
+                    local_dict = {v: sp.Symbol(v) for v in variables}
+                    expr = sp.sympify(seed_str, locals=local_dict)
+                    tree = ExpressionTree.from_sympy(expr, variables)
+                    tree.age = 0
+                    population.append(tree)
+                except Exception as e:
+                    if self.config.verbose:
+                        print(f"Warning: Failed to seed '{seed_str}': {e}")
 
         # Ramped half-and-half: vary depth and method
         depths = range(2, self.config.max_depth + 1)
         methods = ["grow", "full"]
 
-        for i in range(n_individuals):
+        # Fill remaining slots
+        while len(population) < n_individuals:
+            i = len(population)
             depth = depths[i % len(depths)]
             method = methods[i % len(methods)]
 
@@ -207,7 +223,7 @@ class GeneticSymbolicRegressor:
         y: np.ndarray,
         generation: int,
     ) -> list[ExpressionTree]:
-        """Evolve population for one generation.
+        """Evolve one generation.
 
         Args:
             population: Current population
@@ -220,49 +236,44 @@ class GeneticSymbolicRegressor:
         """
         # Evaluate fitness
         for tree in population:
-            if tree.fitness == float("inf"):
+            if tree.fitness is None or tree.age == 0:
                 tree.fitness = self._calculate_fitness(tree, X, y)
+            tree.age += 1
 
-        # Sort by fitness
+        # Sort by fitness (elitism)
         population.sort(key=lambda t: t.fitness)
 
-        # New population
         new_population = []
 
-        # Elitism: keep best individuals
-        elite = population[: self.config.elitism]
-        for tree in elite:
-            new_tree = tree.copy()
-            new_tree.age = tree.age + 1
-            new_population.append(new_tree)
+        # Elitism
+        new_population.extend(
+            [t.copy() for t in population[: self.config.elitism]]
+        )
 
-        # Fill rest with offspring
-        while len(new_population) < len(population):
+        # Selection and breeding
+        while len(new_population) < self.config.population_size:
+            # Tournament selection
+            parent1 = self._tournament_select(population)
+
             if random.random() < self.config.crossover_rate:
-                # Crossover
-                parent1 = tournament_selection(population, self.config.tournament_size)
-                parent2 = tournament_selection(population, self.config.tournament_size)
-                offspring1, offspring2 = crossover(
-                    parent1, parent2, self.config.max_depth
-                )
+                parent2 = self._tournament_select(population)
+                offspring1, offspring2 = crossover(parent1, parent2)
                 offspring1.age = 0
-                offspring2.age = 0
                 new_population.append(offspring1)
-                if len(new_population) < len(population):
+                
+                if len(new_population) < self.config.population_size:
+                    offspring2.age = 0
                     new_population.append(offspring2)
             else:
-                # Mutation
-                parent = tournament_selection(population, self.config.tournament_size)
-
-                # Choose mutation type
+                # Mutation (try different types)
                 r = random.random()
-                if r < 0.4:
+                parent = parent1.copy()
+
+                if r < 0.7:
                     offspring = point_mutation(
-                        parent, self.config.mutation_rate, self.config.operators
-                    )
-                elif r < 0.7:
-                    offspring = subtree_mutation(
-                        parent, max_depth=3, operators=self.config.operators
+                        parent,
+                        self.config.mutation_rate,
+                        self.config.operators,
                     )
                 elif r < 0.85:
                     offspring = hoist_mutation(parent)
@@ -281,6 +292,11 @@ class GeneticSymbolicRegressor:
                 )
 
         return new_population
+
+    def _tournament_select(self, population: list[ExpressionTree]) -> ExpressionTree:
+        """Select best individual from random tournament."""
+        tournament = random.sample(population, self.config.tournament_size)
+        return min(tournament, key=lambda t: t.fitness)
 
     def _migrate(self, islands: list[list[ExpressionTree]]):
         """Perform migration between islands.
@@ -357,120 +373,158 @@ class GeneticSymbolicRegressor:
     def fit(
         self, X: np.ndarray, y: np.ndarray, variable_names: list[str] | None = None
     ) -> ParetoFront:
-        """Fit the symbolic regressor to data.
+        """Fit the symbolic regressor to data (supports Boosting).
 
         Args:
-            X: Input data of shape (n_samples,) or (n_samples, n_features)
+            X: Input data of shape (n_samples, n_features)
             y: Target values of shape (n_samples,)
-            variable_names: Names for input variables (default: x, y, z, ...)
+            variable_names: Names of input variables (default: ['x0', 'x1', ...])
 
         Returns:
-            ParetoFront containing Pareto-optimal solutions
+            Pareto front of solutions
         """
-        # Prepare data
-        X = np.asarray(X)
-        y = np.asarray(y).ravel()
-
-        if X.ndim == 1:
-            X = X.reshape(-1, 1)
-
-        n_samples, n_features = X.shape
-
-        # Default variable names
         if variable_names is None:
-            if n_features == 1:
-                variable_names = ["x"]
-            else:
-                variable_names = [
-                    chr(ord("x") + i) if i < 3 else f"x{i}" for i in range(n_features)
-                ]
+            variable_names = [f"x{i}" for i in range(X.shape[1])]
 
-        # Initialize islands
-        islands = []
-        for _ in range(self.config.n_islands):
-            island = self._initialize_population(
-                variable_names, self.config.population_size
-            )
-            islands.append(island)
+        # Ensure correct shape
+        if len(y.shape) == 1:
+            y = y.flatten()
 
-        # Evolution loop
-        start_time = time.time()
-        self.generation = 0
+        # Strategy 7: Symbolic Gradient Boosting Loop
+        current_model_tree = None
+        y_residual = y.copy()
+        
+        rounds = self.config.boosting_rounds
+        if rounds < 1: rounds = 1
+        
+        final_front = ParetoFront()
 
-        if self.config.verbose:
-            print(
-                f"Starting evolution with {self.config.n_islands} islands, "
-                f"{self.config.population_size} individuals each..."
-            )
+        # Data split strategy (skip if too few samples)
+        if len(y) < 5:
+            # Not enough data for split/validation, use all for training
+            X_train, y_train = X, y
+            X_val, y_val = X, y
+        else:
+            try:
+                from sklearn.model_selection import train_test_split
+                X_train, X_val, y_train, y_val = train_test_split(
+                    X, y, test_size=0.2, random_state=42
+                )
+            except ImportError:
+                X_train, y_train = X, y
+                X_val, y_val = X, y
 
-        for gen in range(self.config.generations):
-            self.generation = gen
+        for round_idx in range(rounds):
+            if self.config.verbose and rounds > 1:
+                print(f"--- Boosting Round {round_idx + 1}/{rounds} ---")
 
-            # Check timeout
-            if self.config.timeout and (time.time() - start_time) > self.config.timeout:
-                if self.config.verbose:
-                    print(f"Timeout after {gen} generations")
-                break
+            # Reset state for this round
+            self.pareto_front = ParetoFront()
+            self.best_tree = None
+            self.generation = 0
+            self.history = []
+            
+            # Initialize islands
+            islands = []
+            for _ in range(self.config.n_islands):
+                island = self._initialize_population(
+                    variable_names, self.config.population_size
+                )
+                islands.append(island)
 
-            # Evolve each island
-            for i, island in enumerate(islands):
-                islands[i] = self._evolve_population(island, X, y, gen)
-
-            # Migration
-            if gen > 0 and gen % self.config.migration_interval == 0:
-                self._migrate(islands)
-
-            # Update Pareto front
-            for island in islands:
-                self._update_pareto_front(island, X, y)
-
-            # Track best
-            all_trees = [t for island in islands for t in island]
-            best_current = min(all_trees, key=lambda t: t.fitness)
-            best_mse = self._calculate_mse(best_current, X, y)
-
-            # Store history
-            self.history.append(
-                {
-                    "generation": gen,
-                    "best_mse": best_mse,
-                    "best_complexity": best_current.complexity(),
-                    "pareto_size": len(self.pareto_front),
-                }
-            )
-
-            if self.config.verbose and gen % 10 == 0:
+            # Evolution loop
+            start_time = time.time()
+            if self.config.verbose:
                 print(
-                    f"Gen {gen:3d}: Best MSE = {best_mse:.6e}, "
-                    f"Complexity = {best_current.complexity()}, "
-                    f"Pareto size = {len(self.pareto_front)}"
+                    f"Starting evolution with {self.config.n_islands} islands, "
+                    f"{self.config.population_size} individuals each..."
                 )
 
-            # Early stopping
-            if best_mse < self.config.early_stop_mse:
-                if self.config.verbose:
-                    print(f"Early stop at generation {gen}: MSE = {best_mse:.2e}")
+            for gen in range(self.config.generations):
+                self.generation = gen
+
+                # Check timeout
+                if self.config.timeout and (time.time() - start_time) > self.config.timeout:
+                    if self.config.verbose:
+                        print(f"Timeout after {gen} generations")
+                    break
+
+                # Evolve each island
+                for i, island in enumerate(islands):
+                    islands[i] = self._evolve_population(island, X, y_residual, gen) # Train on Residual
+
+                # Migration
+                if gen > 0 and gen % self.config.migration_interval == 0:
+                    self._migrate(islands)
+
+                # Update Pareto front
+                for island in islands:
+                    self._update_pareto_front(island, X, y_residual)
+                    
+                # Early stop check (on Residual)
+                best_res = self.pareto_front.get_best()
+                if best_res and best_res.mse < self.config.early_stop_mse:
+                     if self.config.verbose: print(f"Early stop: MSE {best_res.mse:.2e}")
+                     break
+
+            # End of Round
+            # 1. Get best model from this round
+            best_round = self.pareto_front.get_best()
+            if not best_round:
+                if self.config.verbose: print("Warning: No solution found in this round.")
+                break
+                
+            # 2. Merge into composite model
+            if current_model_tree is None:
+                current_model_tree = best_round.tree
+            else:
+                # Merge: F_new = F_old + f_round
+                from .expression_tree import ExpressionNode, NodeType
+                
+                # Create 'add' node
+                root = ExpressionNode(NodeType.BINARY_OP, "add", [current_model_tree.root.copy_subtree(), best_round.tree.root.copy_subtree()])
+                root.children[0].parent = root
+                root.children[1].parent = root
+                
+                # Careful: variable names from original context
+                current_model_tree = ExpressionTree(root, variable_names)
+                
+            # 3. Update residual
+            # y_residual = y_original - current_model_pred
+            preds = current_model_tree.evaluate(X)
+            y_residual = y - preds
+            
+            final_mse = np.mean(y_residual**2)
+            if final_mse < self.config.early_stop_mse:
+                if self.config.verbose: print(f"Boosting converged. Final MSE: {final_mse:.6e}")
                 break
 
-        # Final update
-        for island in islands:
-            self._update_pareto_front(island, X, y)
-
-        # Store best tree
-        best_solution = self.pareto_front.get_best()
-        if best_solution:
-            self.best_tree = best_solution.tree
-
-        if self.config.verbose:
-            elapsed = time.time() - start_time
-            print(f"\nEvolution complete in {elapsed:.1f}s")
-            print(f"Pareto front contains {len(self.pareto_front)} solutions")
-            if best_solution:
-                print(f"Best: {best_solution.expression}")
-                print(f"  MSE: {best_solution.mse:.6e}")
-                print(f"  Complexity: {best_solution.complexity}")
-
-        return self.pareto_front
+        # Return final result
+        if rounds > 1:
+             final_front = ParetoFront()
+             if current_model_tree:
+                 current_model_tree.fitness = self._calculate_fitness(current_model_tree, X, y)
+                 # Create proper solution object
+                 try:
+                     expr_str = current_model_tree.to_pretty_string()
+                     try:
+                        sympy_expr = current_model_tree.to_sympy()
+                     except:
+                        sympy_expr = sp.sympify(0)
+                        
+                     sol = ParetoSolution(
+                        expression=expr_str,
+                        sympy_expr=sympy_expr,
+                        mse=current_model_tree.fitness, # APPROX
+                        complexity=current_model_tree.complexity(),
+                        tree=current_model_tree
+                     )
+                     final_front.add(sol)
+                 except:
+                     pass
+             return final_front
+        else:
+             return self.pareto_front
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         """Predict using the best evolved model.
