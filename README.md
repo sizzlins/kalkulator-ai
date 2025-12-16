@@ -67,6 +67,44 @@ Discovered: f(x) = exp(LambertW(log(x)))
 g(x) = exp(-x^2)
 ```
 
+## Limitations
+
+### Function Types
+
+Function finding discovers **continuous mathematical relationships**. The following are **not auto-discoverable**:
+
+| Type                   | Examples                        | Reason                       |
+| ---------------------- | ------------------------------- | ---------------------------- |
+| Discrete/Combinatorial | `factorial(x)`, `binomial(n,k)` | Integer-only, not in physics |
+| Piecewise              | `abs(x)`, step functions        | Discontinuous                |
+| Recursive              | Fibonacci, Ackermann            | No closed-form               |
+
+**Workaround:** Define manually: `f(x)=x!`
+
+### When to Use `find` vs `evolve`
+
+| Use Case                   | Recommended | Why                              |
+| -------------------------- | ----------- | -------------------------------- |
+| Clean data, known patterns | `find`      | Exact regression is reliable     |
+| Exponential (`2^x`, `e^x`) | `find`      | Has explicit `exp(a*x)` template |
+| Noisy/complex data         | `evolve`    | Exploratory, tolerates noise     |
+| Novel function forms       | `evolve`    | Searches without assumptions     |
+
+**Example:** For `2^x` data, `find` discovers `exp(0.693*x)` reliably. Evolution is probabilistic and may not converge to optimal form.
+
+### Data Types
+
+Regression (`find`, `evolve`) requires **real-valued** inputs and outputs. Complex data is automatically filtered with a warning:
+
+```
+>>> f(-4),f(-3),...  # Some values are complex: -5.5 - 12.5i
+>>> f(-4)=..., find f(x)
+Warning: 4 data point(s) with complex/imaginary values were skipped.
+         Regression requires real-valued inputs and outputs.
+```
+
+**Workaround:** Use only real-valued data points for regression.
+
 ## Architecture
 
 - **Core**: `kalkulator_pkg`
