@@ -644,14 +644,23 @@ def _handle_evolve(text, variables=None):
 
         print(f"Evolving {func_name}({', '.join(input_vars)}) from {len(y)} data points...")
 
+        # Apply boost multiplier to evolution parameters
+        # --boost N gives N times more compute resources for complex functions
+        base_population = 100
+        base_generations = 30
+        base_timeout = 15
+        
+        if boosting_rounds > 1:
+            print(f"Boost mode: {boosting_rounds}x resources (pop={base_population*boosting_rounds}, gen={base_generations*boosting_rounds}, timeout={base_timeout*boosting_rounds}s)")
+        
         config = GeneticConfig(
-            population_size=100,  # Reduced from 200 for faster response
+            population_size=base_population * boosting_rounds,
             n_islands=2,
-            generations=30,  # Reduced from 50 for quicker feedback
-            timeout=15,  # Reduced from 30 for better UX
+            generations=base_generations * boosting_rounds,
+            timeout=base_timeout * boosting_rounds,
             verbose=True,
             seeds=seeds,
-            boosting_rounds=boosting_rounds,
+            boosting_rounds=1,  # Already applied via parameter scaling
         )
         regressor = GeneticSymbolicRegressor(config)
         pareto = regressor.fit(X, y, input_vars)
