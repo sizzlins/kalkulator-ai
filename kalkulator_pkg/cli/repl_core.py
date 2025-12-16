@@ -1,11 +1,12 @@
-
 import sys
 import logging
 import re
 import argparse
-import time
+import sys
+import re
+import time # Added for timing
 import json
-from typing import Any, Optional
+from typing import Any, Optional, Dict
 
 
 
@@ -97,8 +98,37 @@ class REPL:
     def process_input(self, text: str):
         """Dispatch input to specific handlers."""
         text = text.strip()
-        if not text:
+        if not text or text.startswith("#"):
             return
+            return
+
+        # 0. Check for "evolve f(1)=1, f(2)=4" pattern (evolve at START, no 'from')
+        # Must run BEFORE command handler to intercept this special pattern
+        if text.lower().strip().startswith("evolve ") and "=" in text and "from" not in text.lower():
+            # Extract data portion after "evolve "
+            data_text = text[7:].strip()  # Remove "evolve " prefix
+            
+            # Parse to find function name from first data point
+            first_match = re.match(r"([a-zA-Z_]\w*)\s*\(([^)]+)\)", data_text)
+            if first_match:
+                func_name = first_match.group(1)
+                
+                # Count parameters from first data point
+                args_content = first_match.group(2)
+                param_count = len(args_content.split(","))
+                
+                # Generate parameter names
+                param_chars = "xyzuvwrst"
+                param_names = [param_chars[i] if i < len(param_chars) else f"x{i+1}" 
+                               for i in range(param_count)]
+                
+                # Construct standard evolve command
+                evolve_cmd = f"evolve {func_name}({','.join(param_names)}) from {data_text}"
+                print(f"Auto-detecting evolution for '{func_name}'...")
+                
+                from .repl_commands import _handle_evolve
+                _handle_evolve(evolve_cmd, self.variables)
+                return
 
         # 1. Check for Commands (quit, help, etc.) via Registry
         # We pass self.variables so commands can modify it (like clear)
@@ -108,9 +138,15 @@ class REPL:
         if handle_command(text, self.ctx, self.variables):
             return
             
-        # Legacy check for quit logic if not handled in handle_command (it wasn't)
-        if text.lower() in ("quit", "exit"):
+        # Legacy check for quit logic if not handled
+        raw_lower = text.lower()
+        if raw_lower in ("quit", "exit"):
             self.running = False
+            return
+            
+        if raw_lower == "health":
+            from .repl_commands import _handle_health_command
+            _handle_health_command()
             return
         if text.lower() in ("help", "?"):
             from .app import print_help_text
@@ -133,22 +169,36 @@ class REPL:
             if len(parts) > 1:
                 self._handle_multi_part_input(parts, text)
                 return
-                
+
         # 4. Fallback: Single Expression/Assignment/Definition handling
-        self._handle_single_part(text) # force_solve handled in handle_command or via solve_single_equation?
-        # Wait, if handle_command handles "solve", then _handle_single_part doesn't need force_solve logic?
-        # Correct. "solve x^2=4" is handled by handle_command now.
+        self._handle_single_part(text)
         return
+
+    def _try_handle_command_part(self, text: str) -> bool:
+        """Helper to try executing a command from a part."""
+        from .repl_commands import handle_command
+        # We need to strip validation logic that assumes full line
+        if handle_command(text, self.ctx, self.variables):
+            return True
+        return False
 
     def _try_handle_command(self, text: str) -> bool:
         """Deprecated: Logic moved to commands.py and process_input."""
         return False
 
-    def _substitute_variables(self, text: str) -> str:
-        """Substitute global variables into text."""
+    def _substitute_variables(self, text: str, exclude: set[str] | None = None) -> str:
+        """Substitute global variables into text.
+        
+        Args:
+            text: Text to substitute into
+            exclude: Optional set of variable names to skip (e.g. function parameters)
+        """
         # Sort variables by length descending to specific ambiguous prefix issues
         sorted_vars = sorted(self.variables.keys(), key=len, reverse=True)
         for var in sorted_vars:
+            if exclude and var in exclude:
+                continue
+                
             val = self.variables[var]
             if var in text:
                 pattern = r'\b' + re.escape(var) + r'\b'
@@ -161,21 +211,19 @@ class REPL:
         Rule 1: Simple Control Flow.
         """
         # Detection Logic:
-        # We want to chain if ALL parts are explicit Assignments OR Definitions.
+        # We want to chain if ALL parts are explicit Assignments OR Definitions OR Commands.
         # Otherwise, we treat it as a System of Equations (modulo, linear, etc.)
         
         is_sequential_list = True
+        has_command = False
+        
+        from .repl_commands import COMMAND_REGISTRY
         
         for p in parts:
             p = p.strip()
-            if "=" not in p:
-                # If no equals, it's likely an expression or bad input.
-                # If it's an expression like "x+y", we usually EVALUATE it if it's single.
-                # If it's "x=1, x+y", we might chain.
-                # But for now, let's assume chain requires assignments/defs?
-                # Actually, "x=1, x+5" is valid chain: x=1 then print 6.
-                pass 
-            else:
+            first_word = p.split()[0].lower() if p else ""
+            
+            if "=" in p:
                 lhs = p.split("=", 1)[0].strip()
                 # Check variable assignment
                 if VAR_NAME_RE.match(lhs):
@@ -184,13 +232,35 @@ class REPL:
                 if parse_function_definition(p):
                     continue
                 
+                # Check if it's a command like "evolve f(x)=y" (has = but is command)
+                if first_word in COMMAND_REGISTRY:
+                    has_command = True
+                    continue
+
                 # If neither, it is a complex equation (e.g. x+y=10)
                 is_sequential_list = False
                 break
+            else:
+                # No equals string
+                # Check for command
+                if first_word in COMMAND_REGISTRY:
+                    has_command = True
+                    continue
+                
+                # Expression? "x+y". Technically can be evaluated sequentially.
+                # But "x+y, a+b" usually means "print both".
+                # "x+y, x-y=2" -> System?
+                # If we have mixed commands/assignments, enforce sequence.
+                pass
         
+        # Force sequential if we detected a command (System solver can't handle commands)
+        if has_command:
+            is_sequential_list = True
+
         # Check for same-variable system (e.g. x=1 mod 2, x=2 mod 3)
+        # Only if NOT a command chain
         same_variable_system = False
-        if is_sequential_list:
+        if is_sequential_list and not has_command:
              # Gather assigned vars (only vars, not functions)
              assigned_vars = []
              for p in parts:
@@ -238,6 +308,34 @@ class REPL:
             
         if is_data_pattern and len(candidate_func_names) == 1:
             target_func = list(candidate_func_names)[0]
+            
+            # Check for trailing "evolve" keyword - triggers evolution instead of exact finding
+            raw_stripped = raw_text.strip().lower()
+            if raw_stripped.endswith("evolve"):
+                # Extract data portion (without trailing "evolve")
+                data_text = raw_text.rsplit("evolve", 1)[0].strip().rstrip(",").strip()
+                
+                # Infer parameter count from first data point
+                first_part = parts[0].strip()
+                args_match = re.search(rf"{re.escape(target_func)}\s*\(([^)]+)\)", first_part)
+                param_count = 1
+                if args_match:
+                    param_count = len(args_match.group(1).split(","))
+                
+                # Generate parameter names
+                param_chars = "xyzuvwrst"
+                param_names = [param_chars[i] if i < len(param_chars) else f"x{i+1}" 
+                               for i in range(param_count)]
+                
+                # Construct evolve command
+                evolve_cmd = f"evolve {target_func}({','.join(param_names)}) from {data_text}"
+                print(f"Auto-detecting evolution for '{target_func}'...")
+                
+                from .repl_commands import _handle_evolve
+                _handle_evolve(evolve_cmd, self.variables)
+                return
+            
+            # Original exact finding logic
             # Construct synthetic command
             # We assume 1D f(x) for simplicity in auto-detection, or let handle_find_command_raw infer
             # handle_find_command_raw expects "text" containing data and "find ...".
@@ -245,7 +343,8 @@ class REPL:
             # handle_find_command_raw parses commas itself.
             
             # We pass original text + find command
-            enhanced_text = raw_text + f", find {target_func}(x)"
+            # We pass original text + find command
+            enhanced_text = raw_text + f", find {target_func}"
             # Print helpful message
             print(f"Auto-detecting function finding for '{target_func}'...")
             
@@ -269,12 +368,18 @@ class REPL:
         for part in parts:
             part = part.strip()
             
+            # 0. Check for Command
+            if self._try_handle_command_part(part):
+                # We assume they handle their own output.
+                # print(f"DEBUG: Executing command part: '{part}'")
+                continue
+
             # Check for definition FIRST (before global substitution mangles params)
             func_def_candidate = parse_function_definition(part)
             if func_def_candidate:
                 name, params, body = func_def_candidate
-                # Substitute ONLY in body
-                body_subbed = self._substitute_variables(body)
+                # Substitute ONLY in body, excluding parameters (shadowing)
+                body_subbed = self._substitute_variables(body, exclude=set(params))
                 body_subbed = self._substitute_chain_context(body_subbed)
                 
                 try:
@@ -387,7 +492,8 @@ class REPL:
                  # Or do we? "f(t) = x*t" -> "f(t) = 10*t"? 
                  # Usually YES in simple REPLs (capture value).
                  # Simulating capture by substitution.
-                 body_subbed = self._substitute_variables(body)
+                 # Substitute with masking: exclude parameters from substitution
+                 body_subbed = self._substitute_variables(body, exclude=set(params))
                  try:
                      define_function(name, params, body_subbed)
                      print(f"Function '{name}' defined.")
@@ -439,16 +545,31 @@ class REPL:
         else:
              # Evaluate expression
              allowed = self._get_allowed_functions(text)
+             
+             t0 = time.perf_counter()
              res = evaluate_safely(text_subbed, allowed_functions=allowed)
+             dt = time.perf_counter() - t0
+             
              # Wrap in pretty print format, ensuring 'result' key matches formatting.py expectations
              if res.get("ok"):
-                 print_result_pretty({
+                # Debug print to check state
+                # print(f"DEBUG: timing_enabled={self.ctx.timing_enabled}", flush=True) 
+                if self.ctx.timing_enabled:
+                     # Inject timing validly even if worker didn't
+                     res["time_taken"] = dt
+                     print(f"Execution time: {dt:.6f}s", flush=True)
+                print_result_pretty({
                      "ok": True,
                      "type": "evaluation",
                      "result": res.get("result"), # KEY FIX
                      "exact": [res.get("result")],
                      "approx": [res.get("approx")]
-                 })
+                 }, expression=text)
              else:
-                 print_result_pretty(res)
+                  # Nice error for things like print("hello")
+                  err = res.get('error', '')
+                  if "syntax" in str(err).lower() or "invalid syntax" in str(err).lower():
+                      print(f"Error: Invalid syntax in '{text}'. (Only mathematical expressions are supported)")
+                  else:
+                      print(f"Error: {err}")
 
