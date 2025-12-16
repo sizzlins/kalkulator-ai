@@ -406,6 +406,12 @@ def _handle_evolve(text, variables=None):
             # Remove flag from text
             text = re.sub(r"--boost\s+\d+", "", text)
 
+        # Strategy 8: Hybrid (find → evolve)
+        # Parse "--hybrid" flag
+        use_hybrid = "--hybrid" in text.lower()
+        if use_hybrid:
+            text = re.sub(r"--hybrid", "", text, flags=re.IGNORECASE)
+
         # Parse: evolve f(x) from x=[...], y=[...]
         # or: evolve f(x,y) from x=[...], y=[...], z=[...]
         # Parse: evolve f(x) from x=[...], y=[...]
@@ -634,6 +640,31 @@ def _handle_evolve(text, variables=None):
                 print(f"Smart seeding: detected patterns, seeding with {auto_seeds}")
             else:
                 print(f"Smart seeding: detected {len(auto_seeds)} pattern-based seeds")
+
+        # --- HYBRID MODE: Use find() result as seed for evolve ---
+        if use_hybrid:
+            try:
+                from ..function_manager import find_function_from_data
+                
+                # Build data points for find()
+                find_data_points = []
+                for i in range(len(y)):
+                    x_vals = tuple(X[i]) if X.ndim > 1 else (X[i],)
+                    find_data_points.append((x_vals, y[i]))
+                
+                # Run find() to get approximation
+                print("Hybrid mode: running find() for initial approximation...")
+                find_result = find_function_from_data(
+                    func_name, input_vars, find_data_points, quiet=True
+                )
+                
+                # If find() succeeded, add its expression as a seed
+                if find_result and find_result.get('expression'):
+                    find_expr = find_result['expression']
+                    seeds.append(find_expr)
+                    print(f"Hybrid seeding: using find() result '{find_expr[:50]}...' as starting point")
+            except Exception as e:
+                print(f"Hybrid mode: find() failed ({e}), continuing with other seeds")
 
         # --- FILTER: Remove inf/nan from data AFTER pattern detection ---
         # Poles were used for seeding, but must be removed for fitness calculation
