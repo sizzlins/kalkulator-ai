@@ -684,18 +684,20 @@ def solve_regression_stage(
                 # --- SMART HINT: Pole + Oscillation → Trig Composite ---
                 # When we detect a pole AND the data oscillates, suggest sin(c/(x-a))
                 try:
-                    # Check for poles in the data (y_values contains nan/inf)
+                    # Check for poles in ORIGINAL (unfiltered) data
+                    # y_original and X_original contain nan/inf values that were filtered out
                     pole_x = None
-                    for i, yv in enumerate(y_values):
-                        if not np.isfinite(yv):
-                            # Get x value from data_points
-                            if i < len(data_points):
-                                point = data_points[i]
-                                x_inputs = point[0]
-                                pole_x = float(x_inputs[0]) if x_inputs else None
-                            break
+                    if y_original is not None and X_original is not None:
+                        for i, yv in enumerate(y_original):
+                            if not np.isfinite(yv):
+                                # Get x value from original X
+                                if X_original.ndim == 1:
+                                    pole_x = float(X_original[i])
+                                elif X_original.ndim == 2:
+                                    pole_x = float(X_original[i, 0])
+                                break
                     
-                    # Check for oscillation (sign changes in y values)
+                    # Check for oscillation (sign changes in filtered y values)
                     finite_vals = [v for v in y_values if np.isfinite(v)]
                     if len(finite_vals) > 3:
                         sign_changes = sum(1 for i in range(len(finite_vals)-1)
