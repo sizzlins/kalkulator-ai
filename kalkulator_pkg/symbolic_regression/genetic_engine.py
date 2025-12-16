@@ -206,8 +206,11 @@ class GeneticSymbolicRegressor:
                     # Add mutated copies to fill ~10% of population
                     copies_to_add = min(seed_copies_target - 1, n_individuals - len(population))
                     for _ in range(copies_to_add):
-                        # Make a copy with slight mutation for diversity
+                        # Make a copy with mutation for diversity
                         copy = tree.copy()
+                        # Apply point mutation to create variation
+                        from .mutations import point_mutation
+                        copy = point_mutation(copy, mutation_rate=0.3, operators=self.config.operators)
                         copy.age = 0
                         population.append(copy)
                         injected_count += 1
