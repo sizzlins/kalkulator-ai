@@ -828,18 +828,106 @@ def detect_saturation(x_col: np.ndarray, y_col: np.ndarray) -> dict:
         return {}
 
 
+def detect_poles_from_data(
+    X_data: np.ndarray, y_data: np.ndarray
+) -> list[tuple[float, int]]:
+    """Detect pole locations and orders from nan/inf values in y.
+
+    When y approaches infinity (or is nan), the corresponding x value is a pole.
+    We estimate the pole order n using log-log slope analysis.
+
+    Args:
+        X_data: Input data array (n_samples, n_vars)
+        y_data: Output data array (n_samples,)
+
+    Returns:
+        List of (pole_location, estimated_order) tuples
+    """
+    import numpy as np
+
+    if y_data is None or len(y_data) == 0:
+        return []
+
+    # Ensure X_data is 2D
+    if X_data.ndim == 1:
+        X_data = X_data.reshape(-1, 1)
+
+    poles = []
+
+    # Find nan/inf indices
+    invalid_mask = ~np.isfinite(y_data)
+    invalid_indices = np.where(invalid_mask)[0]
+
+    for idx in invalid_indices:
+        if X_data.shape[1] >= 1:
+            pole_x = X_data[idx, 0]
+
+            # Find points NEAR the pole (within some distance)
+            distances = np.abs(X_data[:, 0] - pole_x)
+            valid_mask = np.isfinite(y_data) & (distances > 1e-9)
+
+            # Get nearby valid points
+            nearby_mask = valid_mask & (distances < 2.0)  # Within distance 2
+            n_nearby = np.sum(nearby_mask)
+
+            if n_nearby >= 3:
+                # Estimate pole order using log-log slope
+                x_nearby = X_data[nearby_mask, 0]
+                y_nearby = y_data[nearby_mask]
+
+                # log|y| ≈ -n * log|x - pole| + const
+                log_dist = np.log(np.abs(x_nearby - pole_x) + 1e-15)
+                log_y = np.log(np.abs(y_nearby) + 1e-15)
+
+                # Filter out invalid log values
+                valid_log = np.isfinite(log_dist) & np.isfinite(log_y)
+                if np.sum(valid_log) >= 3:
+                    try:
+                        # Linear regression: slope = -n
+                        coeffs = np.polyfit(log_dist[valid_log], log_y[valid_log], 1)
+                        estimated_n = -coeffs[0]
+
+                        # Round to nearest integer, clamp to 1-4
+                        n = int(round(estimated_n))
+                        n = max(1, min(4, n))  # Clamp to [1, 4]
+
+                        poles.append((float(pole_x), n))
+                    except Exception:
+                        # Fallback: assume order 1
+                        poles.append((float(pole_x), 1))
+            else:
+                # Not enough data, assume order 1
+                poles.append((float(pole_x), 1))
+
+    # Remove duplicates (round to avoid floating point issues)
+    seen = set()
+    unique_poles = []
+    for pole_x, n in poles:
+        key = round(pole_x, 6)
+        if key not in seen:
+            seen.add(key)
+            unique_poles.append((pole_x, n))
+
+    return unique_poles
+
+
 def generate_candidate_features(
     X_data: Any,
     variable_names: list[str],
     include_transcendentals: bool = True,
     y_data: Any = None,
+    X_original: Any = None,
+    y_original: Any = None,
 ) -> tuple[Any, list[str]]:
     """Generates a dictionary of candidate functions (features) for symbolic regression.
 
     Args:
-        X_data: numpy array of shape (n_samples, n_variables)
+        X_data: numpy array of shape (n_samples, n_variables) - FILTERED data for features
         variable_names: list of strings ['x', 'y', ...]
         include_transcendentals: If False, generates only polynomials and rationals (Stage 1).
+        y_data: Filtered y data (for frequency detection, etc.)
+        X_original: Original unfiltered X data (for pole detection)
+        y_original: Original unfiltered y data (for pole detection)
 
     Returns:
         Tuple of (feature_matrix, feature_names)
@@ -992,6 +1080,54 @@ def generate_candidate_features(
                     ):
                         features.append(inv_shifted)
                         feature_names.append(f"1/({pole}-{name})")
+
+    # --- DYNAMIC POLE DETECTION (from nan/inf in y_data) ---
+    # Detects poles and their orders using log-log slope analysis
+    # Use ORIGINAL (unfiltered) data if provided, otherwise fall back to filtered data
+    X_for_poles = X_original if X_original is not None else X_data
+    y_for_poles = y_original if y_original is not None else y_data
+    
+    if y_for_poles is not None:
+        try:
+            detected_poles = detect_poles_from_data(X_for_poles, y_for_poles)
+            
+            for pole_x, pole_order in detected_poles:
+                col = X_data[:, 0]  # Use FILTERED X for feature generation
+                name = variable_names[0] if variable_names else "x"
+                
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    denom = col - pole_x
+                    
+                    # Mask: non-pole points (where denom is not near zero)
+                    non_pole_mask = np.abs(denom) > 1e-9
+                    
+                    # Generate features for detected pole order and lower orders
+                    for n in range(1, pole_order + 1):
+                        # 1/(x-pole)^n
+                        inv_n = np.where(non_pole_mask, 1.0 / (denom ** n), np.nan)
+                        
+                        # Check that non-pole values are finite and bounded
+                        valid_vals = inv_n[non_pole_mask]
+                        if len(valid_vals) > 0 and np.all(np.isfinite(valid_vals)) and np.max(np.abs(valid_vals)) < 1e100:
+                            features.append(inv_n)
+                            if n == 1:
+                                feature_names.append(f"1/({name}-{pole_x})")
+                            else:
+                                feature_names.append(f"1/({name}-{pole_x})^{n}")
+                            
+                            # Also add x/(x-pole)^n for numerator terms
+                            x_over_pole_n = np.where(non_pole_mask, col * (1.0 / (denom ** n)), np.nan)
+                            valid_x_vals = x_over_pole_n[non_pole_mask]
+                            if len(valid_x_vals) > 0 and np.all(np.isfinite(valid_x_vals)) and np.max(np.abs(valid_x_vals)) < 1e100:
+                                features.append(x_over_pole_n)
+                                if n == 1:
+                                    feature_names.append(f"{name}/({name}-{pole_x})")
+                                else:
+                                    feature_names.append(f"{name}/({name}-{pole_x})^{n}")
+        except Exception:
+            pass  # Fail gracefully if pole detection fails
+
+
 
     # --- NEW: TRANSCENDENTAL FUNCTIONS ---
     if include_transcendentals:

@@ -70,9 +70,16 @@ def solve_regression_stage(
 ):
     # --- Step 0: Filter NaNs/Infs ---
     # Robustly remove any data points with invalid values
+    # BUT preserve original data for pole detection!
+    X_original = None
+    y_original = None
     try:
         X_arr = np.array(X_data, dtype=float)
         y_arr = np.array(y_data, dtype=float)
+        
+        # Preserve original for pole detection
+        X_original = X_arr.copy()
+        y_original = y_arr.copy()
 
         # Check masks
         valid_mask_x = np.all(np.isfinite(X_arr), axis=1)
@@ -87,11 +94,14 @@ def solve_regression_stage(
         pass  # Fallback to original if array conversion fails (shouldn't happen)
 
     # Generate feature matrix
+    # Pass ORIGINAL (unfiltered) data for pole detection, but filtered for regression
     X_matrix, feature_names = generate_candidate_features(
         X_data,
         param_names,
         include_transcendentals=include_transcendentals,
-        y_data=y_data,
+        y_data=y_data,  # Filtered y for frequency detection
+        X_original=X_original,  # Original X for pole detection
+        y_original=y_original,  # Original y for pole detection
     )
 
     # Pre-filtering: Detect and remove gross outliers using Robust Regression on Linear/Quadratic model
