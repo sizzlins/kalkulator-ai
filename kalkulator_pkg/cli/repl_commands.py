@@ -663,15 +663,16 @@ def _handle_evolve(text, variables=None):
                 
                 # Run find() to get approximation
                 print("Hybrid mode: running find() for initial approximation...")
-                find_result = find_function_from_data(
-                    func_name, input_vars, find_data_points, quiet=True
+                # Signature: find_function_from_data(data_points, param_names, skip_linear)
+                success, func_str, factored, error = find_function_from_data(
+                    find_data_points, input_vars
                 )
                 
                 # If find() succeeded, add its expression as a seed
-                if find_result and find_result.get('expression'):
-                    find_expr = find_result['expression']
-                    seeds.append(find_expr)
-                    print(f"Hybrid seeding: using find() result '{find_expr[:50]}...' as starting point")
+                if success and func_str:
+                    seeds.append(func_str)
+                    display = func_str[:50] + "..." if len(func_str) > 50 else func_str
+                    print(f"Hybrid seeding: using find() result '{display}' as starting point")
             except Exception as e:
                 print(f"Hybrid mode: find() failed ({e}), continuing with other seeds")
 
