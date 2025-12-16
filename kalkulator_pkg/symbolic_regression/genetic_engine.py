@@ -209,7 +209,7 @@ class GeneticSymbolicRegressor:
                         # Make a copy with mutation for diversity
                         copy = tree.copy()
                         # Apply point mutation to create variation
-                        from .mutations import point_mutation
+                        from .operators import point_mutation
                         copy = point_mutation(copy, mutation_rate=0.3, operators=self.config.operators)
                         copy.age = 0
                         population.append(copy)
