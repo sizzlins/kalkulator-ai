@@ -327,7 +327,9 @@ def define_function(name: str, params: list[str], body_expr: str) -> None:
         ValidationError: If function name or parameters are invalid
     """
     # Validate function name
-    if not name or not name.isalnum() or not name[0].isalpha():
+    # Validate function name
+    # Allow alphanumeric and underscores, but must start with letter
+    if not name or not all(c.isalnum() or c == '_' for c in name) or not name[0].isalpha():
         raise ValidationError(
             f"Invalid function name: {name}. Must start with a letter and contain only letters and numbers.",
             "INVALID_FUNCTION_NAME",
@@ -345,24 +347,26 @@ def define_function(name: str, params: list[str], body_expr: str) -> None:
     try:
         # Preprocess body to handle unicode symbols (Unicode sqrt -> sqrt, etc.) and implicit multiplication
         # Use local import to avoid circular dependency
-        from .parser import preprocess
+        from .parser import preprocess, _parse_preprocessed_impl
         
         # Preprocess the body string (converts √ -> sqrt, etc.)
         params_set = set(params)
-        body_expr = preprocess(body_expr)
+        body_expr_preprocessed = preprocess(body_expr)
         
         # Create a local dict with parameter symbols
         local_dict = {**ALLOWED_SYMPY_NAMES}
         for param in params:
             local_dict[param] = sp.Symbol(param)
 
-        body = parse_expr(
-            body_expr,
-            local_dict=local_dict,
-            transformations=TRANSFORMATIONS,
-            evaluate=True,
+        # Use robust parser which handles restoration of protected markers (like min/max)
+        # We pass local_dict to ensure parameters are parsed as Symbols, not Functions or undefined
+        body = _parse_preprocessed_impl(
+            body_expr_preprocessed,
+            local_dict=local_dict
         )
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise ValidationError(
             f"Failed to parse function body '{body_expr}': {str(e)}",
             "FUNCTION_BODY_PARSE_ERROR",
@@ -435,7 +439,13 @@ def evaluate_function(name: str, args: list[Any]) -> sp.Basic:
             except Exception:
                 arg = sp.Symbol(str(arg))  # Fallback to symbol
 
-        subs_dict[sp.Symbol(param)] = arg
+        # Match parameter name to symbol in body (handles assumptions correctly)
+        target_sym = sp.Symbol(param)
+        for s in body.free_symbols:
+             if s.name == param:
+                 target_sym = s
+                 break
+        subs_dict[target_sym] = arg
 
     # Substitute and return
     try:
@@ -1431,14 +1441,49 @@ def find_function_from_data(
             raise ValueError(f"Could not convert '{val}' to a numeric value") from e
 
     # --- Partition data into Numeric and Symbolic sets ---
+    # Also filter out complex data (with warning)
     import sympy as sp
     numeric_data = []
     symbolic_data = []
+    complex_data = []  # Track complex/non-real data points for warning
+    
+    def is_complex_value(val):
+        """Check if a value is complex (has imaginary part)."""
+        if isinstance(val, complex):
+            return abs(val.imag) > 1e-10
+        if isinstance(val, str):
+            # Check for imaginary indicators in string
+            # Note: SymPy uses uppercase I, but user might use lowercase i
+            if any(indicator in val for indicator in ['i', 'I', '*I', 'j']):
+                try:
+                    # Try to parse and check imaginary part
+                    # Replace lowercase i with I for SymPy
+                    val_normalized = val.replace('i', '*I').replace('jj', '*I')
+                    parsed = sp.sympify(val_normalized)
+                    if hasattr(parsed, 'as_real_imag'):
+                        _, imag = parsed.as_real_imag()
+                        return abs(float(imag.evalf())) > 1e-10
+                except Exception:
+                    # If parsing fails and string contains 'i'/'I'/'j', assume complex
+                    return True
+        if hasattr(val, 'as_real_imag'):
+            try:
+                _, imag = val.as_real_imag()
+                return abs(float(imag.evalf())) > 1e-10
+            except Exception:
+                pass
+        return False
     
     for x_tuple, y_val in data_points:
         is_symbolic = False
+        is_complex = False
         parsed_x_tuple = []
+        
+        # Check if any input is complex
         for x_arg in x_tuple:
+            if is_complex_value(x_arg):
+                is_complex = True
+                break
             try:
                 val_float = float(x_arg)
                 parsed_x_tuple.append(val_float)
@@ -1454,16 +1499,30 @@ def find_function_from_data(
                     except:
                         parsed_x_tuple.append(x_arg)
         
-        try:
-            y_float = eval_to_float(y_val)
-        except ValueError:
-            is_symbolic = True
-            y_float = y_val
+        # Check if output is complex
+        if not is_complex and is_complex_value(y_val):
+            is_complex = True
+        
+        if is_complex:
+            complex_data.append((x_tuple, y_val))
+            continue
+        
+        if not is_symbolic:
+            try:
+                y_float = eval_to_float(y_val)
+            except ValueError:
+                is_symbolic = True
+                y_float = y_val
 
         if is_symbolic:
-            symbolic_data.append((parsed_x_tuple, y_float))
+            symbolic_data.append((parsed_x_tuple, y_val if is_symbolic else y_float))
         else:
             numeric_data.append((parsed_x_tuple, y_float))
+    
+    # Warn about filtered complex data
+    if complex_data:
+        print(f"Warning: {len(complex_data)} data point(s) with complex/imaginary values were skipped.")
+        print("         Regression requires real-valued inputs and outputs.")
 
     # --- Hybrid Mode: If mixed data, use numeric to find function, validate with symbolic ---
     # Note: Requires at least 3 numeric points for reliable regression

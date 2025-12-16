@@ -26,6 +26,23 @@ from ..cache_manager import (
 
 logger = logging.getLogger(__name__)
 
+# Registry of non-math commands for improved parsing detection
+COMMAND_REGISTRY = {
+    "help", "?", "quit", "exit",
+    "clear", "cls",
+    "history",
+    "find",
+    "evolve",
+    "solve",
+    "export",
+    "save", "load",
+    "show", "list",
+    "debug", "timing", "cachehits",
+    "savecache", "loadcache", "showcache", "clearcache",
+    "define",
+    "health",
+}
+
 def handle_command(text: str, ctx: Any, variables: Dict[str, str]) -> bool:
     """
     Attempt to handle the input text as a command.
@@ -60,6 +77,10 @@ def handle_command(text: str, ctx: Any, variables: Dict[str, str]) -> bool:
 
     if raw_lower.startswith("debug"):
         _handle_debug_command(text, ctx)
+        return True
+
+    if raw_lower == "health":
+        _handle_health_command()
         return True
 
     if raw_lower.startswith("timing"):
@@ -125,7 +146,7 @@ def handle_command(text: str, ctx: Any, variables: Dict[str, str]) -> bool:
 
     # === Research Commands (Evolve, SINDy, Causal, Dimensionless) ===
     if raw_lower.startswith("evolve "):
-        _handle_evolve(text)
+        _handle_evolve(text, variables)
         return True
 
     if raw_lower.startswith("find ode"):
@@ -151,7 +172,7 @@ def handle_command(text: str, ctx: Any, variables: Dict[str, str]) -> bool:
         return True
 
     if raw_lower.startswith("showcache") or raw_lower in ("show cache", "cache"):
-        _handle_show_cache(raw_lower)
+        _handle_show_cache(text, ctx)
         return True
 
     if raw_lower.startswith("savecache"):
@@ -301,21 +322,288 @@ def _handle_export_command(text: str):
     else:
         print("Usage: export <function_name> to <filename>")
 
-def _handle_evolve(text):
-    # (Simplified legacy port - assuming imports exist)
+def _handle_evolve(text, variables=None):
+    """Handle the 'evolve' command for genetic symbolic regression."""
     try:
         import numpy as np
         from ..symbolic_regression import GeneticConfig, GeneticSymbolicRegressor
+
+        # Strategy 1: Seeding
+        # Parse "--seed 'expr'" or "--seed "expr""
+        seeds = []
+        seed_pattern = re.compile(r'--seed\s+["\']([^"\']+)["\']')
+        matches = seed_pattern.findall(text)
+        if matches:
+            seeds.extend(matches)
+            text = seed_pattern.sub("", text)
+
+        # Strategy 7: Boosting
+        # Parse "--boost <N>"
+        boosting_rounds = 1
+        boost_match = re.search(r"--boost\s+(\d+)", text)
+        if boost_match:
+            boosting_rounds = int(boost_match.group(1))
+            # Remove flag from text
+            text = re.sub(r"--boost\s+\d+", "", text)
+
+        # Parse: evolve f(x) from x=[...], y=[...]
+        # or: evolve f(x,y) from x=[...], y=[...], z=[...]
+        # Parse: evolve f(x) from x=[...], y=[...]
+        # or: evolve f(x,y) from x=[...], y=[...], z=[...]
         match = re.match(r"evolve\s+(\w+)\s*\(([^)]+)\)\s+from\s+(.+)", text, re.IGNORECASE)
+        
+        is_implicit = False
+        data_part = None
+        
         if match:
-            # (... Implementation details as per app.py capture ...)
-            # For brevity/safety, I'll defer full implementation to user request or specific file update?
-            # No, I must fulfill "The Wall". I'll implement a concise version or full port.
-            # I will assume the imports work.
-            pass # Placeholder for actual porting logic to avoid huge tool call
-            print("Genetic evolution logic called (Placeholder).")
+            func_name = match.group(1)
+            # These are the INPUT variable names from f(x) or f(a,b)
+            input_var_names = [v.strip() for v in match.group(2).split(",")]
+            data_part = match.group(3)
         else:
-            print("Usage: evolve f(x) from x=[...], y=[...]")
+            # Try implicit context: evolve f(x)
+            match_implicit = re.match(r"evolve\s+(\w+)\s*\(([^)]+)\)\s*$", text, re.IGNORECASE)
+            if match_implicit:
+                func_name = match_implicit.group(1)
+                input_var_names = [v.strip() for v in match_implicit.group(2).split(",")]
+                is_implicit = True
+                if not variables:
+                    print("Error: No data provided and no active variables in session.")
+                    return
+            else:
+                 print("Usage: evolve f(x) [from x=[...], y=[...]]")
+                 return
+
+        # Parse data arrays
+        data_dict = {}
+        points_y = []
+        points_x = {}
+        
+        if is_implicit:
+             # Load from context
+             for name, val in variables.items():
+                 # Handle raw objects (list, tuple, ndarray) directly
+                 if isinstance(val, (list, tuple, np.ndarray)):
+                     try:
+                         arr = np.array(val)
+                         # Explicitly check for numeric array
+                         # Strings might sneak in if not careful, validation ensures numbers
+                         if arr.dtype.kind in 'iuf': # Integer, Unsigned, Float
+                             data_dict[name] = arr
+                         else:
+                             # Warn if it looks like data but isn't numeric
+                             print(f"Warning: Variable '{name}' ignored. Expected numeric array, got dtype '{arr.dtype.kind}'.")
+                             pass
+                     except Exception as e:
+                         print(f"Warning: Failed to load variable '{name}' as numpy array: {e}")
+                     continue
+                 
+                 # String handling
+                 if isinstance(val, str):
+                     # If it looks like a list
+                     if "[" in val or "array" in val:
+                        try:
+                            # Evaluate in safe context with numpy
+                            safe_dict = {"__builtins__": {}, "np": np, "array": np.array}
+                            val_eval = eval(val, safe_dict)
+                            arr = np.array(val_eval)
+                            if arr.dtype.kind in 'iuf': # Integer, Unsigned, Float
+                                data_dict[name] = arr
+                            else:
+                                print(f"Warning: Variable '{name}' ignored. Expected numeric array, got dtype '{arr.dtype.kind}'.")
+                                pass
+                        except Exception as e:
+                            # Ignore non-numeric variables, but warn if it looks like data
+                            if "[" in val:
+                                print(f"Warning: Failed to parse variable '{name}': {e}")
+                            pass
+                            
+        else:
+            array_pattern = re.compile(r"(\w+)\s*=\s*\[([^\]]+)\]")
+            for m in array_pattern.finditer(data_part):
+                var = m.group(1)
+                values = [float(v.strip()) for v in m.group(2).split(",")]
+                data_dict[var] = np.array(values)
+
+            # Parse individual function points "f(1)=2, f(2)=3"
+            # This allows "evolve f(x) from f(1)=2, f(2)=3"
+            if data_part:
+                point_pattern = re.compile(r"(\w+)\s*\(([^)]+)\)\s*=\s*([^,]+)")
+                points_x = {v: [] for v in input_var_names}
+                points_y = []
+                skipped_complex = 0  # Track skipped complex data points
+                
+                for m in point_pattern.finditer(data_part):
+                    p_func = m.group(1)
+                    if p_func != func_name: 
+                        continue
+                    
+                    try:
+                        p_args_str = m.group(2)
+                        p_val_str = m.group(3).strip()
+                        
+                        # Check for complex/imaginary values (skip with warning)
+                        if any(indicator in p_val_str for indicator in ['i', 'I', 'j']) and not p_val_str.replace('.','').replace('-','').replace('+','').replace('e','').isdigit():
+                            skipped_complex += 1
+                            continue
+                        
+                        # Basic float parsing
+                        p_args = [float(a.strip()) for a in p_args_str.split(",")]
+                        p_val = float(p_val_str)
+                        
+                        # DATA ARITY AUTO-CORRECTION (Genius Mode)
+                        current_arity = len(input_var_names)
+                        data_arity = len(p_args)
+                        
+                        if data_arity > current_arity:
+                            # User said "evolve m(x)" but gave "m(1,2)=3"
+                            # We must expand input_var_names to match data_arity
+                            print(f"Note: Data has {data_arity} variables (`{p_args_str}`), but target `{func_name}` has {current_arity}.")
+                            
+                            defaults = ["x", "y", "z", "t", "u", "v"]
+                            used = set(input_var_names)
+                            
+                            while len(input_var_names) < data_arity:
+                                next_name = None
+                                for cand in defaults:
+                                    if cand not in used:
+                                        next_name = cand
+                                        break
+                                if not next_name:
+                                    next_name = f"var_{len(input_var_names)}"
+                                    
+                                input_var_names.append(next_name)
+                                used.add(next_name)
+                                # Initialize storage for new var
+                                points_x[next_name] = []
+                            
+                            print(f"      -> Adapting target to `{func_name}({', '.join(input_var_names)})`")
+                        
+                        elif data_arity < current_arity:
+                             # User said "evolve m(x,y)" but gave "m(1)=2"
+                             # This is harder. We can't invent data. 
+                             # Treat as partial match or warn?
+                             # For now, simplistic approach: drop the extra target vars if empty?
+                             # Or just skip this point? 
+                             # Strict behavior for UNDER-specified data is safer.
+                             continue
+
+                        for i, vname in enumerate(input_var_names):
+                            # Ensure list exists (might be new)
+                            if vname not in points_x: points_x[vname] = []
+                            points_x[vname].append(p_args[i])
+                        points_y.append(p_val)
+                    except ValueError:
+                        continue
+                
+                # Warn about skipped complex values
+                if skipped_complex > 0:
+                    print(f"Warning: {skipped_complex} data point(s) with complex/imaginary values were skipped.")
+                    print("         Evolution requires real-valued inputs and outputs.")
+ 
+            if points_y:
+                # Merge individual points into data_dict
+                for vname in input_var_names:
+                    arr = np.array(points_x[vname])
+                    if vname in data_dict:
+                         data_dict[vname] = np.concatenate([data_dict[vname], arr])
+                    else:
+                         data_dict[vname] = arr
+                
+                # Determine default output name
+                out_name = 'y'
+                if 'y' in input_var_names: out_name = 'z'
+                
+                out_arr = np.array(points_y)
+                if out_name in data_dict:
+                     data_dict[out_name] = np.concatenate([data_dict[out_name], out_arr])
+                else:
+                     data_dict[out_name] = out_arr
+
+        if not data_dict:
+            if is_implicit:
+                print(f"Error: Could not find valid data arrays for variables: {', '.join(input_var_names)}.")
+                print(f"Available variables: {list(variables.keys()) if variables else 'None'}")
+                print("Make sure variables are defined as lists (e.g., x=[1, 2, 3]) or numpy arrays.")
+            else:
+                print("Error: No valid data points found in command.")
+            return
+
+        # Input variables are the ones in the function signature
+        # Output is any variable NOT in the signature (typically 'y' or 'z')
+        input_vars = [v for v in input_var_names if v in data_dict]
+        output_candidates = [v for v in data_dict.keys() if v not in input_var_names]
+
+        if not input_vars:
+            input_vars = input_var_names[:1]
+            output_candidates = [v for v in data_dict.keys() if v != input_vars[0]]
+
+        if not output_candidates:
+            print(f"Error: Need output variable. Provide data for a variable not in {func_name}({','.join(input_var_names)})")
+            return
+
+        # Explicitly prefer 'y' or 'z' if available
+        output_var = output_candidates[0]
+        if 'y' in output_candidates:
+            output_var = 'y'
+        elif 'z' in output_candidates:
+            output_var = 'z'
+        
+        # Validate all input vars have data
+        missing = [v for v in input_vars if v not in data_dict]
+        if missing:
+            print(f"Error: Missing data for input variable(s): {missing}")
+            return
+
+        X = np.column_stack([data_dict[v] for v in input_vars])
+        y = data_dict[output_var]
+
+        print(f"Evolving {func_name}({', '.join(input_vars)}) from {len(y)} data points...")
+
+        config = GeneticConfig(
+            population_size=200,
+            n_islands=2,
+            generations=50,
+            timeout=30,
+            verbose=True,
+            seeds=seeds,
+            boosting_rounds=boosting_rounds,
+        )
+        regressor = GeneticSymbolicRegressor(config)
+        pareto = regressor.fit(X, y, input_vars)
+
+        # get_knee_point attempts to balance complexity vs MSE, but for perfect fits (MSE ~ 0)
+        # we should always prefer the accurate solution even if slightly more complex.
+        knee = pareto.get_knee_point()
+        best_mse = pareto.get_best()
+        
+        best = knee
+        if best_mse and best_mse.mse < 1e-9:
+             best = best_mse
+        elif knee:
+             best = knee
+        else:
+             best = best_mse
+             
+        if not best:
+             print("No suitable model found.")
+             return
+             
+        # Print Result
+        print(f"\nResult: {best.expression}")
+        print(f"MSE: {best.mse:.6g}, Complexity: {best.complexity}")
+                
+        # Persist the discovered function (Engineering Standard: State Persistence)
+        try:
+            from ..function_manager import define_function
+            # Convert best.expression (pretty string) or best.sympy_expr to storage format
+            # define_function expects string expression
+            define_function(func_name, input_vars, best.expression)
+        except Exception as e:
+            print(f"Warning: Failed to define function '{func_name}' in session: {e}")
+
+    except ImportError as e:
+        print(f"Error: Required module not available: {e}")
     except Exception as e:
         print(f"Error: {e}")
         
@@ -344,15 +632,144 @@ def _handle_load_cache(text):
     else:
         print(f"Failed to load cache from {filename}")
 
-def _handle_show_cache(text):
-    parts = text.lower().split()
-    show_all = len(parts) > 1 and (parts[1] in ("all", "--all"))
-    # Use get_persistent_cache
+def _handle_show_cache(text: str, ctx: Any):
     from ..cache_manager import get_persistent_cache
     cache = get_persistent_cache()
-    # (Logic to print cache)
-    print(f"Cache contains {len(cache.get('eval_cache', {}))} items.")
+    eval_cache = cache.get('eval_cache', {})
+    print(f"Cache contains {len(eval_cache)} items.")
     
+    # Check for arguments "all" or "list"
+    args = text.split()
+    if len(args) > 1 and args[1].lower() in ("all", "list"):
+        print("-" * 40)
+        # Limit to reasonable amount unless piped? No just list them.
+        # But truncate values.
+        for i, (k, v) in enumerate(eval_cache.items()):
+            # k is the expression hash or string? It's the input string usually? 
+            # Actually keys are hashed strings? No, persistent cache usually keys by expression string.
+            # Let's print key.
+            # Truncate value if too long
+            val_str = str(v)
+            if len(val_str) > 60:
+                val_str = val_str[:57] + "..."
+            print(f"{i+1}. {k} -> {val_str}")
+            if i >= 99 and len(args) < 3: # Safety limit unless "all force"
+                 print("... (showing first 100, use 'showcache all force' to see all)")
+                 break
+        print("-" * 40)
+
+def _handle_health_command():
+    """Run health check to verify dependencies and basic operations."""
+    checks_passed = 0
+    checks_failed = 0
+
+    print("Running Kalkulator health check...", flush=True)
+    print("-" * 50)
+
+    # Check SymPy import
+    try:
+        import sympy as sp
+        version = sp.__version__
+        print(f"[OK] SymPy {version} imported successfully", flush=True)
+        checks_passed += 1
+    except ImportError as e:
+        print(f"[FAIL] SymPy import failed: {e}", flush=True)
+        checks_failed += 1
+
+    # Check basic parsing
+    try:
+        from ..parser import parse_preprocessed, preprocess
+        test_expr = "2 + 2"
+        preprocessed = preprocess(test_expr)
+        parsed = parse_preprocessed(preprocessed)
+        if parsed == 4:
+            print("[OK] Basic parsing works", flush=True)
+            checks_passed += 1
+        else:
+            print(f"[FAIL] Basic parsing failed: expected 4, got {parsed}", flush=True)
+            checks_failed += 1
+    except Exception as e:
+        print(f"[FAIL] Basic parsing exception: {e}", flush=True)
+        checks_failed += 1
+
+    # Check Solver
+    try:
+        from ..solver import solve_single_equation
+        res = solve_single_equation("2*x=10", "x")
+        # Solver returns {'ok': True, 'type': 'equation', 'exact': ['5'], ...}
+        if res.get("ok"):
+            exact = res.get("exact", [])
+            if "5" in str(exact) or (isinstance(exact, list) and len(exact) > 0 and str(exact[0]) == "5"):
+                print("[OK] Solver works (2*x=10 -> 5)", flush=True)
+                checks_passed += 1
+            else:
+                print(f"[FAIL] Solver result mismatch: {res}", flush=True)
+                checks_failed += 1
+        else:
+            print(f"[FAIL] Solver failed: {res}", flush=True)
+            checks_failed += 1
+    except Exception as e:
+        print(f"[FAIL] Solver exception: {e}", flush=True)
+        checks_failed += 1
+
+    # Check Worker Process (IPC) & Vectorization
+    try:
+        from ..worker import evaluate_safely
+        import numpy as np
+
+        # Worker Test
+        res = evaluate_safely("2^10") # 1024
+        if res.get("ok") and str(res.get("result")) == "1024":
+             print("[OK] Worker IPC works (2^10 -> 1024)", flush=True)
+             checks_passed += 1
+        else:
+             print(f"[FAIL] Worker IPC failed: {res}", flush=True)
+             checks_failed += 1
+             
+        # Vectorization Test
+        v1 = np.array([1, 2, 3])
+        v2 = np.array([4, 5, 6])
+        dot = np.dot(v1, v2)
+        if dot == 32:
+            print("[OK] Vectorization works (numpy dot product)", flush=True)
+            checks_passed += 1
+        else:
+            print(f"[FAIL] Vectorization result error: {dot} != 32", flush=True)
+            checks_failed += 1
+
+    except ImportError:
+        print("[FAIL] Numpy or Worker dependencies missing", flush=True)
+        checks_failed += 1
+    except Exception as e:
+        print(f"[FAIL] Worker/Vectorization exception: {e}", flush=True)
+        checks_failed += 1
+
+    # Check Regression Engine (The Core Core)
+    try:
+        from ..function_manager import find_function_from_data
+        # Simple y = x + 1
+        # Data format: List of (list of args, value)
+        data = [(["1"], "2"), (["2"], "3"), (["3"], "4")]
+        success, func_str, _, error_msg = find_function_from_data(data, ["x"])
+        
+        # We expect x + 1 or 1 + x
+        if success and ("x + 1" in func_str or "1 + x" in func_str):
+            print(f"[OK] Regression Engine works (found {func_str} from 3 points)", flush=True)
+            checks_passed += 1
+        else:
+             print(f"[FAIL] Regression Engine failed. Got: {func_str}. Error: {error_msg}", flush=True)
+             checks_failed += 1
+    except Exception as e:
+        print(f"[FAIL] Regression Engine exception: {e}", flush=True)
+        checks_failed += 1
+
+    print("-" * 50)
+    total_checks = checks_passed + checks_failed
+    if checks_failed == 0:
+        print(f"Health Check Passed: {checks_passed}/{total_checks} systems operational.", flush=True)
+    else:
+        print(f"Health Check FAILED: {checks_failed}/{total_checks} systems failed.", flush=True)
+
 def _handle_debug_command(text: str, ctx: Any):
     _toggle_setting(text, ctx, "debug_mode", "Debug mode")
     if ctx.debug_mode:
@@ -361,7 +778,7 @@ def _handle_debug_command(text: str, ctx: Any):
         logger.setLevel(logging.INFO)
 
 def _handle_timing_command(text: str, ctx: Any):
-    _toggle_setting(text, ctx, "timing", "Timing")
+    _toggle_setting(text, ctx, "timing_enabled", "Timing")
 
 def _handle_cachehits_command(text: str, ctx: Any):
     _toggle_setting(text, ctx, "show_cache_hits", "Cache hit display")
@@ -478,16 +895,20 @@ def handle_find_command_raw(text: str, ctx: Any) -> bool:
         p = p.strip()
         if not p: continue
         
+        # Strip flag for parsing
+        p_clean = p.replace("--auto-evolve", "").strip()
+        
         # Check for FIND command
-        m_find = find_pattern.match(p)
-        if m_find and "find" in p.lower():
+        m_find = find_pattern.match(p_clean)
+        if m_find and "find" in p_clean.lower():
              target_func = m_find.group(1)
              if m_find.group(2):
                  target_vars = [v.strip() for v in m_find.group(2).split(",")]
              continue
              
         # Check for DATA point
-        m_point = point_pattern.match(p)
+        # Also try matching dirty p just in case, but clean is safer
+        m_point = point_pattern.match(p_clean)
         if m_point:
              name = m_point.group(1)
              args_str = m_point.group(2)
@@ -523,8 +944,19 @@ def handle_find_command_raw(text: str, ctx: Any) -> bool:
              target_vars = defaults[:arity]
              
          from ..function_manager import find_function_from_data, define_function
-         
-         success, result_str, factored, error_msg = find_function_from_data(relevant_points, target_vars)
+           
+         # Handle unpacking safely (API might return 3 or 4 values depending on version)
+         result = find_function_from_data(relevant_points, target_vars)
+         if len(result) == 4:
+             success, result_str, factored, error_msg = result
+         elif len(result) == 3:
+             success, result_str, error_msg = result
+         else:
+             # Fallback
+             success = False
+             result_str = None
+             error_msg = f"Internal API Error: Unexpected return length {len(result)}"
+
          if success:
              # error_msg holds confidence_note here if successful
              note = error_msg if error_msg else ""
@@ -537,8 +969,30 @@ def handle_find_command_raw(text: str, ctx: Any) -> bool:
              except Exception as e:
                  print(f"Warning: Failed to define function '{target_func}': {e}")
          else:
-             print(f"Failed to discover function: {error_msg}")
+             # SUGGESTION BRIDGE (Engineering Standard: User Experience)
+             auto_evolve = "--auto-evolve" in text.lower()
              
+             if auto_evolve:
+                 print(f"Genius Mode failed ({error_msg}). Auto-switching to Evolve Mode...")
+                 # Reconstruct evolve command
+                 # Format: evolve f(x) from f(1)=2, f(2)=3
+                 
+                 # Convert args list back to string
+                 points_str_list = []
+                 for args_list, val_str in relevant_points:
+                      # args_list is list of strings
+                      args_joined = ",".join(args_list)
+                      points_str_list.append(f"{target_func}({args_joined})={val_str}")
+                 
+                 points_segment = ", ".join(points_str_list)
+                 evolve_cmd = f"evolve {target_func}({','.join(target_vars)}) from {points_segment}"
+                 
+                 _handle_evolve(evolve_cmd)
+             else:
+                 print(f"Failed to discover function: {error_msg}")
+                 print(f"Tip: Genius Mode seeks exact laws. Try 'evolve {target_func}({','.join(target_vars)})...' for approximate models.")
+                 print(f"     Or use '--auto-evolve' to switch automatically.")
+
          return True
          
     return False
@@ -553,4 +1007,3 @@ def handle_find_command_raw(text: str, ctx: Any) -> bool:
     # The prompt asked me to fix parsing "Undefined Function Parsing".
     # I did.
     # Now I need to fix the REPL flow to USE that parsed info.
-
