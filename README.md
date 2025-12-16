@@ -130,6 +130,17 @@ Deeply nested composite functions are beyond algorithm scope:
 
 **Workaround:** Define manually: `f(x)=sin(4/(x-3))`
 
+### Complex Rational Functions
+
+Multi-pole rational functions with polynomial numerators/denominators:
+
+| Pattern         | Example         | Why                          |
+| --------------- | --------------- | ---------------------------- |
+| Quadratic ratio | `(1+x²)/(1-x²)` | Multiple poles, complex form |
+| Higher-order    | `(x³+1)/(x³-1)` | No general templates         |
+
+**Workaround:** Define manually: `f(x)=(1+x^2)/(1-x^2)`
+
 ## Architecture
 
 - **Core**: `kalkulator_pkg`

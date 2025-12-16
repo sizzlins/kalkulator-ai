@@ -645,10 +645,10 @@ def _handle_evolve(text, variables=None):
         print(f"Evolving {func_name}({', '.join(input_vars)}) from {len(y)} data points...")
 
         config = GeneticConfig(
-            population_size=200,
+            population_size=100,  # Reduced from 200 for faster response
             n_islands=2,
-            generations=50,
-            timeout=30,
+            generations=30,  # Reduced from 50 for quicker feedback
+            timeout=15,  # Reduced from 30 for better UX
             verbose=True,
             seeds=seeds,
             boosting_rounds=boosting_rounds,
