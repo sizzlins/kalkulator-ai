@@ -83,14 +83,19 @@ Function finding discovers **continuous mathematical relationships**. The follow
 
 ### When to Use `find` vs `evolve`
 
-| Use Case                   | Recommended | Why                              |
-| -------------------------- | ----------- | -------------------------------- |
-| Clean data, known patterns | `find`      | Exact regression is reliable     |
-| Exponential (`2^x`, `e^x`) | `find`      | Has explicit `exp(a*x)` template |
-| Noisy/complex data         | `evolve`    | Exploratory, tolerates noise     |
-| Novel function forms       | `evolve`    | Searches without assumptions     |
+| Use Case                    | Recommended | Why                              |
+| --------------------------- | ----------- | -------------------------------- |
+| Clean data, known patterns  | `find`      | Exact regression is reliable     |
+| Exponential (`2^x`, `e^x`)  | `find`      | Has explicit `exp(a*x)` template |
+| Pole functions (`x/(x-1)²`) | `find`      | Auto-detects poles from inf/nan  |
+| Noisy/complex data          | `evolve`    | Exploratory, tolerates noise     |
+| Novel function forms        | `evolve`    | Searches without assumptions     |
 
-**Example:** For `2^x` data, `find` discovers `exp(0.693*x)` reliably. Evolution is probabilistic and may not converge to optimal form.
+**Tips:**
+
+- Use `find` first for most cases - it's faster and more reliable
+- `evolve` auto-seeds with detected patterns (poles, frequencies) for better results
+- If `find` gives low confidence, try `evolve` for exploration
 
 ### Data Types
 

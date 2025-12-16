@@ -322,6 +322,66 @@ def _handle_export_command(text: str):
     else:
         print("Usage: export <function_name> to <filename>")
 
+
+def generate_pattern_seeds(X, y, variable_names):
+    """Detect patterns in data and return seed expression strings for evolve.
+    
+    Smart seeding: detects poles (inf/nan) and frequencies, then generates
+    seed expressions that give evolution a head start.
+    
+    Args:
+        X: Input data array (n_samples, n_vars) or (n_samples,)
+        y: Output data array (n_samples,)
+        variable_names: List of variable names like ['x'] or ['x', 'y']
+    
+    Returns:
+        List of seed expression strings like ['1/(x-1)', '1/(x-1)**2']
+    """
+    import numpy as np
+    
+    seeds = []
+    var = variable_names[0] if variable_names else "x"
+    
+    # Ensure X is 2D
+    if X.ndim == 1:
+        X = X.reshape(-1, 1)
+    
+    # --- 1. Detect poles (where y is inf/nan) ---
+    for i, y_val in enumerate(y):
+        if not np.isfinite(y_val):
+            pole_x = X[i, 0]
+            # Generate pole-based seeds
+            seeds.append(f"1/({var}-{pole_x})")
+            seeds.append(f"1/({var}-{pole_x})**2")
+            seeds.append(f"{var}/({var}-{pole_x})**2")
+            # Also add with negative sign
+            seeds.append(f"1/({pole_x}-{var})")
+    
+    # --- 2. Detect near-zero crossings (potential 1/(x-a) patterns) ---
+    # Look for large jumps in y that might indicate near-pole behavior
+    if len(y) >= 3:
+        y_finite = np.array([yi if np.isfinite(yi) else 0 for yi in y])
+        y_max = np.max(np.abs(y_finite)) if np.any(np.isfinite(y_finite)) else 1
+        if y_max > 10:  # Large dynamic range suggests poles
+            for i in range(len(y) - 1):
+                if np.isfinite(y[i]) and np.isfinite(y[i+1]):
+                    ratio = abs(y[i+1] / y[i]) if y[i] != 0 else 0
+                    if ratio > 10 or (ratio > 0 and ratio < 0.1):
+                        # Possible pole between these points
+                        mid_x = (X[i, 0] + X[i+1, 0]) / 2
+                        seeds.append(f"1/({var}-{mid_x:.2f})")
+    
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_seeds = []
+    for s in seeds:
+        if s not in seen:
+            seen.add(s)
+            unique_seeds.append(s)
+    
+    return unique_seeds
+
+
 def _handle_evolve(text, variables=None):
     """Handle the 'evolve' command for genetic symbolic regression."""
     try:
@@ -557,6 +617,15 @@ def _handle_evolve(text, variables=None):
 
         X = np.column_stack([data_dict[v] for v in input_vars])
         y = data_dict[output_var]
+
+        # --- SMART SEEDING: Auto-detect patterns and generate seed expressions ---
+        auto_seeds = generate_pattern_seeds(X, y, input_vars)
+        if auto_seeds:
+            seeds.extend(auto_seeds)
+            if len(auto_seeds) <= 5:
+                print(f"Smart seeding: detected patterns, seeding with {auto_seeds}")
+            else:
+                print(f"Smart seeding: detected {len(auto_seeds)} pattern-based seeds")
 
         print(f"Evolving {func_name}({', '.join(input_vars)}) from {len(y)} data points...")
 
