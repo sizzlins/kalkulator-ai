@@ -31,31 +31,78 @@ class NodeType(Enum):
 
 
 # Operator definitions with arities and safe evaluation functions
+# Operator definitions with arities and safe evaluation functions
+def safe_tan(x):
+    with np.errstate(all='ignore'):
+        return np.tan(np.clip(x, -1e6, 1e6))
+
+def safe_exp(x):
+    with np.errstate(all='ignore'):
+        return np.exp(np.clip(x, -700, 700))
+
+def safe_log(x):
+    with np.errstate(all='ignore'):
+        return np.log(np.abs(x) + 1e-10)
+
+def safe_sqrt(x):
+    with np.errstate(all='ignore'):
+        return np.sqrt(np.abs(x))
+
+def safe_inv(x):
+    with np.errstate(all='ignore'):
+        return 1.0 / (x + 1e-10 * np.sign(x + 1e-10))
+
+def safe_mul(x, y):
+    with np.errstate(all='ignore'):
+        return np.clip(x * y, -1e100, 1e100)
+
+def safe_div(x, y):
+    with np.errstate(all='ignore'):
+        return x / (y + 1e-10 * np.sign(y + 1e-10))
+
+def safe_pow(x, y):
+    with np.errstate(all='ignore'):
+        return np.clip(np.power(np.abs(x) + 1e-10, np.clip(y, -10, 10)), -1e100, 1e100)
+
+def safe_sinh(x):
+    with np.errstate(all='ignore'):
+        return np.sinh(np.clip(x, -700, 700))
+
+def safe_cosh(x):
+    with np.errstate(all='ignore'):
+        return np.cosh(np.clip(x, -700, 700))
+
+def safe_square(x):
+    with np.errstate(all='ignore'):
+        return np.clip(x * x, -1e100, 1e100)
+
+def safe_cube(x):
+    with np.errstate(all='ignore'):
+        return np.clip(x * x * x, -1e100, 1e100)
+
 UNARY_OPERATORS: dict[str, Callable[[float], float]] = {
     "sin": np.sin,
     "cos": np.cos,
-    "tan": lambda x: np.tan(np.clip(x, -1e6, 1e6)),
-    "exp": lambda x: np.exp(np.clip(x, -700, 700)),  # Prevent overflow
-    "log": lambda x: np.log(np.abs(x) + 1e-10),  # Protected log
-    "sqrt": lambda x: np.sqrt(np.abs(x)),  # Protected sqrt
+    "tan": safe_tan,
+    "exp": safe_exp,
+    "log": safe_log,
+    "sqrt": safe_sqrt,
     "abs": np.abs,
     "neg": lambda x: -x,
-    "inv": lambda x: 1.0 / (x + 1e-10 * np.sign(x + 1e-10)),  # Protected inverse
-    "square": lambda x: x * x,
-    "cube": lambda x: x * x * x,
-    "sinh": lambda x: np.sinh(np.clip(x, -700, 700)),
-    "cosh": lambda x: np.cosh(np.clip(x, -700, 700)),
+    "inv": safe_inv,
+    "square": safe_square,
+    "cube": safe_cube,
+    "sinh": safe_sinh,
+    "cosh": safe_cosh,
     "tanh": np.tanh,
 }
 
 BINARY_OPERATORS: dict[str, Callable[[float, float], float]] = {
     "add": lambda x, y: x + y,
     "sub": lambda x, y: x - y,
-    "mul": lambda x, y: x * y,
-    "div": lambda x, y: x / (y + 1e-10 * np.sign(y + 1e-10)),  # Protected division
-    "pow": lambda x, y: np.power(
-        np.abs(x) + 1e-10, np.clip(y, -10, 10)
-    ),  # Protected power
+    "mul": safe_mul,
+    "div": safe_div,
+    "pow": safe_pow,
     "max": np.maximum,
     "min": np.minimum,
 }
@@ -327,7 +374,10 @@ class ExpressionTree:
                 return self.to_string()
             symbols = {var: sp.Symbol(var) for var in self.variables}
             expr = self.root.to_sympy(symbols)
-            return str(expr)
+            # Fix SymPy capitalization for Python compatibility
+            s = str(expr)
+            s = s.replace("Max", "max").replace("Min", "min")
+            return s
         except Exception:
             return self.to_string()
 
@@ -467,6 +517,125 @@ class ExpressionTree:
 
         root = build_node(1)
         return ExpressionTree(root=root, variables=variables)
+
+    @staticmethod
+    def from_sympy(
+        expr: sp.Expr,
+        variables: list[str],
+    ) -> ExpressionTree:
+        """Create an ExpressionTree from a SymPy expression (for Seeding).
+
+        Args:
+            expr: SymPy expression
+            variables: List of allowed variable names
+
+        Returns:
+            ExpressionTree representing the expression
+        """
+
+        def _convert_node(node) -> ExpressionNode:
+            # 1. Constant
+            if node.is_Number:
+                try:
+                    val = float(node)
+                    return ExpressionNode(NodeType.CONSTANT, val)
+                except Exception:
+                    # e.g. infinity?
+                    return ExpressionNode(NodeType.CONSTANT, 0.0)
+
+            # 2. Variable
+            if node.is_Symbol:
+                name = str(node)
+                if name in variables:
+                     return ExpressionNode(NodeType.VARIABLE, name)
+                else:
+                     # Treat unknown symbol as variable anyway? Or error?
+                     # For seeding, better be lenient or assume parameter
+                     return ExpressionNode(NodeType.VARIABLE, name)
+
+            # 3. Operations
+            func_name = None
+            children = []
+
+            # SymPy Internals Mapping
+            if node.is_Add:
+                func_name = "add"
+                # SymPy Add is n-ary. We must chain binary adds.
+                # (a+b+c) -> add(a, add(b, c))
+                operands = node.args
+                # Recursive chaining
+                current = _convert_node(operands[0])
+                for i in range(1, len(operands)):
+                    rhs = _convert_node(operands[i])
+                    # Create parent wrapper
+                    parent = ExpressionNode(NodeType.BINARY_OP, "add", [current, rhs])
+                    current.parent = parent
+                    rhs.parent = parent
+                    current = parent
+                return current
+
+            elif node.is_Mul:
+                func_name = "mul"
+                operands = node.args
+                current = _convert_node(operands[0])
+                for i in range(1, len(operands)):
+                    rhs = _convert_node(operands[i])
+                    parent = ExpressionNode(NodeType.BINARY_OP, "mul", [current, rhs])
+                    current.parent = parent
+                    rhs.parent = parent
+                    current = parent
+                return current
+
+            elif node.is_Pow:
+                base = _convert_node(node.base)
+                exp = _convert_node(node.exp)
+                # Check if it's actually sqrt?
+                # SymPy usually represents sqrt(x) as Pow(x, 1/2).
+                # But ExpressionTree might have "sqrt".
+                # Standard pow is fine.
+                func_name = "pow"
+                parent = ExpressionNode(NodeType.BINARY_OP, "pow", [base, exp])
+                base.parent = parent
+                exp.parent = parent
+                return parent
+
+            elif isinstance(node, sp.Function) or hasattr(node, "func"):
+                fname = node.func.__name__.lower()
+                if fname == "max":
+                     operands = node.args
+                     current = _convert_node(operands[0])
+                     for i in range(1, len(operands)):
+                        rhs = _convert_node(operands[i])
+                        parent = ExpressionNode(NodeType.BINARY_OP, "max", [current, rhs])
+                        current.parent = parent
+                        rhs.parent = parent
+                        current = parent
+                     return current
+                elif fname == "min":
+                     operands = node.args
+                     current = _convert_node(operands[0])
+                     for i in range(1, len(operands)):
+                        rhs = _convert_node(operands[i])
+                        parent = ExpressionNode(NodeType.BINARY_OP, "min", [current, rhs])
+                        current.parent = parent
+                        rhs.parent = parent
+                        current = parent
+                     return current
+                     
+                child = _convert_node(node.args[0])
+                if fname == "abs": fname = "abs"
+                
+                parent = ExpressionNode(NodeType.UNARY_OP, fname, [child])
+                child.parent = parent
+                return parent
+
+            # Fallback
+            return ExpressionNode(NodeType.CONSTANT, 0.0)
+
+        root = _convert_node(expr)
+        root.parent = None
+        tree = ExpressionTree(root, variables)
+        return tree
 
     def __str__(self) -> str:
         return self.to_string()

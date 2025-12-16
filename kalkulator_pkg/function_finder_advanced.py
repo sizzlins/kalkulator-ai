@@ -69,6 +69,24 @@ def detect_symbolic_constant(
     else:
         float_val = float(value)
 
+    # Fast check for integers
+    if abs(float_val - round(float_val)) < tolerance:
+        return sp.Integer(round(float_val))
+
+    # Explicit check for common log constants (often missed by nsimplify)
+    # This specifically addresses the user's issue with discovering exp(log(2)*x)
+    log_candidates = [
+        (sp.log(2), 0.69314718056),
+        (sp.log(3), 1.09861228867),
+        (sp.log(10), 2.30258509299),
+        (sp.pi, 3.14159265359),
+        (sp.E, 2.71828182846)
+    ]
+    
+    for sym_cand, val_cand in log_candidates:
+        if abs(float_val - val_cand) < tolerance:
+            return sym_cand
+
     # Direct comparison with known constants
     for _const_name, const_symbol in KNOWN_CONSTANTS.items():
         try:
@@ -834,6 +852,31 @@ def generate_candidate_features(
         X_data = X_data.reshape(-1, 1)
 
     n_samples, n_vars = X_data.shape
+    
+    # Ensure we have enough variable names
+    # If the user provided fewer names than columns (e.g. data has 2 cols but user said "find f(x)"),
+    # pad with default names (x0, x1, etc.) or generic names to prevent IndexError.
+    if variable_names:
+        standard_defaults = ["x", "y", "z", "t", "u", "v"]
+        used_names = set(variable_names)
+        
+        while len(variable_names) < n_vars:
+             # Find first default not used
+             next_name = None
+             for name in standard_defaults:
+                 if name not in used_names:
+                     next_name = name
+                     break
+             
+             if not next_name:
+                 next_name = f"x_{len(variable_names)}"
+             
+             variable_names.append(next_name)
+             used_names.add(next_name)
+    else:
+        # Should be handled by caller, but safe fallback
+        variable_names = [f"x_{i}" for i in range(n_vars)]
+
     features = []
     feature_names = []
 
@@ -845,7 +888,11 @@ def generate_candidate_features(
     # x, y, x^2, y^2, x^3...
     for i in range(n_vars):
         col = X_data[:, i]
-        name = variable_names[i]
+        # Robustness Check (Rule 5): Ensure enough names
+        if i < len(variable_names):
+            name = variable_names[i]
+        else:
+            name = f"var_{i}"  # Fallback name if missing
 
         # Power 1
         features.append(col)
@@ -960,7 +1007,6 @@ def generate_candidate_features(
                 if np.all(np.isfinite(pow2)) and np.max(np.abs(pow2)) < 1e100:
                     features.append(pow2)
                     feature_names.append(f"2^{name}")
-
                 pow10 = 10.0**col
                 if np.all(np.isfinite(pow10)) and np.max(np.abs(pow10)) < 1e100:
                     features.append(pow10)
@@ -1640,6 +1686,11 @@ def generate_candidate_features(
                     if np.all(np.isfinite(g_val)) and np.max(np.abs(g_val)) < 1e100:
                         features.append(g_val)
                         feature_names.append(f"gamma({name})")
+
+    # Defensive Check (The Wall Rule): Ensure atomic consistency
+    if len(features) != len(feature_names):
+        # Critical Logic Error - Crash immediately with clear info
+        raise RuntimeError(f"Feature Gen Mismatch: {len(features)} features vs {len(feature_names)} names. This is a compiler bug.")
 
     return np.column_stack(features), feature_names
 

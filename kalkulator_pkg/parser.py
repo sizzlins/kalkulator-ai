@@ -309,6 +309,21 @@ def _validate_expression_tree(
             f"Dangerous expression type '{expr_type}' not allowed", "FORBIDDEN_TYPE"
         )
 
+        return
+    
+    # Allow lists and tuples (for data sets)
+    if expr_type in ("list", "tuple") or isinstance(expr, (list, tuple)):
+        # Validate all items in the container
+        for item in expr:
+            _validate_expression_tree(
+                item, depth + 1, node_count, allowed_functions=allowed_functions
+            )
+        return
+
+    # Allow primitive types (recursion hits these for contents of lists)
+    if expr_type in ("int", "float", "str", "complex", "bool") or isinstance(expr, (int, float, str, complex, bool)):
+        return
+
     # Allow other SymPy Basic types (they're generally safe)
     if isinstance(expr, sp.Basic):
         # For expressions with args, validate children
@@ -451,7 +466,7 @@ def preprocess(
 
     processed_str = input_str
     protected_funcs = []
-    target_funcs = {"integrate", "diff", "limit", "sum", "product"}
+    target_funcs = {"integrate", "diff", "limit", "sum", "product", "min", "max"}
 
     # Scan for function calls manually to handle nested parentheses correctly
     # Regex like `diff\(([^)]+)\)` fails on `diff(f(x), x)` because it stops at the first `)`
@@ -685,7 +700,18 @@ def preprocess(
 
     processed_str = PERCENT_REGEX.sub(r"(\1/100)", processed_str)
     processed_str = SQRT_UNICODE_REGEX.sub("sqrt(", processed_str)
-    processed_str = AMBIG_FRACTION_REGEX.sub(r"((\1)/(\2))", processed_str)
+    # AMBIG_FRACTION_REGEX.sub(r"((\1)/(\2))", processed_str)
+    # Use a callback to prevent matching across protected commas
+    def normalize_fraction(match):
+        full_match = match.group(0)
+        # If the match spans across a protected comma, do NOT transform it
+        if "__COMMA_SEP_" in full_match:
+            return full_match
+        g1 = match.group(1)
+        g2 = match.group(2)
+        return f"(({g1})/({g2}))"
+
+    processed_str = AMBIG_FRACTION_REGEX.sub(normalize_fraction, processed_str)
 
     # Detect and handle hexadecimal numbers BEFORE implicit multiplication
     # This prevents "123edc09f2" from becoming "123*e*d*c*0*9*f*2"
@@ -891,7 +917,7 @@ def preprocess(
         # Check if matched name is a known SymPy function/symbol or whitelisted
         if name not in ALLOWED_SYMPY_NAMES and (
             allowed_functions is None or name not in allowed_functions
-        ):
+        ) and not name.startswith("__COMMA_SEP_"):
             # It's an undefined name being used like a function
             # Check if it might be valid through implicit multiplication (e.g. variable 'a')
             # BUT per user philosophy, we prefer explicit error over implicit "a(b) -> a*b" ambiguity for unknowns.
@@ -913,7 +939,19 @@ def preprocess(
 def parse_preprocessed(
     expr_str: str, allowed_functions: frozenset[str] | None = None
 ) -> Any:
-    """Parse and validate a preprocessed expression string."""
+    """Cached wrapper for _parse_preprocessed_impl."""
+    return _parse_preprocessed_impl(expr_str, allowed_functions, None)
+
+
+def _parse_preprocessed_impl(
+    expr_str: str, 
+    allowed_functions: frozenset[str] | None = None,
+    local_dict: dict | None = None
+) -> Any:
+    """Parse and validate a preprocessed expression string.
+    
+    Internal implementation that supports local_dict (which is not hashable for LRU cache).
+    """
     # Handle function calls with multiple arguments that use commas
     # SymPy's parse_expr interprets commas as tuple creation
     # For integrate(expr, var) and diff(expr, var), we need to parse them specially
@@ -946,9 +984,15 @@ def parse_preprocessed(
             marker_pos = marker_match.start()
 
             # Find the function name by looking backwards from the marker
-            # Look for "integrate" or "diff" before the marker
+            # Look for ANY protected function before the marker
+            # This must match the list in _protect_function_commas inside preprocess
+            # UPDATE: We only apply this manual splitting for integrate/diff which might have special parsing needs
+            # min/max/sum/product/limit generated complex args that our manual splitter breaks (e.g. stripping parens).
+            # They work fine with standard parsing via expr_str_restored.
+            protected_funcs_list = ["integrate", "diff"]
+            
             func_name_match = None
-            for func_name_candidate in ["integrate", "diff"]:
+            for func_name_candidate in protected_funcs_list:
                 # Find the last occurrence of the function name before the marker
                 func_pos = expr_str.rfind(func_name_candidate, 0, marker_pos)
                 if func_pos >= 0:
@@ -1176,13 +1220,16 @@ def parse_preprocessed(
     # Use the restored expression (with markers replaced by commas)
     
     # Prepare local dictionary with allowed functions as sp.Function
-    local_env = ALLOWED_SYMPY_NAMES.copy()
+    # Use provided local_dict as base if available, otherwise copy ALLOWED_SYMPY_NAMES
+    local_env = local_dict.copy() if local_dict else ALLOWED_SYMPY_NAMES.copy()
+    
     if allowed_functions:
         for name in allowed_functions:
             # We define them as UndefinedFunction (sp.Function class)
             # so they parse as proper function calls, not implicit multiplication
             # of characters (e.g. flarg -> f*l*a*r*g)
-            local_env[name] = sp.Function(name)
+            if name not in local_env:
+                local_env[name] = sp.Function(name)
 
     expr = parse_expr(
         expr_str_restored,
@@ -1229,30 +1276,57 @@ def format_inequality_solution(sol_str: str) -> str:
 
 
 def split_top_level_commas(input_str: str) -> list[str]:
-    """Split string by commas that are not inside (), [], or {}."""
+    """Split string by commas that are not inside (), [], {}, or quotes."""
     parts: list[str] = []
     current = []
     depth_paren = depth_brack = depth_brace = 0
-    for char in input_str:
-        if char == "," and depth_paren == 0 and depth_brack == 0 and depth_brace == 0:
+    in_quote = False
+    quote_char = None
+    
+    i = 0
+    while i < len(input_str):
+        char = input_str[i]
+        
+        # Handle quotes
+        if char in ('"', "'"):
+            if not in_quote:
+                in_quote = True
+                quote_char = char
+            elif char == quote_char:
+                # check for non-escaped quote
+                if i > 0 and input_str[i-1] == '\\':
+                    pass # escaped
+                else:
+                    in_quote = False
+                    quote_char = None
+        
+        # Handle split condition
+        if char == "," and not in_quote and depth_paren == 0 and depth_brack == 0 and depth_brace == 0:
             part = "".join(current).strip()
             if part:
                 parts.append(part)
             current = []
+            i += 1
             continue
-        if char == "(":
-            depth_paren += 1
-        elif char == ")":
-            depth_paren = max(0, depth_paren - 1)
-        elif char == "[":
-            depth_brack += 1
-        elif char == "]":
-            depth_brack = max(0, depth_brack - 1)
-        elif char == "{":
-            depth_brace += 1
-        elif char == "}":
-            depth_brace = max(0, depth_brace - 1)
+            
+        # Handle brackets (only if not in quote)
+        if not in_quote:
+            if char == "(":
+                depth_paren += 1
+            elif char == ")":
+                depth_paren = max(0, depth_paren - 1)
+            elif char == "[":
+                depth_brack += 1
+            elif char == "]":
+                depth_brack = max(0, depth_brack - 1)
+            elif char == "{":
+                depth_brace += 1
+            elif char == "}":
+                depth_brace = max(0, depth_brace - 1)
+                
         current.append(char)
+        i += 1
+        
     # append last segment
     last = "".join(current).strip()
     if last:

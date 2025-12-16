@@ -450,6 +450,38 @@ def solve_regression_stage(
         except:
             pass  # Keep OMP/Lasso result if override fails
 
+    # If OMP fails or returns None (e.g., variance is 0 => Constant function),
+    # we must handle it gracefully.
+    if coeffs is None:
+        # Fallback: Assume no features selected (or handle constant mean logic elsewhere)
+        # But if we are here, we likely have a constant target.
+        # Let's return empty selection which usually defaults to intercept IF intercept is implicit,
+        # but here we might just want to return "failed" for this stage or "empty model".
+        # Actually, if coeffs is None, usually it means we couldn't find a better fit than mean.
+            # Note: y_centered is available here.
+        fallback_model = {
+            "name": "constant_fallback",
+            "mse": np.mean(y_centered ** 2), # Mean of squared centered values is variance
+            "r2": 0.0,
+            "complexity": 1.0,
+            "coefficients": np.array([0.0]), # Coefficient for centered data is 0
+            "feature_names": ["1"], 
+            "feature_indices": [],
+            "sympy_obj": sp.Float(0.0), # Predict 0 offset from mean
+            "is_constant": True
+        }
+        # solve_regression_stage expected return:
+        # return success, func_str, confidence_note, mse
+        # For constant function 3: y_mean is 3. Fallback returns 0 (offset).
+        # We need to construct the final string here or return failure?
+        # Actually, if we return failure (False, ...), function_manager tries next stage.
+        # But if constant is the answer, we should return Success?
+        # Wait, if `coeffs` is None, it means no features helped. So the answer IS the mean.
+        # So: y = y_mean.
+        # Let's return Success.
+        final_func_str = f"{y_mean:.10g}"
+        return True, final_func_str, "Constant function (Variance=0 or no features)", 0.0
+
     selected_indices = [i for i, c in enumerate(coeffs) if abs(c) > adaptive_threshold]
     max_features = min(len(data_points) - 1, 12)
     if max_features < 1:

@@ -10,6 +10,7 @@ from functools import lru_cache
 from typing import Any
 
 import sympy as sp
+import numpy as np
 
 from .config import (
     CACHE_SIZE_SOLVE,
@@ -380,7 +381,15 @@ def worker_evaluate(
 
     try:
         # Evaluate the expression - simplify first to get symbolic form
-        res = sp.simplify(expr)
+        # Skip simplification for containers (lists, tuples, arrays) as they crash SymPy
+        if isinstance(expr, (list, tuple, np.ndarray)):
+            res = expr
+        else:
+            try:
+                res = sp.simplify(expr)
+            except (AttributeError, TypeError):
+                # SymPy might crash on lists/objects that passed the isinstance check or were missed
+                res = expr
 
         # Format result string with canonical numeric representation
         # This ensures sin(0) -> "0" and cos(0) -> "1" consistently
@@ -389,11 +398,15 @@ def worker_evaluate(
         free_syms = [str(s) for s in getattr(res, "free_symbols", set())]
         approx = None
         try:
-            approx_val = sp.N(res)
-            approx_str = str(approx_val)
-            if approx_str not in ("zoo", "oo", "-oo", "nan"):
-                approx = approx_str
-        except (ValueError, TypeError, ArithmeticError):
+            # Skip floating point approx for containers
+            if isinstance(res, (list, tuple, np.ndarray)):
+                 approx = None
+            else:
+                 approx_val = sp.N(res)
+                 approx_str = str(approx_val)
+                 if approx_str not in ("zoo", "oo", "-oo", "nan"):
+                     approx = approx_str
+        except (ValueError, TypeError, ArithmeticError, AttributeError):
             approx = None
         return {
             "ok": True,
@@ -1423,14 +1436,11 @@ class Worker:
 
         except Exception as e:
             return f"Error: {str(e)}"
-
     def evaluate_ast(self, node):
         """Recursively evaluate the AST."""
         node_type = node["type"]
 
         if node_type == "Assignment":
-            var_name = node["name"]
-            value_node = node["value"]
 
             # Helper to check if it's a function definition (simplified)
             # Assuming parser marks function definitions clearly or we detect args

@@ -6,7 +6,7 @@ Main entry point for the Kalkulator: Symbolic Regression & Science Engine applic
 This file serves as a thin wrapper that delegates all functionality
 to the kalkulator_pkg package.
 
-Copyright (c) 2025 Syahbana
+Copyright (c) 2025 Syahbanam
 All rights reserved.
 
 Usage:
@@ -102,10 +102,4 @@ if __name__ == "__main__":
         pass
     sys.exit(main())
 
-
-# >>> f(312321) = 624642, f(pi) = 6.28318530717958, find f(x)
-# f(x) = 6.282458077*exp(3.684405675e-05*x)
-# Function 'f' is now available. You can call it like: f(values)
-# >>> f(312321) = 624642, f(pi) = 6.28318530717958, f(5) = 10,find f(x)
-# f(x) = 2*x^1
-# Function 'f' is now available. You can call it like: f(values)
+# f(-4),f(-3),f(-2),f(-1),f(0),f(1),f(1.5),f(2),f(3),f(4),f(5),f(6),f(7),f(8),f(9),f(10),f(11),f(12),f(e),f(pi),f(i)

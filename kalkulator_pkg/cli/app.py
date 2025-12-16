@@ -5919,9 +5919,11 @@ MATH
   plot <expr>    Plot function
 
 DISCOVERY
-  f(1)=1... find f(x)    Find function from data
+  f(1)=1... find f(x)    Find function (Exact laws)
+    --auto-evolve        Auto-switch to evolve if exact finding fails
+  evolve f(x) from...    Find function (Approximate models)
+                         Syntax: evolve f(x) from f(1)=2, f(2)=3
   find ode               Find ODE (SINDy)
-  evolve                 Genetic evolution
   benchmark              Run benchmarks
 
 DATA
