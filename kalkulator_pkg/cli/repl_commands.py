@@ -635,6 +635,13 @@ def _handle_evolve(text, variables=None):
             else:
                 print(f"Smart seeding: detected {len(auto_seeds)} pattern-based seeds")
 
+        # --- FILTER: Remove inf/nan from data AFTER pattern detection ---
+        # Poles were used for seeding, but must be removed for fitness calculation
+        finite_mask = np.isfinite(y)
+        if not np.all(finite_mask):
+            X = X[finite_mask]
+            y = y[finite_mask]
+
         print(f"Evolving {func_name}({', '.join(input_vars)}) from {len(y)} data points...")
 
         config = GeneticConfig(
