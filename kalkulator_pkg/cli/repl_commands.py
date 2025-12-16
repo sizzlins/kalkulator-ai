@@ -437,8 +437,17 @@ def _handle_evolve(text, variables=None):
                     print("Error: No data provided and no active variables in session.")
                     return
             else:
-                 print("Usage: evolve f(x) [from x=[...], y=[...]]")
-                 return
+                # Try direct data points: evolve f(-4)=0.04, f(-3)=-0.56, ...
+                # This pattern looks for f(value)=result pairs without 'from' keyword
+                direct_match = re.search(r"(\w+)\s*\([^)]+\)\s*=", text)
+                if direct_match:
+                    func_name = direct_match.group(1)
+                    input_var_names = ["x"]  # Default to single variable
+                    # The entire text after 'evolve' is the data part
+                    data_part = text
+                else:
+                    print("Usage: evolve f(x) [from x=[...], y=[...]]")
+                    return
 
         # Parse data arrays
         data_dict = {}
