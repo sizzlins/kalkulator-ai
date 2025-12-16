@@ -693,6 +693,33 @@ def solve_regression_stage(
                             residual_hint = " [Hint: try sigmoid/softplus]"
                     except:
                         pass
+                
+                # --- SMART HINT: Pole + Oscillation → Trig Composite ---
+                # When we detect a pole AND the data oscillates, suggest sin(c/(x-a))
+                if not residual_hint:
+                    try:
+                        # Check for poles in the data (y_values contains nan/inf)
+                        pole_x = None
+                        for i, yv in enumerate(y_values):
+                            if not np.isfinite(yv):
+                                # Get x value from data_points
+                                if i < len(data_points):
+                                    point = data_points[i]
+                                    x_inputs = point[0]
+                                    pole_x = float(x_inputs[0]) if x_inputs else None
+                                break
+                        
+                        # Check for oscillation (sign changes in residuals or y)
+                        finite_vals = [v for v in y_values if np.isfinite(v)]
+                        if len(finite_vals) > 3:
+                            sign_changes = sum(1 for i in range(len(finite_vals)-1)
+                                             if finite_vals[i] * finite_vals[i+1] < 0)
+                            has_oscillation = sign_changes >= 3
+                            
+                            if pole_x is not None and has_oscillation:
+                                residual_hint = f" [Hint: Try sin(c/(x-{pole_x})) or cos(c/(x-{pole_x}))]"
+                    except:
+                        pass
             except Exception:
                 pass
 
