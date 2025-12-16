@@ -114,6 +114,17 @@ High-power polynomials (`x^10`, `x^11`, etc.) may hit numerical precision limits
 
 **Workaround:** Use `find` for high-power polynomials with moderate data ranges.
 
+### Composite Functions
+
+Deeply nested composite functions are beyond algorithm scope:
+
+| Pattern               | Example        | Why                            |
+| --------------------- | -------------- | ------------------------------ |
+| Trig of rational      | `sin(1/(x-3))` | Infinite nesting possibilities |
+| Nested transcendental | `exp(sin(x))`  | Combinatorial search space     |
+
+**Workaround:** Define manually: `f(x)=sin(4/(x-3))`
+
 ## Architecture
 
 - **Core**: `kalkulator_pkg`
