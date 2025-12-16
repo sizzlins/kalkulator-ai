@@ -1382,7 +1382,24 @@ def find_function_from_data(
 
         if isinstance(val, (int, float)):
             return float(val)
+        
+        # Handle SymPy infinity types BEFORE general conversion
+        # zoo = ComplexInfinity, oo = positive infinity
+        if val is sp.zoo or val is sp.oo or val is sp.S.Infinity:
+            return float('inf')
+        if val is sp.S.NegativeInfinity:
+            return float('-inf')
+        if val is sp.nan or val is sp.S.NaN:
+            return float('nan')
+        
         if isinstance(val, str):
+            # Check for string representations of infinity
+            val_lower = val.lower().strip()
+            if val_lower in ('zoo', 'oo', 'inf', 'infinity', 'complexinfinity'):
+                return float('inf')
+            if val_lower in ('nan', '-nan'):
+                return float('nan')
+            
             try:
                 # Try direct conversion first
                 return float(val)
@@ -1402,8 +1419,19 @@ def find_function_from_data(
                     "log": sp.log,
                     "ln": sp.log,
                     "exp": sp.exp,
+                    "zoo": sp.zoo,
+                    "oo": sp.oo,
                 }
                 expr = sp.sympify(val, locals=local_ns)
+                
+                # Check if result is infinity type
+                if expr is sp.zoo or expr is sp.oo or expr is sp.S.Infinity:
+                    return float('inf')
+                if expr is sp.S.NegativeInfinity:
+                    return float('-inf')
+                if expr is sp.nan or expr is sp.S.NaN:
+                    return float('nan')
+                
                 # Force numeric evaluation
                 result = expr.evalf()
                 # Check if result is still symbolic (contains free symbols)
@@ -1421,6 +1449,14 @@ def find_function_from_data(
         # For SymPy expressions
         # For SymPy expressions
         try:
+            # Check if it's infinity type
+            if val is sp.zoo or val is sp.oo or val is sp.S.Infinity:
+                return float('inf')
+            if val is sp.S.NegativeInfinity:
+                return float('-inf')
+            if val is sp.nan or val is sp.S.NaN:
+                return float('nan')
+            
             # Check if it's a known constant symbol (like pi or e) passed as a Symbol object
             if isinstance(val, sp.Symbol):
                 local_ns = {
