@@ -186,6 +186,7 @@ class GeneticSymbolicRegressor:
         population = []
         
         # Strategy 1: Inject seeds
+        injected_count = 0
         if self.config.seeds:
             for seed_str in self.config.seeds:
                 try:
@@ -199,9 +200,13 @@ class GeneticSymbolicRegressor:
                     tree = ExpressionTree.from_sympy(expr, variables)
                     tree.age = 0
                     population.append(tree)
+                    injected_count += 1
                 except Exception as e:
                     if self.config.verbose:
-                        print(f"Warning: Failed to seed '{seed_str}': {e}")
+                        print(f"Warning: Failed to seed '{seed_str[:50]}...': {e}")
+            
+            if self.config.verbose and injected_count > 0:
+                print(f"Injected {injected_count} seed expression(s) into population")
 
         # Ramped half-and-half: vary depth and method
         depths = range(2, self.config.max_depth + 1)
