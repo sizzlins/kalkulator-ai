@@ -273,8 +273,51 @@ def format_special_values(val_str: str) -> str:
     return val_str
 
 
-def print_result_pretty(res: dict[str, Any], output_format: str = "human") -> None:
-    """Print result in specified format."""
+def pretty_print_expression(expr: str) -> str:
+    """Normalize expression with spaces around operators for readability.
+    
+    Transforms 'e^(i*pi)' -> 'e^(i * pi)'
+    Transforms '2+3*4' -> '2 + 3 * 4'
+    
+    Engineering Standards:
+    - Simple Control Flow: Linear regex replacements
+    - No Magic: Explicit transformations
+    """
+    assert isinstance(expr, str), "Expression must be a string"
+    
+    result = expr
+    
+    # Add spaces around * (but not **)
+    result = re.sub(r'(?<!\*)\*(?!\*)', ' * ', result)
+    
+    # Add spaces around + (but not in exponents like e+10)
+    result = re.sub(r'(?<![eE])\+', ' + ', result)
+    
+    # Add spaces around - (but not unary minus or scientific notation)
+    result = re.sub(r'(?<=[\w)])\-(?=[\w(])', ' - ', result)
+    
+    # Add spaces around /
+    result = re.sub(r'/', ' / ', result)
+    
+    # Clean up multiple spaces
+    result = re.sub(r'\s+', ' ', result)
+    
+    # Trim and return
+    return result.strip()
+
+
+def print_result_pretty(
+    res: dict[str, Any], 
+    output_format: str = "human",
+    expression: str | None = None
+) -> None:
+    """Print result in specified format.
+    
+    Args:
+        res: Result dictionary with 'ok', 'type', 'result' keys
+        output_format: 'human' or 'json'
+        expression: Optional original expression to display alongside result
+    """
     if output_format == "json":
         print(json.dumps(res, indent=2, ensure_ascii=False))
         return
@@ -376,12 +419,19 @@ def print_result_pretty(res: dict[str, Any], output_format: str = "human") -> No
                 print(", ".join(parts))
     else:
         # Default value handling
-        # Default value handling
         formatted_val = format_solution(str(res.get("result", "")))
         try:
-            print(f"Result: {formatted_val}")
+            if expression:
+                pretty_expr = pretty_print_expression(expression)
+                print(f"Result: {pretty_expr} = {formatted_val}")
+            else:
+                print(f"Result: {formatted_val}")
         except UnicodeEncodeError:
-            print(f"Result: {formatted_val.encode('ascii', 'replace').decode()}")
+            if expression:
+                pretty_expr = pretty_print_expression(expression)
+                print(f"Result: {pretty_expr} = {formatted_val.encode('ascii', 'replace').decode()}")
+            else:
+                print(f"Result: {formatted_val.encode('ascii', 'replace').decode()}")
 
 
 def format_solution(val: Any) -> str:
@@ -400,12 +450,35 @@ def format_solution(val: Any) -> str:
     4. 2*x -> 2x (implicit multiplication for number-variable)
     5. I -> i (imaginary unit)
     """
+    # Try to convert string values to SymPy for numeric evaluation
+    # This handles cases like "-4*log(4) - 4*I*pi" from worker results
+    if isinstance(val, str):
+        try:
+            # Check if string contains symbolic functions that should be evaluated
+            if any(func in val for func in ['log(', 'sin(', 'cos(', 'exp(', 'sqrt(', '*I*', '*pi']):
+                parsed = sp.sympify(val)
+                if hasattr(parsed, "free_symbols") and not parsed.free_symbols:
+                    # No free symbols - evaluate numerically
+                    val = parsed.evalf()
+        except Exception:
+            # If parsing fails, keep original string
+            pass
+    
     # Apply algebraic simplifications first (if it's a SymPy expression)
     if hasattr(val, "subs") or isinstance(val, sp.Expr):
         try:
             val = simplify_exponential_bases(val)
         except Exception:
             # Fallback if simplification fails
+            pass
+        
+        # Force numeric evaluation for expressions with no free symbols
+        # This ensures f(-4) returns -5.545... not -4*log(4)
+        try:
+            if hasattr(val, "free_symbols") and not val.free_symbols:
+                # No free symbols - this is a numeric value, evaluate it
+                val = val.evalf()
+        except Exception:
             pass
             
     s = str(val)
