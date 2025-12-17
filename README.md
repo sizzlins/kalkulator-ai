@@ -152,6 +152,17 @@ Nested radical functions involving squares:
 
 **Workaround:** Define manually: `f(x)=sqrt(x^2-16)`
 
+### High-Degree Polynomials
+
+Polynomials beyond degree 2:
+
+| Pattern           | Example     | Why                                       |
+| ----------------- | ----------- | ----------------------------------------- |
+| Degree 3+         | `3x⁵ - 5x³` | No x³/x⁴/x⁵ templates; too complex for GP |
+| High coefficients | `100x³`     | Large search space                        |
+
+**Workaround:** Define manually: `f(x)=3x^5-5x^3`
+
 ## Advanced: External Tools
 
 For complex functions our algorithms can't discover (e.g., `sqrt(x²-16)`), consider using **PySR** externally:
