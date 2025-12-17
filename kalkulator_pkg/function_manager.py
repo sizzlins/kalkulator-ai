@@ -3015,6 +3015,49 @@ def find_function_from_data(
             success, func_str, confidence_note, mse = best_result
             return (success, func_str, None, confidence_note)
 
+        # FALLBACK: Try high-degree polynomial fitting (degrees 3, 4, 5)
+        # This can discover functions like 3x^5 - 5x^3 that template-based methods miss
+        if n_params == 1:
+            import sympy as sp
+            x_vals = np.array([X_data[i][0] for i in range(len(X_data))])
+            y_vals = np.array(y_data)
+            
+            # Filter out inf/nan values
+            valid_mask = np.isfinite(x_vals) & np.isfinite(y_vals)
+            x_clean = x_vals[valid_mask]
+            y_clean = y_vals[valid_mask]
+            
+            if len(x_clean) >= 4:  # Need at least 4 points for degree 3
+                for degree in [3, 4, 5]:
+                    if len(x_clean) > degree:  # Need n > degree to avoid overfitting
+                        try:
+                            coeffs = np.polyfit(x_clean, y_clean, degree)
+                            poly_func = np.poly1d(coeffs)
+                            mse = np.mean((poly_func(x_clean) - y_clean)**2)
+                            
+                            # Require very good fit to avoid overfitting
+                            y_var = np.var(y_clean)
+                            r_squared = 1 - (mse / y_var) if y_var > 1e-10 else 0.0
+                            
+                            if r_squared > 0.9999:  # Very strict threshold
+                                # Convert coeffs to SymPy expression
+                                x_sym = sp.Symbol(param_names[0])
+                                expr = sp.Float(0)
+                                for i, c in enumerate(coeffs):
+                                    power = degree - i
+                                    # Round coefficients to clean integers if close
+                                    c_rounded = round(c)
+                                    if abs(c - c_rounded) < 1e-6:
+                                        c = c_rounded
+                                    if abs(c) > 1e-10:
+                                        expr += c * x_sym**power
+                                
+                                func_str = str(expr)
+                                print(f"DEBUG: Polyfit found degree-{degree}: {func_str} (R²={r_squared:.6f})", file=sys.stderr)
+                                return (True, func_str, None, None)
+                        except Exception:
+                            pass  # Try next degree
+        
         print("DEBUG: Advanced Solver failed to find a model.", file=sys.stderr)
         return (False, None, None, None)
 
