@@ -141,6 +141,17 @@ Multi-pole rational functions with polynomial numerators/denominators:
 
 **Workaround:** Define manually: `f(x)=(1+x^2)/(1-x^2)`
 
+### Square Root Functions
+
+Nested radical functions involving squares:
+
+| Pattern      | Example           | Why                     |
+| ------------ | ----------------- | ----------------------- |
+| Sqrt of quad | `sqrt(x²-16)`     | No sqrt(poly) templates |
+| Nested sqrt  | `sqrt(x+sqrt(x))` | Infinite nesting        |
+
+**Workaround:** Define manually: `f(x)=sqrt(x^2-16)`
+
 ## Architecture
 
 - **Core**: `kalkulator_pkg`

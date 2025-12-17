@@ -119,21 +119,39 @@ class GeneticSymbolicRegressor:
             Fitness value (lower is better)
         """
         try:
-            # Timeout wrapper to prevent SymPy evaluation hangs on complex expressions
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(tree.evaluate, X)
-                try:
-                    predictions = future.result(timeout=2.0)  # 2 second max per evaluation
-                except concurrent.futures.TimeoutError:
-                    return float("inf")
+            # PREVENTION: Skip overly complex expressions that cause SymPy hangs
+            # This is more reliable than timeout because Python threads can't be killed
+            complexity = tree.complexity()
+            if complexity > 50:  # Very complex expressions often cause hangs
+                return float("inf")
+            
+            # Check expression for patterns that cause SymPy to hang
+            expr_str = str(tree.expression) if hasattr(tree, 'expression') else ""
+            
+            # Too many nested powers
+            if expr_str.count("**") > 5:
+                return float("inf")
+            
+            # Large fractional exponents cause _integer_nthroot_python to hang
+            # Match patterns like x**(12345/67890) where numerator > 10000
+            import re
+            large_frac_pattern = re.compile(r'\*\*\s*\(?(-?\d{5,})')  # 5+ digit numbers in power
+            if large_frac_pattern.search(expr_str):
+                return float("inf")
+            
+            # Also check for nested power of power like (x**a)**b
+            if "**(" in expr_str and expr_str.count("**") > 2:
+                return float("inf")
+            
+            # Now safe to evaluate
+            predictions = tree.evaluate(X)
             
             # Use Huber loss for robustness against outliers
             # This prevents a single outlier from dominating the fitness
             loss = huber_loss(y, predictions, delta=1.35)
 
             # Parsimony pressure: penalize complexity
-            penalty = self.config.parsimony_coefficient * tree.complexity()
+            penalty = self.config.parsimony_coefficient * complexity
 
             return loss + penalty
 
