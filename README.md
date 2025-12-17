@@ -152,6 +152,31 @@ Nested radical functions involving squares:
 
 **Workaround:** Define manually: `f(x)=sqrt(x^2-16)`
 
+## Advanced: External Tools
+
+For complex functions our algorithms can't discover (e.g., `sqrt(x²-16)`), consider using **PySR** externally:
+
+```bash
+pip install pysr  # Requires Julia (~500MB download)
+```
+
+```python
+from pysr import PySRRegressor
+import numpy as np
+
+X = np.array([[4],[5],[6],[7],[8]])
+y = np.array([0, 3, 4.47, 5.74, 6.93])
+
+model = PySRRegressor(
+    binary_operators=["+", "-", "*", "/"],
+    unary_operators=["sqrt", "sin", "cos"],
+)
+model.fit(X, y)
+print(model)  # Shows discovered equations
+```
+
+> **Note:** PySR is a separate project. First run downloads Julia and takes 1-2 minutes.
+
 ## Architecture
 
 - **Core**: `kalkulator_pkg`
