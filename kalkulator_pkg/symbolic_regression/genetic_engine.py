@@ -462,6 +462,21 @@ class GeneticSymbolicRegressor:
                 X_train, y_train = X, y
                 X_val, y_val = X, y
 
+        # Normalize y if value range is very large (>1000)
+        # This prevents MSE from becoming astronomically large for high-degree polynomials
+        y_min, y_max = y.min(), y.max()
+        y_range = y_max - y_min
+        self._normalization = None
+        
+        if y_range > 1000:
+            # Normalize to [0,1] range
+            y_train = (y_train - y_min) / (y_range + 1e-10)
+            y_val = (y_val - y_min) / (y_range + 1e-10)
+            y_residual = (y_residual - y_min) / (y_range + 1e-10)
+            self._normalization = (y_min, y_range)
+            if self.config.verbose:
+                print(f"Data normalized: y range {y_min:.2f} to {y_max:.2f} → [0,1]")
+
         for round_idx in range(rounds):
             if self.config.verbose and rounds > 1:
                 print(f"--- Boosting Round {round_idx + 1}/{rounds} ---")
