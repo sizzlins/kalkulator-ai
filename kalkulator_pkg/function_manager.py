@@ -3013,6 +3013,53 @@ def find_function_from_data(
 
         if best_result:
             success, func_str, confidence_note, mse = best_result
+            
+            # Calculate R² for the best result
+            y_var = sum((y - sum(y_data) / len(y_data)) ** 2 for y in y_data) / len(y_data)
+            r_squared = 1 - (mse / y_var) if y_var > 1e-10 else 0.0
+            
+            # If R² is low (<0.95), try polyfit for high-degree polynomials
+            if r_squared < 0.95 and n_params == 1:
+                import sympy as sp
+                x_vals = np.array([X_data[i][0] for i in range(len(X_data))])
+                y_vals = np.array(y_data)
+                
+                # Filter out inf/nan values
+                valid_mask = np.isfinite(x_vals) & np.isfinite(y_vals)
+                x_clean = x_vals[valid_mask]
+                y_clean = y_vals[valid_mask]
+                
+                if len(x_clean) >= 6:  # Need at least 6 points for degree 5
+                    for degree in [5, 4, 3]:  # Try highest degree first
+                        if len(x_clean) > degree:
+                            try:
+                                coeffs = np.polyfit(x_clean, y_clean, degree)
+                                poly_func = np.poly1d(coeffs)
+                                poly_mse = np.mean((poly_func(x_clean) - y_clean)**2)
+                                
+                                # Check if polyfit is better
+                                poly_y_var = np.var(y_clean)
+                                poly_r_squared = 1 - (poly_mse / poly_y_var) if poly_y_var > 1e-10 else 0.0
+                                
+                                if poly_r_squared > 0.9999 and poly_r_squared > r_squared:
+                                    # Polyfit is much better! Use it.
+                                    x_sym = sp.Symbol(param_names[0])
+                                    expr = sp.Float(0)
+                                    for i, c in enumerate(coeffs):
+                                        power = degree - i
+                                        # Round coefficients to clean integers if close
+                                        c_rounded = round(c)
+                                        if abs(c - c_rounded) < 1e-6:
+                                            c = c_rounded
+                                        if abs(c) > 1e-10:
+                                            expr += c * x_sym**power
+                                    
+                                    func_str = str(expr)
+                                    print(f"Polyfit found degree-{degree}: {func_str} (R²={poly_r_squared:.6f})")
+                                    return (True, func_str, None, None)
+                            except Exception:
+                                pass  # Try next degree
+            
             return (success, func_str, None, confidence_note)
 
         # FALLBACK: Try high-degree polynomial fitting (degrees 3, 4, 5)
