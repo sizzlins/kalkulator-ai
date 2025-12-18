@@ -1,5 +1,7 @@
-from ..context import ReplContext
 import logging
+
+from ..context import ReplContext
+
 
 def handle_debug_command(ctx: ReplContext, cmd: str) -> None:
     """Handle the 'debug' command."""
@@ -25,4 +27,4 @@ def handle_debug_command(ctx: ReplContext, cmd: str) -> None:
         else:
             print("Usage: debug <on|off>")
     else:
-            print("Usage: debug <on|off>")
+        print("Usage: debug <on|off>")

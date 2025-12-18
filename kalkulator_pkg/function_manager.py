@@ -27,11 +27,11 @@ Examples:
 
 from __future__ import annotations
 
+import json
 import math
 import re
-import json
-from pathlib import Path
 from fractions import Fraction
+from pathlib import Path
 from typing import Any
 
 import sympy as sp
@@ -277,7 +277,6 @@ _function_registry: dict[str, tuple[list[str], sp.Basic]] = {}
 
 def clear_functions() -> None:
     """Clear all defined functions."""
-    global _function_registry
     _function_registry.clear()
 
 
@@ -312,9 +311,6 @@ def get_function_registry_hash() -> str:
     return hashlib.md5(registry_str.encode()).hexdigest()
 
 
-
-
-
 def define_function(name: str, params: list[str], body_expr: str) -> None:
     """Define a function.
 
@@ -329,7 +325,11 @@ def define_function(name: str, params: list[str], body_expr: str) -> None:
     # Validate function name
     # Validate function name
     # Allow alphanumeric and underscores, but must start with letter
-    if not name or not all(c.isalnum() or c == '_' for c in name) or not name[0].isalpha():
+    if (
+        not name
+        or not all(c.isalnum() or c == "_" for c in name)
+        or not name[0].isalpha()
+    ):
         raise ValidationError(
             f"Invalid function name: {name}. Must start with a letter and contain only letters and numbers.",
             "INVALID_FUNCTION_NAME",
@@ -347,12 +347,12 @@ def define_function(name: str, params: list[str], body_expr: str) -> None:
     try:
         # Preprocess body to handle unicode symbols (Unicode sqrt -> sqrt, etc.) and implicit multiplication
         # Use local import to avoid circular dependency
-        from .parser import preprocess, _parse_preprocessed_impl
-        
+        from .parser import _parse_preprocessed_impl, preprocess
+
         # Preprocess the body string (converts √ -> sqrt, etc.)
         params_set = set(params)
         body_expr_preprocessed = preprocess(body_expr)
-        
+
         # Create a local dict with parameter symbols
         local_dict = {**ALLOWED_SYMPY_NAMES}
         for param in params:
@@ -360,12 +360,10 @@ def define_function(name: str, params: list[str], body_expr: str) -> None:
 
         # Use robust parser which handles restoration of protected markers (like min/max)
         # We pass local_dict to ensure parameters are parsed as Symbols, not Functions or undefined
-        body = _parse_preprocessed_impl(
-            body_expr_preprocessed,
-            local_dict=local_dict
-        )
+        body = _parse_preprocessed_impl(body_expr_preprocessed, local_dict=local_dict)
     except Exception as e:
         import traceback
+
         traceback.print_exc()
         raise ValidationError(
             f"Failed to parse function body '{body_expr}': {str(e)}",
@@ -385,20 +383,18 @@ def define_function(name: str, params: list[str], body_expr: str) -> None:
                         body = body.subs(symbol, sp.Symbol(param))
                         break
 
-
     # Store function definition
     _function_registry[name] = (params, body)
 
 
 def define_variable(name: str, value: str) -> None:
     """Define a variable (0-arity function).
-    
+
     Args:
         name: Variable name (e.g., "x", "y")
         value: Value string (e.g., "10", "x+5")
     """
     define_function(name, [], value)
-
 
 
 def evaluate_function(name: str, args: list[Any]) -> sp.Basic:
@@ -442,9 +438,9 @@ def evaluate_function(name: str, args: list[Any]) -> sp.Basic:
         # Match parameter name to symbol in body (handles assumptions correctly)
         target_sym = sp.Symbol(param)
         for s in body.free_symbols:
-             if s.name == param:
-                 target_sym = s
-                 break
+            if s.name == param:
+                target_sym = s
+                break
         subs_dict[target_sym] = arg
 
     # Substitute and return
@@ -1337,7 +1333,8 @@ def _symbolify_coefficient(val):
 
 
 def find_function_from_data(
-    data_points: list[tuple[Any, Any]], param_names: list[str] | None = None,
+    data_points: list[tuple[Any, Any]],
+    param_names: list[str] | None = None,
     skip_linear: bool = False,
 ) -> tuple[bool, str | None, dict[str, Any] | None, str | None]:
     """Find a function from data points using interpolation/regression.
@@ -1382,24 +1379,24 @@ def find_function_from_data(
 
         if isinstance(val, (int, float)):
             return float(val)
-        
+
         # Handle SymPy infinity types BEFORE general conversion
         # zoo = ComplexInfinity, oo = positive infinity
         if val is sp.zoo or val is sp.oo or val is sp.S.Infinity:
-            return float('inf')
+            return float("inf")
         if val is sp.S.NegativeInfinity:
-            return float('-inf')
+            return float("-inf")
         if val is sp.nan or val is sp.S.NaN:
-            return float('nan')
-        
+            return float("nan")
+
         if isinstance(val, str):
             # Check for string representations of infinity
             val_lower = val.lower().strip()
-            if val_lower in ('zoo', 'oo', 'inf', 'infinity', 'complexinfinity'):
-                return float('inf')
-            if val_lower in ('nan', '-nan'):
-                return float('nan')
-            
+            if val_lower in ("zoo", "oo", "inf", "infinity", "complexinfinity"):
+                return float("inf")
+            if val_lower in ("nan", "-nan"):
+                return float("nan")
+
             try:
                 # Try direct conversion first
                 return float(val)
@@ -1423,15 +1420,15 @@ def find_function_from_data(
                     "oo": sp.oo,
                 }
                 expr = sp.sympify(val, locals=local_ns)
-                
+
                 # Check if result is infinity type
                 if expr is sp.zoo or expr is sp.oo or expr is sp.S.Infinity:
-                    return float('inf')
+                    return float("inf")
                 if expr is sp.S.NegativeInfinity:
-                    return float('-inf')
+                    return float("-inf")
                 if expr is sp.nan or expr is sp.S.NaN:
-                    return float('nan')
-                
+                    return float("nan")
+
                 # Force numeric evaluation
                 result = expr.evalf()
                 # Check if result is still symbolic (contains free symbols)
@@ -1451,12 +1448,12 @@ def find_function_from_data(
         try:
             # Check if it's infinity type
             if val is sp.zoo or val is sp.oo or val is sp.S.Infinity:
-                return float('inf')
+                return float("inf")
             if val is sp.S.NegativeInfinity:
-                return float('-inf')
+                return float("-inf")
             if val is sp.nan or val is sp.S.NaN:
-                return float('nan')
-            
+                return float("nan")
+
             # Check if it's a known constant symbol (like pi or e) passed as a Symbol object
             if isinstance(val, sp.Symbol):
                 local_ns = {
@@ -1479,10 +1476,11 @@ def find_function_from_data(
     # --- Partition data into Numeric and Symbolic sets ---
     # Also filter out complex data (with warning)
     import sympy as sp
+
     numeric_data = []
     symbolic_data = []
     complex_data = []  # Track complex/non-real data points for warning
-    
+
     def is_complex_value(val):
         """Check if a value is complex (has imaginary part)."""
         if isinstance(val, complex):
@@ -1490,31 +1488,31 @@ def find_function_from_data(
         if isinstance(val, str):
             # Check for imaginary indicators in string
             # Note: SymPy uses uppercase I, but user might use lowercase i
-            if any(indicator in val for indicator in ['i', 'I', '*I', 'j']):
+            if any(indicator in val for indicator in ["i", "I", "*I", "j"]):
                 try:
                     # Try to parse and check imaginary part
                     # Replace lowercase i with I for SymPy
-                    val_normalized = val.replace('i', '*I').replace('jj', '*I')
+                    val_normalized = val.replace("i", "*I").replace("jj", "*I")
                     parsed = sp.sympify(val_normalized)
-                    if hasattr(parsed, 'as_real_imag'):
+                    if hasattr(parsed, "as_real_imag"):
                         _, imag = parsed.as_real_imag()
                         return abs(float(imag.evalf())) > 1e-10
                 except Exception:
                     # If parsing fails and string contains 'i'/'I'/'j', assume complex
                     return True
-        if hasattr(val, 'as_real_imag'):
+        if hasattr(val, "as_real_imag"):
             try:
                 _, imag = val.as_real_imag()
                 return abs(float(imag.evalf())) > 1e-10
             except Exception:
                 pass
         return False
-    
+
     for x_tuple, y_val in data_points:
         is_symbolic = False
         is_complex = False
         parsed_x_tuple = []
-        
+
         # Check if any input is complex
         for x_arg in x_tuple:
             if is_complex_value(x_arg):
@@ -1534,15 +1532,15 @@ def find_function_from_data(
                         parsed_x_tuple.append(expr)
                     except:
                         parsed_x_tuple.append(x_arg)
-        
+
         # Check if output is complex
         if not is_complex and is_complex_value(y_val):
             is_complex = True
-        
+
         if is_complex:
             complex_data.append((x_tuple, y_val))
             continue
-        
+
         if not is_symbolic:
             try:
                 y_float = eval_to_float(y_val)
@@ -1554,46 +1552,59 @@ def find_function_from_data(
             symbolic_data.append((parsed_x_tuple, y_val if is_symbolic else y_float))
         else:
             numeric_data.append((parsed_x_tuple, y_float))
-    
+
     # Warn about filtered complex data
     if complex_data:
-        print(f"Warning: {len(complex_data)} data point(s) with complex/imaginary values were skipped.")
+        print(
+            f"Warning: {len(complex_data)} data point(s) with complex/imaginary values were skipped."
+        )
         print("         Regression requires real-valued inputs and outputs.")
 
     # --- Hybrid Mode: If mixed data, use numeric to find function, validate with symbolic ---
     # Note: Requires at least 3 numeric points for reliable regression
     if len(numeric_data) >= 3 and len(symbolic_data) > 0:
         for try_skip in [False, True]:
-            success, func_str, factored, msg = find_function_from_data(numeric_data, param_names, skip_linear=try_skip)
-            
+            success, func_str, factored, msg = find_function_from_data(
+                numeric_data, param_names, skip_linear=try_skip
+            )
+
             if success:
                 try:
-                    local_ns = {"sin": sp.sin, "cos": sp.cos, "tan": sp.tan,
-                               "exp": sp.exp, "log": sp.log, "sqrt": sp.sqrt,
-                               "pi": sp.pi, "e": sp.E}
+                    local_ns = {
+                        "sin": sp.sin,
+                        "cos": sp.cos,
+                        "tan": sp.tan,
+                        "exp": sp.exp,
+                        "log": sp.log,
+                        "sqrt": sp.sqrt,
+                        "pi": sp.pi,
+                        "e": sp.E,
+                    }
                     param_syms = [sp.Symbol(p) for p in param_names]
                     f_expr = sp.sympify(func_str, locals=local_ns)
-                    
+
                     symbol_values = {}
                     consistent = True
-                    
+
                     for x_row_sym, y_val in symbolic_data:
                         if len(param_syms) == 1:
                             sym_arg = x_row_sym[0]
                             eq_lhs = f_expr.subs(param_syms[0], sym_arg)
                             eq_rhs = y_val
-                            
+
                             free_syms = eq_lhs.free_symbols
                             if len(free_syms) == 1:
                                 var = list(free_syms)[0]
                                 try:
                                     sols = sp.solve(eq_lhs - eq_rhs, var)
-                                    real_sols = [float(s.evalf()) for s in sols if s.is_real]
-                                    
+                                    real_sols = [
+                                        float(s.evalf()) for s in sols if s.is_real
+                                    ]
+
                                     if not real_sols:
                                         consistent = False
                                         break
-                                    
+
                                     if str(var) not in symbol_values:
                                         symbol_values[str(var)] = []
                                     symbol_values[str(var)].append(real_sols)
@@ -1606,37 +1617,51 @@ def find_function_from_data(
                         else:
                             consistent = False
                             break
-                    
+
                     if consistent:
                         inferred_vars = {}
                         for var_name, lists in symbol_values.items():
                             if lists:
                                 candidates = lists[0]
                                 for cand in candidates:
-                                    if all(any(np.isclose(cand, o, atol=0.1) for o in other) for other in lists[1:]):
+                                    if all(
+                                        any(
+                                            np.isclose(cand, o, atol=0.1) for o in other
+                                        )
+                                        for other in lists[1:]
+                                    ):
                                         inferred_vars[var_name] = cand
                                         break
                                 else:
                                     consistent = False
                                     break
-                        
+
                         if consistent and inferred_vars:
-                            inference_msg = ", ".join([f"{k} = {v}" for k, v in inferred_vars.items()])
-                            return (True, func_str, factored, (msg or "") + f" (Inferred: {inference_msg})")
+                            inference_msg = ", ".join(
+                                [f"{k} = {v}" for k, v in inferred_vars.items()]
+                            )
+                            return (
+                                True,
+                                func_str,
+                                factored,
+                                (msg or "") + f" (Inferred: {inference_msg})",
+                            )
                         elif consistent:
                             return (True, func_str, factored, msg)
-                    
+
                     if not consistent and not try_skip:
                         continue
                 except Exception:
                     if not try_skip:
                         continue
-        
+
         if numeric_data:
-            success, func_str, factored, msg = find_function_from_data(numeric_data, param_names, skip_linear=True)
+            success, func_str, factored, msg = find_function_from_data(
+                numeric_data, param_names, skip_linear=True
+            )
             if success:
                 return (True, func_str, factored, msg)
-    
+
     # Use numeric data if available, otherwise use all data
     active_data = numeric_data if numeric_data else data_points
 
@@ -1644,11 +1669,14 @@ def find_function_from_data(
     input_map = {}
     for x_tuple, y_val in active_data:
         try:
-            x_key = tuple(round(x if isinstance(x, float) else eval_to_float(x), 9) for x in x_tuple)
+            x_key = tuple(
+                round(x if isinstance(x, float) else eval_to_float(x), 9)
+                for x in x_tuple
+            )
             y_float = y_val if isinstance(y_val, float) else eval_to_float(y_val)
         except ValueError:
             continue
-        
+
         if x_key in input_map:
             prev_y = input_map[x_key]
             if not np.isclose(prev_y, y_float, atol=1e-7):
@@ -1660,7 +1688,7 @@ def find_function_from_data(
                 )
         else:
             input_map[x_key] = y_float
-    
+
     # Override data_points with active_data for rest of function
     data_points = active_data
 
@@ -2011,7 +2039,10 @@ def find_function_from_data(
                     else:
                         # Try symbolic constant detection for 'a'
                         try:
-                            from .function_finder_advanced import detect_symbolic_constant
+                            from .function_finder_advanced import (
+                                detect_symbolic_constant,
+                            )
+
                             sym_a = detect_symbolic_constant(a, tolerance=1e-4)
                             if sym_a is not None:
                                 s_a = str(sym_a).replace(" ", "")
@@ -3013,35 +3044,45 @@ def find_function_from_data(
 
         if best_result:
             success, func_str, confidence_note, mse = best_result
-            
+
             # Calculate R² for the best result
-            y_var = sum((y - sum(y_data) / len(y_data)) ** 2 for y in y_data) / len(y_data)
+            y_var = sum((y - sum(y_data) / len(y_data)) ** 2 for y in y_data) / len(
+                y_data
+            )
             r_squared = 1 - (mse / y_var) if y_var > 1e-10 else 0.0
-            
+
             # If R² is low (<0.95), try polyfit for high-degree polynomials
             if r_squared < 0.95 and n_params == 1:
                 import sympy as sp
+
                 x_vals = np.array([X_data[i][0] for i in range(len(X_data))])
                 y_vals = np.array(y_data)
-                
+
                 # Filter out inf/nan values
                 valid_mask = np.isfinite(x_vals) & np.isfinite(y_vals)
                 x_clean = x_vals[valid_mask]
                 y_clean = y_vals[valid_mask]
-                
+
                 if len(x_clean) >= 6:  # Need at least 6 points for degree 5
                     for degree in [5, 4, 3]:  # Try highest degree first
                         if len(x_clean) > degree:
                             try:
                                 coeffs = np.polyfit(x_clean, y_clean, degree)
                                 poly_func = np.poly1d(coeffs)
-                                poly_mse = np.mean((poly_func(x_clean) - y_clean)**2)
-                                
+                                poly_mse = np.mean((poly_func(x_clean) - y_clean) ** 2)
+
                                 # Check if polyfit is better
                                 poly_y_var = np.var(y_clean)
-                                poly_r_squared = 1 - (poly_mse / poly_y_var) if poly_y_var > 1e-10 else 0.0
-                                
-                                if poly_r_squared > 0.9999 and poly_r_squared > r_squared:
+                                poly_r_squared = (
+                                    1 - (poly_mse / poly_y_var)
+                                    if poly_y_var > 1e-10
+                                    else 0.0
+                                )
+
+                                if (
+                                    poly_r_squared > 0.9999
+                                    and poly_r_squared > r_squared
+                                ):
                                     # Polyfit is much better! Use it.
                                     x_sym = sp.Symbol(param_names[0])
                                     expr = sp.Float(0)
@@ -3053,39 +3094,42 @@ def find_function_from_data(
                                             c = c_rounded
                                         if abs(c) > 1e-10:
                                             expr += c * x_sym**power
-                                    
+
                                     func_str = str(expr)
-                                    print(f"Polyfit found degree-{degree}: {func_str} (R²={poly_r_squared:.6f})")
+                                    print(
+                                        f"Polyfit found degree-{degree}: {func_str} (R²={poly_r_squared:.6f})"
+                                    )
                                     return (True, func_str, None, None)
                             except Exception:
                                 pass  # Try next degree
-            
+
             return (success, func_str, None, confidence_note)
 
         # FALLBACK: Try high-degree polynomial fitting (degrees 3, 4, 5)
         # This can discover functions like 3x^5 - 5x^3 that template-based methods miss
         if n_params == 1:
             import sympy as sp
+
             x_vals = np.array([X_data[i][0] for i in range(len(X_data))])
             y_vals = np.array(y_data)
-            
+
             # Filter out inf/nan values
             valid_mask = np.isfinite(x_vals) & np.isfinite(y_vals)
             x_clean = x_vals[valid_mask]
             y_clean = y_vals[valid_mask]
-            
+
             if len(x_clean) >= 4:  # Need at least 4 points for degree 3
                 for degree in [3, 4, 5]:
                     if len(x_clean) > degree:  # Need n > degree to avoid overfitting
                         try:
                             coeffs = np.polyfit(x_clean, y_clean, degree)
                             poly_func = np.poly1d(coeffs)
-                            mse = np.mean((poly_func(x_clean) - y_clean)**2)
-                            
+                            mse = np.mean((poly_func(x_clean) - y_clean) ** 2)
+
                             # Require very good fit to avoid overfitting
                             y_var = np.var(y_clean)
                             r_squared = 1 - (mse / y_var) if y_var > 1e-10 else 0.0
-                            
+
                             if r_squared > 0.9999:  # Very strict threshold
                                 # Convert coeffs to SymPy expression
                                 x_sym = sp.Symbol(param_names[0])
@@ -3098,13 +3142,16 @@ def find_function_from_data(
                                         c = c_rounded
                                     if abs(c) > 1e-10:
                                         expr += c * x_sym**power
-                                
+
                                 func_str = str(expr)
-                                print(f"DEBUG: Polyfit found degree-{degree}: {func_str} (R²={r_squared:.6f})", file=sys.stderr)
+                                print(
+                                    f"DEBUG: Polyfit found degree-{degree}: {func_str} (R²={r_squared:.6f})",
+                                    file=sys.stderr,
+                                )
                                 return (True, func_str, None, None)
                         except Exception:
                             pass  # Try next degree
-        
+
         print("DEBUG: Advanced Solver failed to find a model.", file=sys.stderr)
         return (False, None, None, None)
 
@@ -4299,7 +4346,7 @@ def find_function_from_data(
                                     # Extract a particular solution by setting free variables to 0
                                     # Replace free variables (like tau0, tau1, etc.) with 0
                                     coeffs = coeffs_param.subs(
-                                        {var: 0 for var in coeffs_param.free_symbols}
+                                        dict.fromkeys(coeffs_param.free_symbols, 0)
                                     )
 
                                     # Convert to Matrix if needed
@@ -4419,7 +4466,7 @@ def find_function_from_data(
                                 coeffs_temp = sol_result[0]
                                 # Replace free variables with 0 to get a particular solution
                                 coeffs = coeffs_temp.subs(
-                                    {var: 0 for var in coeffs_temp.free_symbols}
+                                    dict.fromkeys(coeffs_temp.free_symbols, 0)
                                 )
                                 if isinstance(coeffs, list):
                                     coeffs = sp.Matrix(coeffs)
@@ -5077,7 +5124,6 @@ def update_function_registry_from_dump(dump: dict[str, tuple[list[str], str]]) -
     Args:
         dump: Dict mapping function name to (params, body_str)
     """
-    global _function_registry
 
     # Clear existing registry to ensure we match the dump exactly
     _function_registry.clear()
@@ -5296,7 +5342,7 @@ def load_functions() -> tuple[bool, str]:
         if not FUNCTION_STORAGE_PATH.exists():
             return (False, "No saved functions found.")
 
-        with open(FUNCTION_STORAGE_PATH, "r", encoding="utf-8") as f:
+        with open(FUNCTION_STORAGE_PATH, encoding="utf-8") as f:
             data = json.load(f)
 
         if not isinstance(data, dict):

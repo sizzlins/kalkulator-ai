@@ -1,6 +1,7 @@
 from ..types import EvalResult
 from ..worker import evaluate_safely
 
+
 def eval_user_expression(expr: str) -> EvalResult:
     data = evaluate_safely(expr)
     if not data.get("ok"):

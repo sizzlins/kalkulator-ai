@@ -1,16 +1,21 @@
 import re
-import sympy as sp
 from typing import Any
-from ..worker import evaluate_safely
+
+import sympy as sp
+
 from ..parser import parse_preprocessed
 from ..types import ParseError, ValidationError
+from ..worker import evaluate_safely
 
 try:
     from ..logging_config import get_logger
+
     logger = get_logger("solver.inequality")
 except ImportError:
     import logging
+
     logger = logging.getLogger("solver.inequality")
+
 
 def _parse_relational_fallback(rel_str: str) -> sp.Basic:
     """Parse a relational expression fallback method.

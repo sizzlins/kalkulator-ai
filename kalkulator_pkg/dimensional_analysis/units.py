@@ -208,7 +208,7 @@ class Quantity:
 
 
 def find_dimensionless_groups(
-    quantities: list[tuple[str, Dimension]]
+    quantities: list[tuple[str, Dimension]],
 ) -> list[dict[str, int]]:
     """Apply Buckingham Pi theorem to find dimensionless groups.
 

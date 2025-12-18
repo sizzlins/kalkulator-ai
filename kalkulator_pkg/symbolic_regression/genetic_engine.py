@@ -1,11 +1,11 @@
 """Genetic Programming Symbolic Regression Engine."""
+
 import random
 import time
 from dataclasses import dataclass, field
 
 import numpy as np
 import sympy as sp
-from sklearn.base import BaseEstimator, RegressorMixin
 
 from .expression_tree import BINARY_OPERATORS, UNARY_OPERATORS, ExpressionTree
 from .operators import (
@@ -14,7 +14,6 @@ from .operators import (
     hoist_mutation,
     point_mutation,
     shrink_mutation,
-    subtree_mutation,
 )
 from .pareto_front import ParetoFront, ParetoSolution
 
@@ -124,28 +123,31 @@ class GeneticSymbolicRegressor:
             complexity = tree.complexity()
             if complexity > 50:  # Very complex expressions often cause hangs
                 return float("inf")
-            
+
             # Check expression for patterns that cause SymPy to hang
-            expr_str = str(tree.expression) if hasattr(tree, 'expression') else ""
-            
+            expr_str = str(tree.expression) if hasattr(tree, "expression") else ""
+
             # Too many nested powers
             if expr_str.count("**") > 5:
                 return float("inf")
-            
+
             # Large fractional exponents cause _integer_nthroot_python to hang
             # Match patterns like x**(12345/67890) where numerator > 10000
             import re
-            large_frac_pattern = re.compile(r'\*\*\s*\(?(-?\d{5,})')  # 5+ digit numbers in power
+
+            large_frac_pattern = re.compile(
+                r"\*\*\s*\(?(-?\d{5,})"
+            )  # 5+ digit numbers in power
             if large_frac_pattern.search(expr_str):
                 return float("inf")
-            
+
             # Also check for nested power of power like (x**a)**b
             if "**(" in expr_str and expr_str.count("**") > 2:
                 return float("inf")
-            
+
             # Now safe to evaluate
             predictions = tree.evaluate(X)
-            
+
             # Use Huber loss for robustness against outliers
             # This prevents a single outlier from dominating the fitness
             loss = huber_loss(y, predictions, delta=1.35)
@@ -176,12 +178,12 @@ class GeneticSymbolicRegressor:
             # Clip predictions to avoid overflow in square
             # Use float64 max sqrt approx 1e150, but let's be safer 1e100
             np.clip(predictions, -1e100, 1e100, out=predictions)
-            
+
             diff = predictions - y
             # Further protection against squaring large diffs
             np.clip(diff, -1e100, 1e100, out=diff)
-            
-            return float(np.mean(diff ** 2))
+
+            return float(np.mean(diff**2))
         except (OverflowError, ValueError, RuntimeWarning):
             return float("inf")
         except Exception:
@@ -202,46 +204,56 @@ class GeneticSymbolicRegressor:
             List of random ExpressionTrees
         """
         population = []
-        
+
         # Strategy 1: Inject seeds with multiple copies for survival
         # Single seeds get overwhelmed by random population - inject ~10% as seed copies
         injected_count = 0
-        seed_copies_target = max(10, n_individuals // 10)  # At least 10, or 10% of population
-        
+        seed_copies_target = max(
+            10, n_individuals // 10
+        )  # At least 10, or 10% of population
+
         if self.config.seeds:
             for seed_str in self.config.seeds:
                 try:
                     import sympy as sp
+
                     local_dict = {v: sp.Symbol(v) for v in variables}
                     expr = sp.sympify(seed_str, locals=local_dict)
                     tree = ExpressionTree.from_sympy(expr, variables)
                     tree.age = 0
-                    
+
                     # Add original seed
                     population.append(tree)
                     injected_count += 1
-                    
+
                     # Add mutated copies to fill ~10% of population
-                    copies_to_add = min(seed_copies_target - 1, n_individuals - len(population))
+                    copies_to_add = min(
+                        seed_copies_target - 1, n_individuals - len(population)
+                    )
                     unmutated_count = max(1, copies_to_add // 5)  # Keep 20% unmutated
-                    
+
                     for i in range(copies_to_add):
                         copy = tree.copy()
                         # First 20% of copies: keep exact (no mutation)
                         # Remaining 80%: mutate for diversity
                         if i >= unmutated_count:
                             from .operators import point_mutation
-                            copy = point_mutation(copy, mutation_rate=0.3, operators=self.config.operators)
+
+                            copy = point_mutation(
+                                copy, mutation_rate=0.3, operators=self.config.operators
+                            )
                         copy.age = 0
                         population.append(copy)
                         injected_count += 1
-                        
+
                 except Exception as e:
                     if self.config.verbose:
                         print(f"Warning: Failed to seed '{seed_str[:50]}...': {e}")
-            
+
             if self.config.verbose and injected_count > 0:
-                print(f"Injected {injected_count} seed expressions (including copies) into population")
+                print(
+                    f"Injected {injected_count} seed expressions (including copies) into population"
+                )
 
         # Ramped half-and-half: vary depth and method
         depths = range(2, self.config.max_depth + 1)
@@ -294,9 +306,7 @@ class GeneticSymbolicRegressor:
         new_population = []
 
         # Elitism
-        new_population.extend(
-            [t.copy() for t in population[: self.config.elitism]]
-        )
+        new_population.extend([t.copy() for t in population[: self.config.elitism]])
 
         # Selection and breeding
         while len(new_population) < self.config.population_size:
@@ -308,7 +318,7 @@ class GeneticSymbolicRegressor:
                 offspring1, offspring2 = crossover(parent1, parent2)
                 offspring1.age = 0
                 new_population.append(offspring1)
-                
+
                 if len(new_population) < self.config.population_size:
                     offspring2.age = 0
                     new_population.append(offspring2)
@@ -336,7 +346,11 @@ class GeneticSymbolicRegressor:
             for i in range(min(2, len(new_population))):  # Reduced from 5
                 idx = random.randrange(len(new_population))
                 new_population[idx] = constant_optimization(
-                    new_population[idx], X, y, learning_rate=0.1, iterations=2  # Reduced from 5
+                    new_population[idx],
+                    X,
+                    y,
+                    learning_rate=0.1,
+                    iterations=2,  # Reduced from 5
                 )
 
         return new_population
@@ -441,10 +455,11 @@ class GeneticSymbolicRegressor:
         # Strategy 7: Symbolic Gradient Boosting Loop
         current_model_tree = None
         y_residual = y.copy()
-        
+
         rounds = self.config.boosting_rounds
-        if rounds < 1: rounds = 1
-        
+        if rounds < 1:
+            rounds = 1
+
         final_front = ParetoFront()
 
         # Data split strategy (skip if too few samples)
@@ -455,6 +470,7 @@ class GeneticSymbolicRegressor:
         else:
             try:
                 from sklearn.model_selection import train_test_split
+
                 X_train, X_val, y_train, y_val = train_test_split(
                     X, y, test_size=0.2, random_state=42
                 )
@@ -467,7 +483,7 @@ class GeneticSymbolicRegressor:
         y_min, y_max = y.min(), y.max()
         y_range = y_max - y_min
         self._normalization = None
-        
+
         if y_range > 1000:
             # Normalize to [0,1] range
             y_train = (y_train - y_min) / (y_range + 1e-10)
@@ -486,7 +502,7 @@ class GeneticSymbolicRegressor:
             self.best_tree = None
             self.generation = 0
             self.history = []
-            
+
             # Initialize islands
             islands = []
             for _ in range(self.config.n_islands):
@@ -507,14 +523,19 @@ class GeneticSymbolicRegressor:
                 self.generation = gen
 
                 # Check timeout
-                if self.config.timeout and (time.time() - start_time) > self.config.timeout:
+                if (
+                    self.config.timeout
+                    and (time.time() - start_time) > self.config.timeout
+                ):
                     if self.config.verbose:
                         print(f"Timeout after {gen} generations")
                     break
 
                 # Evolve each island
                 for i, island in enumerate(islands):
-                    islands[i] = self._evolve_population(island, X, y_residual, gen) # Train on Residual
+                    islands[i] = self._evolve_population(
+                        island, X, y_residual, gen
+                    )  # Train on Residual
 
                 # Migration
                 if gen > 0 and gen % self.config.migration_interval == 0:
@@ -523,71 +544,83 @@ class GeneticSymbolicRegressor:
                 # Update Pareto front
                 for island in islands:
                     self._update_pareto_front(island, X, y_residual)
-                    
+
                 # Early stop check (on Residual)
                 best_res = self.pareto_front.get_best()
                 if best_res and best_res.mse < self.config.early_stop_mse:
-                     if self.config.verbose: print(f"Early stop: MSE {best_res.mse:.2e}")
-                     break
+                    if self.config.verbose:
+                        print(f"Early stop: MSE {best_res.mse:.2e}")
+                    break
 
             # End of Round
             # 1. Get best model from this round
             best_round = self.pareto_front.get_best()
             if not best_round:
-                if self.config.verbose: print("Warning: No solution found in this round.")
+                if self.config.verbose:
+                    print("Warning: No solution found in this round.")
                 break
-                
+
             # 2. Merge into composite model
             if current_model_tree is None:
                 current_model_tree = best_round.tree
             else:
                 # Merge: F_new = F_old + f_round
                 from .expression_tree import ExpressionNode, NodeType
-                
+
                 # Create 'add' node
-                root = ExpressionNode(NodeType.BINARY_OP, "add", [current_model_tree.root.copy_subtree(), best_round.tree.root.copy_subtree()])
+                root = ExpressionNode(
+                    NodeType.BINARY_OP,
+                    "add",
+                    [
+                        current_model_tree.root.copy_subtree(),
+                        best_round.tree.root.copy_subtree(),
+                    ],
+                )
                 root.children[0].parent = root
                 root.children[1].parent = root
-                
+
                 # Careful: variable names from original context
                 current_model_tree = ExpressionTree(root, variable_names)
-                
+
             # 3. Update residual
             # y_residual = y_original - current_model_pred
             preds = current_model_tree.evaluate(X)
             y_residual = y - preds
-            
+
             final_mse = np.mean(y_residual**2)
             if final_mse < self.config.early_stop_mse:
-                if self.config.verbose: print(f"Boosting converged. Final MSE: {final_mse:.6e}")
+                if self.config.verbose:
+                    print(f"Boosting converged. Final MSE: {final_mse:.6e}")
                 break
 
         # Return final result
         if rounds > 1:
-             final_front = ParetoFront()
-             if current_model_tree:
-                 current_model_tree.fitness = self._calculate_fitness(current_model_tree, X, y)
-                 # Create proper solution object
-                 try:
-                     expr_str = current_model_tree.to_pretty_string()
-                     try:
+            final_front = ParetoFront()
+            if current_model_tree:
+                current_model_tree.fitness = self._calculate_fitness(
+                    current_model_tree, X, y
+                )
+                # Create proper solution object
+                try:
+                    expr_str = current_model_tree.to_pretty_string()
+                    try:
                         sympy_expr = current_model_tree.to_sympy()
-                     except:
+                    except:
                         sympy_expr = sp.sympify(0)
-                        
-                     sol = ParetoSolution(
+
+                    sol = ParetoSolution(
                         expression=expr_str,
                         sympy_expr=sympy_expr,
-                        mse=current_model_tree.fitness, # APPROX
+                        mse=current_model_tree.fitness,  # APPROX
                         complexity=current_model_tree.complexity(),
-                        tree=current_model_tree
-                     )
-                     final_front.add(sol)
-                 except:
-                     pass
-             return final_front
+                        tree=current_model_tree,
+                    )
+                    final_front.add(sol)
+                except:
+                    pass
+            return final_front
         else:
-             return self.pareto_front
+            return self.pareto_front
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         """Predict using the best evolved model.

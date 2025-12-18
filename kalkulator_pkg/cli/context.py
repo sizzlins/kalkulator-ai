@@ -1,9 +1,11 @@
 from dataclasses import dataclass, field
-from typing import Optional, List, Tuple
+from typing import List, Optional, Tuple
+
 
 @dataclass
 class ReplContext:
     """Holds the state of the interactive REPL session."""
+
     timing_enabled: bool = False
     cache_hits_enabled: bool = False
     logging_enabled: bool = False

@@ -1,13 +1,18 @@
-import sympy as sp
 from typing import Any
+
+import sympy as sp
+
 from ..parser import parse_preprocessed
 
 try:
     from ..logging_config import get_logger
+
     logger = get_logger("solver.inverse")
 except ImportError:
     import logging
+
     logger = logging.getLogger("solver.inverse")
+
 
 def solve_inverse_function(
     func_name: str, target_value: str, param_names: list[str]

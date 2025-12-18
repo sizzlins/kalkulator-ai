@@ -1,29 +1,35 @@
-import sympy as sp
 from typing import Any
-from ..worker import evaluate_safely
+
+import sympy as sp
+
+from ..config import NUMERIC_FALLBACK_ENABLED, NUMERIC_TOLERANCE
 from ..parser import parse_preprocessed
 from ..types import ParseError, ValidationError
-from ..config import NUMERIC_FALLBACK_ENABLED, NUMERIC_TOLERANCE
-
+from ..worker import evaluate_safely
 from .algebraic import (
+    _solve_linear_equation,
+    _solve_polynomial_equation,
+    _solve_quadratic_equation,
     is_pell_equation_from_eq,
     solve_pell_equation_from_eq,
-    _solve_linear_equation,
-    _solve_quadratic_equation,
-    _solve_polynomial_equation,
 )
 from .modular import _solve_modulo_equation
 from .numeric import _numeric_roots_for_single_var
 
 try:
     from ..logging_config import get_logger
+
     logger = get_logger("solver.dispatch")
 except ImportError:
     import logging
+
     logger = logging.getLogger("solver.dispatch")
 
+
 def solve_single_equation(
-    eq_str: str, find_var: str | None = None, allowed_functions: frozenset[str] | None = None
+    eq_str: str,
+    find_var: str | None = None,
+    allowed_functions: frozenset[str] | None = None,
 ) -> dict[str, Any]:
     """
     Solve a single equation.
@@ -133,8 +139,12 @@ def solve_single_equation(
             "error_code": error_code,
         }
     try:
-        left_expr = parse_preprocessed(lhs["result"], allowed_functions=allowed_functions)
-        right_expr = parse_preprocessed(rhs["result"], allowed_functions=allowed_functions)
+        left_expr = parse_preprocessed(
+            lhs["result"], allowed_functions=allowed_functions
+        )
+        right_expr = parse_preprocessed(
+            rhs["result"], allowed_functions=allowed_functions
+        )
     except (ParseError, ValidationError) as e:
         logger.warning("Parse error assembling SymPy expressions", exc_info=True)
         return {"ok": False, "error": f"Parse error: {e}", "error_code": "PARSE_ERROR"}

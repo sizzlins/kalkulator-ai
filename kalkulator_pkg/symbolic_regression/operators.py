@@ -220,10 +220,10 @@ def constant_optimization(
     # Current fitness
     try:
         pred = new_tree.evaluate(X)
-        np.clip(pred, -1e100, 1e100, out=pred) # Guard overflow
+        np.clip(pred, -1e100, 1e100, out=pred)  # Guard overflow
         diff = pred - y
-        np.clip(diff, -1e100, 1e100, out=diff) # Guard square
-        current_mse = np.mean(diff ** 2)
+        np.clip(diff, -1e100, 1e100, out=diff)  # Guard square
+        current_mse = np.mean(diff**2)
     except Exception:
         return new_tree
 
@@ -242,11 +242,11 @@ def constant_optimization(
 
                 try:
                     pred = new_tree.evaluate(X)
-                    np.clip(pred, -1e100, 1e100, out=pred) # Guard overflow
+                    np.clip(pred, -1e100, 1e100, out=pred)  # Guard overflow
                     diff = pred - y
-                    np.clip(diff, -1e100, 1e100, out=diff) # Guard square
-                    
-                    new_mse = np.mean(diff ** 2)
+                    np.clip(diff, -1e100, 1e100, out=diff)  # Guard square
+
+                    new_mse = np.mean(diff**2)
 
                     if new_mse < current_mse:
                         current_mse = new_mse

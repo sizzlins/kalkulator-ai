@@ -9,8 +9,8 @@ import uuid
 from functools import lru_cache
 from typing import Any
 
-import sympy as sp
 import numpy as np
+import sympy as sp
 
 from .config import (
     CACHE_SIZE_SOLVE,
@@ -108,9 +108,9 @@ def _format_evaluation_result(expr: sp.Basic) -> str:
     # Try numeric evaluation first for exact results
     try:
         num_val = sp.N(expr, 15)
-        
+
         # Check for practically zero (works for complex Add expressions too)
-        
+
         if hasattr(num_val, "is_Number") and num_val.is_Number:
             # Check if it's real (imaginary part is negligible)
             try:
@@ -336,7 +336,9 @@ def worker_evaluate(
         except (OSError, ValueError) as e:
             logger.warning(f"Failed to apply resource limits: {e}")
     try:
-        expr = parse_preprocessed(preprocessed_expr, allowed_functions=allowed_functions)
+        expr = parse_preprocessed(
+            preprocessed_expr, allowed_functions=allowed_functions
+        )
     except ValidationError as e:
         logger.warning(f"Validation error: {e.code} - {e.message}")
         return {"ok": False, "error": str(e), "error_code": e.code}
@@ -400,12 +402,12 @@ def worker_evaluate(
         try:
             # Skip floating point approx for containers
             if isinstance(res, (list, tuple, np.ndarray)):
-                 approx = None
+                approx = None
             else:
-                 approx_val = sp.N(res)
-                 approx_str = str(approx_val)
-                 if approx_str not in ("zoo", "oo", "-oo", "nan"):
-                     approx = approx_str
+                approx_val = sp.N(res)
+                approx_str = str(approx_val)
+                if approx_str not in ("zoo", "oo", "-oo", "nan"):
+                    approx = approx_str
         except (ValueError, TypeError, ArithmeticError, AttributeError):
             approx = None
         return {
@@ -1264,7 +1266,9 @@ def _worker_solve_cached(payload_json: str) -> str:
 
 
 def evaluate_safely(
-    expr: str, timeout: int = WORKER_TIMEOUT, allowed_functions: frozenset[str] | None = None
+    expr: str,
+    timeout: int = WORKER_TIMEOUT,
+    allowed_functions: frozenset[str] | None = None,
 ) -> dict[str, Any]:
     """Safely evaluate an expression string via worker sandbox."""
     from .cache_manager import clear_cache_hits, get_cache_hits
@@ -1436,11 +1440,15 @@ class Worker:
 
         except Exception as e:
             return f"Error: {str(e)}"
+
     def evaluate_ast(self, node):
         """Recursively evaluate the AST."""
         node_type = node["type"]
 
         if node_type == "Assignment":
+            # Extract the target variable name and value from the node
+            var_name = node.get("name") or node.get("target")
+            value_node = node.get("value")
 
             # Helper to check if it's a function definition (simplified)
             # Assuming parser marks function definitions clearly or we detect args

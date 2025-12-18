@@ -1,5 +1,7 @@
 import sympy as sp
+
 from ..config import NUMERIC_TOLERANCE
+
 
 def is_pell_equation_from_eq(eq: sp.Eq) -> bool:
     """
@@ -59,7 +61,7 @@ def is_pell_equation_from_eq(eq: sp.Eq) -> bool:
 def fundamental_solution(D: int) -> tuple[int, int]:
     """
     Find the fundamental solution to Pell's equation x^2 - D*y^2 = 1.
-    
+
     DEPRECATED: Replaced by sympy.solvers.diophantine
     """
     # LEGACY MANUAL IMPLEMENTATION (COMMENTED OUT FOR PRESERVATION)
@@ -134,44 +136,45 @@ def solve_pell_equation_from_eq(eq: sp.Eq) -> str:
     try:
         # USE STANDARD LIBRARY: sympy.solvers.diophantine
         from sympy.solvers.diophantine import diophantine
-        
+
         # diophantine returns a set of tuples representing solutions
         # e.g., {(x(t), y(t)), ...}
         solutions = diophantine(eq)
-        
+
         if not solutions:
             return "No integer solutions found."
-            
+
         # Take the first solution family (usually the positive one for Pell)
         # Note: formatting might need to be pretty, but this is robust.
         sol_list = list(solutions)
-        
+
         # Format explicitly
         syms = list(eq.free_symbols)
         # We need to map the result expressions back to x and y
-        # diophantine returns values in alphabetical order of symbols? 
+        # diophantine returns values in alphabetical order of symbols?
         # Actually it returns based on how it parsed them.
         # Let's assume standard x, y order if input was structured that way.
         # Ideally we match symbols.
-        
+
         # Safe fallback: just stringify the first solution
         # sol_list[0] is a tuple (val_1, val_2) corresponding to sorted(eq.free_symbols)
         sorted_syms = sorted(syms, key=lambda s: s.name)
-        
+
         final_str_parts = []
-        # Usually there are multiple families (positive/negative). 
+        # Usually there are multiple families (positive/negative).
         # We'll just show the first one or all of them.
         for i, sol_tuple in enumerate(sol_list):
             # Limit to 1 family to avoid clutter? Pell has infinite, represented by 't'.
-            if i >= 1: break # Just show one general form
-            
+            if i >= 1:
+                break  # Just show one general form
+
             for var, expr in zip(sorted_syms, sol_tuple):
                 final_str_parts.append(f"{var} = {expr}")
-                
+
         return "\n".join(final_str_parts)
 
     except Exception:
-        # Fallback to legacy string if something goes wrong? 
+        # Fallback to legacy string if something goes wrong?
         # No, we want to know if it fails. Return error string.
         return "Error: Could not solve Pell equation."
 
@@ -188,6 +191,7 @@ def solve_pell_equation_from_eq(eq: sp.Eq) -> str:
     #     2 * sp.sqrt(D)
     # )
     # return f"{x_sym} = {sol_x}\n{y_sym} = {sol_y}"
+
 
 def _solve_linear_equation(equation: sp.Eq, variable: sp.Symbol) -> list[sp.Basic]:
     """Solve a linear equation of the form a*x + b = 0.

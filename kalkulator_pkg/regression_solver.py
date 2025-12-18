@@ -37,28 +37,33 @@ def _symbolify_coefficient(val):
         # 1. Fast Path: Integers
         rounded = round(val)
         if abs(val - rounded) < 1e-9:
-             if rounded == 1: return None # Will be handled as implicit 1
-             if rounded == -1: return None # Will be handled as implicit -1
-             return str(int(rounded))
+            if rounded == 1:
+                return None  # Will be handled as implicit 1
+            if rounded == -1:
+                return None  # Will be handled as implicit -1
+            return str(int(rounded))
 
         # 2. Fast Path: Simple Fractions
         # (detect_symbolic_constant covers this, but this is faster for common cases)
         for denom in [2, 3, 4, 5, 6, 8, 10, 12]:
             for num in range(-24, 25):
-                if num == 0: continue
+                if num == 0:
+                    continue
                 frac_val = num / denom
                 if abs(val - frac_val) < 1e-9:
-                    if denom == 1: return str(num)
+                    if denom == 1:
+                        return str(num)
                     return f"{num}/{denom}" if num > 0 else f"({num}/{denom})"
 
         # 3. Robust Symbolic Detection (Pi, e, sqrt, etc.)
         from .function_finder_advanced import detect_symbolic_constant
+
         sym = detect_symbolic_constant(val, tolerance=1e-4)
         if sym is not None:
-             s = str(sym).replace(" ", "")
-             # SymPy might return "1*pi", clean it up
-             s = s.replace("1*pi", "pi")
-             return s
+            s = str(sym).replace(" ", "")
+            # SymPy might return "1*pi", clean it up
+            s = s.replace("1*pi", "pi")
+            return s
 
         return None
     except Exception:
@@ -76,7 +81,7 @@ def solve_regression_stage(
     try:
         X_arr = np.array(X_data, dtype=float)
         y_arr = np.array(y_data, dtype=float)
-        
+
         # Preserve original for pole detection
         X_original = X_arr.copy()
         y_original = y_arr.copy()
@@ -259,11 +264,11 @@ def solve_regression_stage(
         # 1. Interactions are complex -> Penalize
         if "*" in name:
             penalty_factors[i] *= 2.0
-            
+
         # 2. Rationals are physical (Inverse laws) -> Boost
         if "/" in name:
-            penalty_factors[i] *= 0.5 # Moderate Boost
-            
+            penalty_factors[i] *= 0.5  # Moderate Boost
+
         # 3. Squares (x^2)
         if "^2" in name:
             if "*" not in name and "/" not in name:
@@ -286,11 +291,11 @@ def solve_regression_stage(
     if len(data_points) <= 20:
         # OMP with Physics Boost
         X_omp = X_norm.copy()
-        
+
         # Apply the same penalty/boost logic as Lasso
         # penalty < 1.0 means Boost > 1.0
         omp_boosts = 1.0 / penalty_factors
-        
+
         if include_transcendentals:
             # print(f"DEBUG FEATURES ({len(feature_names)}): {feature_names[:10]} ... {feature_names[-10:]}", flush=True)
             pass
@@ -371,8 +376,8 @@ def solve_regression_stage(
                 scale = 20.0
 
             if scale > 1.0:
-                omp_boosts[i] *= scale 
-        
+                omp_boosts[i] *= scale
+
         # Apply the final boosts to X_omp columns
         # OMP selects based on dot product, so scaling up the column increases its selection probability
         for i in range(X_omp.shape[1]):
@@ -468,17 +473,19 @@ def solve_regression_stage(
         # Let's return empty selection which usually defaults to intercept IF intercept is implicit,
         # but here we might just want to return "failed" for this stage or "empty model".
         # Actually, if coeffs is None, usually it means we couldn't find a better fit than mean.
-            # Note: y_centered is available here.
+        # Note: y_centered is available here.
         fallback_model = {
             "name": "constant_fallback",
-            "mse": np.mean(y_centered ** 2), # Mean of squared centered values is variance
+            "mse": np.mean(
+                y_centered**2
+            ),  # Mean of squared centered values is variance
             "r2": 0.0,
             "complexity": 1.0,
-            "coefficients": np.array([0.0]), # Coefficient for centered data is 0
-            "feature_names": ["1"], 
+            "coefficients": np.array([0.0]),  # Coefficient for centered data is 0
+            "feature_names": ["1"],
             "feature_indices": [],
-            "sympy_obj": sp.Float(0.0), # Predict 0 offset from mean
-            "is_constant": True
+            "sympy_obj": sp.Float(0.0),  # Predict 0 offset from mean
+            "is_constant": True,
         }
         # solve_regression_stage expected return:
         # return success, func_str, confidence_note, mse
@@ -490,7 +497,12 @@ def solve_regression_stage(
         # So: y = y_mean.
         # Let's return Success.
         final_func_str = f"{y_mean:.10g}"
-        return True, final_func_str, "Constant function (Variance=0 or no features)", 0.0
+        return (
+            True,
+            final_func_str,
+            "Constant function (Variance=0 or no features)",
+            0.0,
+        )
 
     selected_indices = [i for i, c in enumerate(coeffs) if abs(c) > adaptive_threshold]
     max_features = min(len(data_points) - 1, 12)
@@ -680,7 +692,7 @@ def solve_regression_stage(
 
                 # Quick checks for obvious missed patterns
                 # PRIORITY: Specific hints (pole+trig) before generic hints (trig terms)
-                
+
                 # --- SMART HINT: Pole + Oscillation → Trig Composite ---
                 # When we detect a pole AND the data oscillates, suggest sin(c/(x-a))
                 try:
@@ -696,19 +708,22 @@ def solve_regression_stage(
                                 elif X_original.ndim == 2:
                                     pole_x = float(X_original[i, 0])
                                 break
-                    
+
                     # Check for oscillation (sign changes in filtered y values)
                     finite_vals = [v for v in y_values if np.isfinite(v)]
                     if len(finite_vals) > 3:
-                        sign_changes = sum(1 for i in range(len(finite_vals)-1)
-                                         if finite_vals[i] * finite_vals[i+1] < 0)
+                        sign_changes = sum(
+                            1
+                            for i in range(len(finite_vals) - 1)
+                            if finite_vals[i] * finite_vals[i + 1] < 0
+                        )
                         has_oscillation = sign_changes >= 3
-                        
+
                         if pole_x is not None and has_oscillation:
                             residual_hint = f" [Hint: Try sin(c/(x-{pole_x})) or cos(c/(x-{pole_x}))]"
                 except:
                     pass
-                
+
                 # Generic frequency hint (only if no specific hint yet)
                 if not residual_hint:
                     try:
@@ -742,7 +757,6 @@ def solve_regression_stage(
 
 
 def find_best_subset_small_data(X, y, max_subset_size=3, top_k=50, priorities=None):
-    from itertools import combinations
 
     n_features = X.shape[1]
 
@@ -770,6 +784,7 @@ def find_best_subset_small_data(X, y, max_subset_size=3, top_k=50, priorities=No
             corr *= priorities[i]
 
         correlations.append((corr, i))
+
 
 def find_best_subset_small_data(
     X, y, feature_names=None, max_subset_size=3, top_k=50, priorities=None
@@ -830,7 +845,9 @@ def find_best_subset_small_data(
                     if "/" in name:
                         penalty *= 1.1
                     # Transcendentals (exp, sin, log, tanh) -> +20% penalty
-                    if any(t in name for t in ["exp(", "log(", "sin(", "cos(", "tanh("]):
+                    if any(
+                        t in name for t in ["exp(", "log(", "sin(", "cos(", "tanh("]
+                    ):
                         penalty *= 1.2
                     # Complex Interactions (x*y)...
                     if "*" in name and "^2" not in name:  # Interactions
@@ -869,7 +886,9 @@ def find_best_subset_small_data(
         for c in combinations(top_indices, 2):
             subset = list(c)
             mse = _fit_mse(subset)
-            if mse < best_mse * 0.99:  # Strictness (changed 0.95 -> 0.99 to find similar)
+            if (
+                mse < best_mse * 0.99
+            ):  # Strictness (changed 0.95 -> 0.99 to find similar)
                 best_mse = mse
                 best_subset = subset
 

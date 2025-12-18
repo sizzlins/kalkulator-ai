@@ -1,9 +1,8 @@
-
-import math
-import re
 import json
 import logging
+import re
 from math import gcd
+
 import sympy as sp
 
 logger = logging.getLogger(__name__)
@@ -12,6 +11,7 @@ logger = logging.getLogger(__name__)
 try:
     from math import lcm as _math_lcm
 except ImportError:
+
     def _math_lcm(*args: int) -> int:
         if not args:
             return 1
@@ -19,6 +19,7 @@ except ImportError:
         for v in args[1:]:
             res = abs(res * v) // gcd(res, v)
         return res
+
 
 def parse_target_with_ambiguity_detection(
     target_str: str, max_small_denominator: int = 12
@@ -78,6 +79,7 @@ def parse_target_with_ambiguity_detection(
         except (TypeError, ValueError):
             raise ValueError(f"Cannot parse target '{target_str}'") from None
 
+
 def extended_gcd(a: int, b: int) -> tuple[int, int, int]:
     """Extended Euclidean algorithm.
     Returns (s, t, g) such that s*a + t*b = g = gcd(a, b).
@@ -89,6 +91,7 @@ def extended_gcd(a: int, b: int) -> tuple[int, int, int]:
         s = t1
         t = s1 - (a // b) * t1
         return (s, t, g)
+
 
 def compute_integerized_equation(
     coeffs: list[sp.Rational], target: sp.Rational, L_func: int
@@ -217,6 +220,7 @@ def find_integer_solutions_for_linear(equation, x, y):
         logger.exception("diophantine failed")
         # fallback: return empty and let caller decide
         return []
+
 
 def solve_modulo_system_if_applicable(
     parts: list[str], var: str, output_format: str = "human"

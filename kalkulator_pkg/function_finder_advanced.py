@@ -36,12 +36,12 @@ from .config import (
 # Set high precision for Decimal
 getcontext().prec = 50
 
-# Library of known constants for detection 
+# Library of known constants for detection
 # (Restricted to common physics constants to avoid false positives like EulerGamma)
 KNOWN_CONSTANTS = {
     "pi": sp.pi,
     "e": sp.E,
-    "E": sp.E, 
+    "E": sp.E,
     "sqrt(2)": sp.sqrt(2),
     "sqrt(3)": sp.sqrt(3),
     # Removed rarer constants to prevent hallucinations in regression
@@ -80,9 +80,9 @@ def detect_symbolic_constant(
         (sp.log(3), 1.09861228867),
         (sp.log(10), 2.30258509299),
         (sp.pi, 3.14159265359),
-        (sp.E, 2.71828182846)
+        (sp.E, 2.71828182846),
     ]
-    
+
     for sym_cand, val_cand in log_candidates:
         if abs(float_val - val_cand) < tolerance:
             return sym_cand
@@ -103,7 +103,7 @@ def detect_symbolic_constant(
                 try:
                     # RESTRICT DENOMINATOR: We only want nice multiples like pi/2, 4/3*pi
                     # NOT 209/67 * pi.
-                    frac = Fraction(ratio).limit_denominator(12) 
+                    frac = Fraction(ratio).limit_denominator(12)
                     if abs(ratio - float(frac)) < tolerance:
                         # Success! Return fraction * constant
                         if frac == 1:
@@ -120,21 +120,18 @@ def detect_symbolic_constant(
         # We need to provide constants explicitly for best results
         constants_list = [sp.pi, sp.E, sp.sqrt(2), sp.sqrt(3), sp.sqrt(5)]
         simplified = sp.nsimplify(
-            float_val,
-            tolerance=tolerance,
-            constants=constants_list,
-            rational=True
+            float_val, tolerance=tolerance, constants=constants_list, rational=True
         )
 
         # Check if simplified result actually contains our constants
         # (nsimplify sometimes just returns a fraction)
         if simplified.has(sp.pi) or simplified.has(sp.E) or simplified.has(sp.sqrt):
-             # Double check numerical accuracy
-             if abs(float_val - float(simplified.evalf())) < tolerance:
-                 # Extra check: Is it simple?
-                 den = sp.denom(simplified)
-                 if abs(den) <= 24: # Reject weird denominators
-                     return simplified
+            # Double check numerical accuracy
+            if abs(float_val - float(simplified.evalf())) < tolerance:
+                # Extra check: Is it simple?
+                den = sp.denom(simplified)
+                if abs(den) <= 24:  # Reject weird denominators
+                    return simplified
 
     except (ValueError, TypeError, AttributeError):
         pass
@@ -940,27 +937,27 @@ def generate_candidate_features(
         X_data = X_data.reshape(-1, 1)
 
     n_samples, n_vars = X_data.shape
-    
+
     # Ensure we have enough variable names
     # If the user provided fewer names than columns (e.g. data has 2 cols but user said "find f(x)"),
     # pad with default names (x0, x1, etc.) or generic names to prevent IndexError.
     if variable_names:
         standard_defaults = ["x", "y", "z", "t", "u", "v"]
         used_names = set(variable_names)
-        
+
         while len(variable_names) < n_vars:
-             # Find first default not used
-             next_name = None
-             for name in standard_defaults:
-                 if name not in used_names:
-                     next_name = name
-                     break
-             
-             if not next_name:
-                 next_name = f"x_{len(variable_names)}"
-             
-             variable_names.append(next_name)
-             used_names.add(next_name)
+            # Find first default not used
+            next_name = None
+            for name in standard_defaults:
+                if name not in used_names:
+                    next_name = name
+                    break
+
+            if not next_name:
+                next_name = f"x_{len(variable_names)}"
+
+            variable_names.append(next_name)
+            used_names.add(next_name)
     else:
         # Should be handled by caller, but safe fallback
         variable_names = [f"x_{i}" for i in range(n_vars)]
@@ -1086,48 +1083,58 @@ def generate_candidate_features(
     # Use ORIGINAL (unfiltered) data if provided, otherwise fall back to filtered data
     X_for_poles = X_original if X_original is not None else X_data
     y_for_poles = y_original if y_original is not None else y_data
-    
+
     if y_for_poles is not None:
         try:
             detected_poles = detect_poles_from_data(X_for_poles, y_for_poles)
-            
+
             for pole_x, pole_order in detected_poles:
                 col = X_data[:, 0]  # Use FILTERED X for feature generation
                 name = variable_names[0] if variable_names else "x"
-                
+
                 with np.errstate(divide="ignore", invalid="ignore"):
                     denom = col - pole_x
-                    
+
                     # Mask: non-pole points (where denom is not near zero)
                     non_pole_mask = np.abs(denom) > 1e-9
-                    
+
                     # Generate features for detected pole order and lower orders
                     for n in range(1, pole_order + 1):
                         # 1/(x-pole)^n
-                        inv_n = np.where(non_pole_mask, 1.0 / (denom ** n), np.nan)
-                        
+                        inv_n = np.where(non_pole_mask, 1.0 / (denom**n), np.nan)
+
                         # Check that non-pole values are finite and bounded
                         valid_vals = inv_n[non_pole_mask]
-                        if len(valid_vals) > 0 and np.all(np.isfinite(valid_vals)) and np.max(np.abs(valid_vals)) < 1e100:
+                        if (
+                            len(valid_vals) > 0
+                            and np.all(np.isfinite(valid_vals))
+                            and np.max(np.abs(valid_vals)) < 1e100
+                        ):
                             features.append(inv_n)
                             if n == 1:
                                 feature_names.append(f"1/({name}-{pole_x})")
                             else:
                                 feature_names.append(f"1/({name}-{pole_x})^{n}")
-                            
+
                             # Also add x/(x-pole)^n for numerator terms
-                            x_over_pole_n = np.where(non_pole_mask, col * (1.0 / (denom ** n)), np.nan)
+                            x_over_pole_n = np.where(
+                                non_pole_mask, col * (1.0 / (denom**n)), np.nan
+                            )
                             valid_x_vals = x_over_pole_n[non_pole_mask]
-                            if len(valid_x_vals) > 0 and np.all(np.isfinite(valid_x_vals)) and np.max(np.abs(valid_x_vals)) < 1e100:
+                            if (
+                                len(valid_x_vals) > 0
+                                and np.all(np.isfinite(valid_x_vals))
+                                and np.max(np.abs(valid_x_vals)) < 1e100
+                            ):
                                 features.append(x_over_pole_n)
                                 if n == 1:
                                     feature_names.append(f"{name}/({name}-{pole_x})")
                                 else:
-                                    feature_names.append(f"{name}/({name}-{pole_x})^{n}")
+                                    feature_names.append(
+                                        f"{name}/({name}-{pole_x})^{n}"
+                                    )
         except Exception:
             pass  # Fail gracefully if pole detection fails
-
-
 
     # --- NEW: TRANSCENDENTAL FUNCTIONS ---
     if include_transcendentals:
@@ -1319,10 +1326,10 @@ def generate_candidate_features(
                 mask_pos = col > 1e-12
                 if np.any(mask_pos):
                     x_log_x[mask_pos] = col[mask_pos] * np.log(col[mask_pos])
-                
+
                 features.append(x_log_x)
                 feature_names.append(f"{name}*log({name})")
-                
+
                 # Also add (x*log(x))^2
                 features.append(x_log_x**2)
                 feature_names.append(f"({name}*log({name}))^2")
@@ -1588,11 +1595,11 @@ def generate_candidate_features(
     if include_transcendentals:
         try:
             from scipy.special import lambertw
-            
+
             for i in range(n_vars):
                 col = X_data[:, i]
                 name = variable_names[i]
-                
+
                 # Standard W(x) - principal branch
                 # Real branch only
                 with np.errstate(all="ignore"):
@@ -1620,7 +1627,7 @@ def generate_candidate_features(
                                 # print(f"DEBUG: Generated exp(LambertW(log({name})))", flush=True)
         except ImportError:
             pass
-                        # print(f"DEBUG GEN: {name_i}*{name_j}/{name_k}^2", flush=True)
+            # print(f"DEBUG GEN: {name_i}*{name_j}/{name_k}^2", flush=True)
 
     # Feature: x * y * z / w (Triple Product Ratio for Reynolds Number)
     if n_vars > 3:
@@ -1826,7 +1833,9 @@ def generate_candidate_features(
     # Defensive Check (The Wall Rule): Ensure atomic consistency
     if len(features) != len(feature_names):
         # Critical Logic Error - Crash immediately with clear info
-        raise RuntimeError(f"Feature Gen Mismatch: {len(features)} features vs {len(feature_names)} names. This is a compiler bug.")
+        raise RuntimeError(
+            f"Feature Gen Mismatch: {len(features)} features vs {len(feature_names)} names. This is a compiler bug."
+        )
 
     return np.column_stack(features), feature_names
 

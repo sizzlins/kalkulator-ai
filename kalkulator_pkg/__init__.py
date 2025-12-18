@@ -2,17 +2,17 @@
 
 __version__ = "1.0.0"
 
-from . import config, parser, solver, worker, cli, types, api, logging_config
+from . import api, cli, config, logging_config, parser, solver, types, worker
 from .api import (
+    det,
+    diff,
     evaluate,
+    integrate_expr,
+    plot,
     solve_equation,
     solve_inequality,
     solve_system,
     validate_expression,
-    diff,
-    integrate_expr,
-    det,
-    plot,
 )
 
 __all__ = [

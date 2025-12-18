@@ -249,11 +249,11 @@ def _validate_expression_tree(
 
         # Check against basic allowed list first
         is_allowed = func_name and func_name in ALLOWED_SYMPY_NAMES
-        
+
         # If not in allowed names, check optional whitelist
         if not is_allowed and allowed_functions:
-             is_allowed = func_name in allowed_functions
-             
+            is_allowed = func_name in allowed_functions
+
         if func_name and not is_allowed:
             # Audit log blocked function
             try:
@@ -310,7 +310,7 @@ def _validate_expression_tree(
         )
 
         return
-    
+
     # Allow lists and tuples (for data sets)
     if expr_type in ("list", "tuple") or isinstance(expr, (list, tuple)):
         # Validate all items in the container
@@ -321,7 +321,9 @@ def _validate_expression_tree(
         return
 
     # Allow primitive types (recursion hits these for contents of lists)
-    if expr_type in ("int", "float", "str", "complex", "bool") or isinstance(expr, (int, float, str, complex, bool)):
+    if expr_type in ("int", "float", "str", "complex", "bool") or isinstance(
+        expr, (int, float, str, complex, bool)
+    ):
         return
 
     # Allow other SymPy Basic types (they're generally safe)
@@ -662,7 +664,7 @@ def preprocess(
     # Note: This is a simple infix to prefix conversion. Nested mods might need more care, but this covers standard usage.
     # We use re.sub with a function to handle potential nesting if we processed right-to-left, but simple replacement works for single level.
     # To be safe against "model", we use \bmod\b
-    
+
     # We need to capture the operands. This is tricky with simple regex because operands can be complex expressions.
     # Simplified approach: Replace " mod " with ", " and wrap in Mod() is hard.
     # Better approach: Replace "\bmod\b" with "%" which SymPy might handle? No, SymPy uses % for Mod on integers but Mod(a,b) is safer for symbolic.
@@ -671,7 +673,7 @@ def preprocess(
     # Does SymPy parse "a % b" as Mod(a, b)? Yes, Python syntax.
     # Let's test this hypothesis with a script? No, I'll trust standard Python/SymPy behavior for %.
     # So "x mod y" -> "x % y".
-    
+
     processed_str = re.sub(r"\bmod\b", "%", processed_str, flags=re.IGNORECASE)
 
     if not skip_exponent_conversion:
@@ -700,6 +702,7 @@ def preprocess(
 
     processed_str = PERCENT_REGEX.sub(r"(\1/100)", processed_str)
     processed_str = SQRT_UNICODE_REGEX.sub("sqrt(", processed_str)
+
     # AMBIG_FRACTION_REGEX.sub(r"((\1)/(\2))", processed_str)
     # Use a callback to prevent matching across protected commas
     def normalize_fraction(match):
@@ -834,7 +837,7 @@ def preprocess(
                 subexpr = match.group(
                     1
                 )  # Content inside parentheses (without the parentheses)
-                
+
                 # Don't replace symbolic constants with their cached numeric values
                 # This preserves exact results for sin(pi), log(E), etc.
                 if subexpr.strip() in ("pi", "E", "I", "zoo", "oo", "-oo"):
@@ -915,15 +918,21 @@ def preprocess(
     for match in call_pattern.finditer(processed_str):
         name = match.group(1)
         # Check if matched name is a known SymPy function/symbol or whitelisted
-        if name not in ALLOWED_SYMPY_NAMES and (
-            allowed_functions is None or name not in allowed_functions
-        ) and not name.startswith("__COMMA_SEP_"):
+        if (
+            name not in ALLOWED_SYMPY_NAMES
+            and (allowed_functions is None or name not in allowed_functions)
+            and not name.startswith("__COMMA_SEP_")
+        ):
             # It's an undefined name being used like a function
             # Auto-convert to implicit multiplication: x(y) -> x*(y)
             # This is a common user intent, so we fix it automatically with a warning
             import sys
-            print(f"Note: Converting '{name}(...)' to '{name}*(...)' (implicit multiplication)", file=sys.stderr)
-            
+
+            print(
+                f"Note: Converting '{name}(...)' to '{name}*(...)' (implicit multiplication)",
+                file=sys.stderr,
+            )
+
             # Replace name(...) with name*(...) in processed_str
             # Find the exact position and replace
             pattern_to_replace = re.compile(rf"\b{re.escape(name)}\s*\(")
@@ -941,12 +950,12 @@ def parse_preprocessed(
 
 
 def _parse_preprocessed_impl(
-    expr_str: str, 
+    expr_str: str,
     allowed_functions: frozenset[str] | None = None,
-    local_dict: dict | None = None
+    local_dict: dict | None = None,
 ) -> Any:
     """Parse and validate a preprocessed expression string.
-    
+
     Internal implementation that supports local_dict (which is not hashable for LRU cache).
     """
     # Handle function calls with multiple arguments that use commas
@@ -987,7 +996,7 @@ def _parse_preprocessed_impl(
             # min/max/sum/product/limit generated complex args that our manual splitter breaks (e.g. stripping parens).
             # They work fine with standard parsing via expr_str_restored.
             protected_funcs_list = ["integrate", "diff"]
-            
+
             func_name_match = None
             for func_name_candidate in protected_funcs_list:
                 # Find the last occurrence of the function name before the marker
@@ -1215,11 +1224,11 @@ def _parse_preprocessed_impl(
 
     # Normal parsing for expressions without special function call format
     # Use the restored expression (with markers replaced by commas)
-    
+
     # Prepare local dictionary with allowed functions as sp.Function
     # Use provided local_dict as base if available, otherwise copy ALLOWED_SYMPY_NAMES
     local_env = local_dict.copy() if local_dict else ALLOWED_SYMPY_NAMES.copy()
-    
+
     if allowed_functions:
         for name in allowed_functions:
             # We define them as UndefinedFunction (sp.Function class)
@@ -1279,11 +1288,11 @@ def split_top_level_commas(input_str: str) -> list[str]:
     depth_paren = depth_brack = depth_brace = 0
     in_quote = False
     quote_char = None
-    
+
     i = 0
     while i < len(input_str):
         char = input_str[i]
-        
+
         # Handle quotes
         if char in ('"', "'"):
             if not in_quote:
@@ -1291,21 +1300,27 @@ def split_top_level_commas(input_str: str) -> list[str]:
                 quote_char = char
             elif char == quote_char:
                 # check for non-escaped quote
-                if i > 0 and input_str[i-1] == '\\':
-                    pass # escaped
+                if i > 0 and input_str[i - 1] == "\\":
+                    pass  # escaped
                 else:
                     in_quote = False
                     quote_char = None
-        
+
         # Handle split condition
-        if char == "," and not in_quote and depth_paren == 0 and depth_brack == 0 and depth_brace == 0:
+        if (
+            char == ","
+            and not in_quote
+            and depth_paren == 0
+            and depth_brack == 0
+            and depth_brace == 0
+        ):
             part = "".join(current).strip()
             if part:
                 parts.append(part)
             current = []
             i += 1
             continue
-            
+
         # Handle brackets (only if not in quote)
         if not in_quote:
             if char == "(":
@@ -1320,10 +1335,10 @@ def split_top_level_commas(input_str: str) -> list[str]:
                 depth_brace += 1
             elif char == "}":
                 depth_brace = max(0, depth_brace - 1)
-                
+
         current.append(char)
         i += 1
-        
+
     # append last segment
     last = "".join(current).strip()
     if last:

@@ -1,47 +1,62 @@
-
 """
 Command handlers for the Kalkulator CLI.
 Extracted from app.py to enforce Rule 4 (Small Units).
 """
-import re
-import json
+
 import logging
-import sympy as sp
-from typing import Any, Optional, Dict
+import re
+from typing import Any, Dict
 
 import kalkulator_pkg.parser as kparser
-from ..utils.formatting import print_result_pretty
-from ..solver.dispatch import solve_single_equation
-from ..function_manager import (
-    save_functions, load_functions, clear_functions, clear_saved_functions,
-    list_functions, BUILTIN_FUNCTION_NAMES, export_function_to_file
-)
-from ..worker import clear_caches
+
 from ..cache_manager import (
-    get_persistent_cache, 
-    export_cache_to_file, 
+    export_cache_to_file,
+    get_persistent_cache,
     replace_cache_from_file,
-    clear_persistent_cache
 )
+from ..function_manager import (
+    BUILTIN_FUNCTION_NAMES,
+    clear_functions,
+    clear_saved_functions,
+    export_function_to_file,
+    list_functions,
+    load_functions,
+    save_functions,
+)
+from ..solver.dispatch import solve_single_equation
+from ..utils.formatting import print_result_pretty
+from ..worker import clear_caches
 
 logger = logging.getLogger(__name__)
 
 # Registry of non-math commands for improved parsing detection
 COMMAND_REGISTRY = {
-    "help", "?", "quit", "exit",
-    "clear", "cls",
+    "help",
+    "?",
+    "quit",
+    "exit",
+    "clear",
+    "cls",
     "history",
     "find",
     "evolve",
     "solve",
     "export",
-    "save", "load",
-    "show", "list",
-    "debug", "timing", "cachehits",
-    "savecache", "loadcache", "showcache", "clearcache",
+    "save",
+    "load",
+    "show",
+    "list",
+    "debug",
+    "timing",
+    "cachehits",
+    "savecache",
+    "loadcache",
+    "showcache",
+    "clearcache",
     "define",
     "health",
 }
+
 
 def handle_command(text: str, ctx: Any, variables: Dict[str, str]) -> bool:
     """
@@ -49,7 +64,7 @@ def handle_command(text: str, ctx: Any, variables: Dict[str, str]) -> bool:
     Returns True if handled, False otherwise.
     """
     raw_lower = text.lower().strip()
-    
+
     # === Function Persistence Commands ===
     if raw_lower in ("save", "savefunction", "savefunctions"):
         success, msg = save_functions()
@@ -117,13 +132,14 @@ def handle_command(text: str, ctx: Any, variables: Dict[str, str]) -> bool:
         # Wait, if I return True, REPL stops.
         # So I must evaluate here if I return True.
         # But I don't want to duplicate evaluate_safely.
-        # Let's SKIP "calc" here and handle it in REPL core explicitly? 
+        # Let's SKIP "calc" here and handle it in REPL core explicitly?
         # Or import evaluate_safely here.
         # Since evaluate_safely is in worker.py/worker usage, we can import it.
         # But REPL core uses REPL.evaluate_safely wrapper logic? No, it uses 'from ..worker import evaluate_safely'.
         from ..worker import evaluate_safely
+
         eval_text = text[5:].strip()
-        # We need to substitute variables? 
+        # We need to substitute variables?
         # handle_command receives 'variables' dict.
         eval_text_subbed = _substitute_vars(eval_text, variables)
         res = evaluate_safely(eval_text_subbed)
@@ -182,15 +198,15 @@ def handle_command(text: str, ctx: Any, variables: Dict[str, str]) -> bool:
     if raw_lower.startswith("loadcache"):
         _handle_load_cache(text)
         return True
-        
+
     # === Health Check ===
     if raw_lower == "health":
-        # We need to call _health_check from app.py? 
+        # We need to call _health_check from app.py?
         # Or move it here. It's usually in app.py.
         # Let's assume user can run "kalkulator.py health" too.
         # For REPL "health":
         print("Running health check...")
-        # Since _health_check is internal to app.py and complex, 
+        # Since _health_check is internal to app.py and complex,
         # maybe we leave it or verify imports.
         # Simpler: just print status.
         return True
@@ -200,37 +216,38 @@ def handle_command(text: str, ctx: Any, variables: Dict[str, str]) -> bool:
         # Could be "clearcache", "clearfunction" (handled above)
         # OR "clear x"
         if raw_lower == "clear":
-             # Just clear variables? Or clear screen?
-             # Standard CLI clear usually clears screen, but here probably variables?
-             print("Usage: clear <variable> or clearcache or clearfunctions")
-             return True
-             
+            # Just clear variables? Or clear screen?
+            # Standard CLI clear usually clears screen, but here probably variables?
+            print("Usage: clear <variable> or clearcache or clearfunctions")
+            return True
+
         parts = text.split()
         if len(parts) > 1:
-             var = parts[1]
-             # Check if it's a known subcommand handled above
-             if var.lower() in ("cache", "function", "functions", "savefunction"):
-                  # These should have been caught by startswith checks earlier if implemented correctly
-                  # But "clear cache" is two words. 
-                  # My previous block: if raw_lower in ("clearcache", "clear cache"): handles it.
-                  # This block is for variables.
-                  pass
-             else:
-                  # Clear variable
-                  if var in variables:
-                      del variables[var]
-                      print(f"Variable '{var}' cleared.")
-                  else:
-                      print(f"Variable '{var}' not found.")
-                  # Also clear from global storage if needed (define_variable(var, delete?))
-                  # Currently define_variable doesn't support deletion easily without helper.
-                  # But client-side deletion resolves the shadowing.
-                  return True
+            var = parts[1]
+            # Check if it's a known subcommand handled above
+            if var.lower() in ("cache", "function", "functions", "savefunction"):
+                # These should have been caught by startswith checks earlier if implemented correctly
+                # But "clear cache" is two words.
+                # My previous block: if raw_lower in ("clearcache", "clear cache"): handles it.
+                # This block is for variables.
+                pass
+            else:
+                # Clear variable
+                if var in variables:
+                    del variables[var]
+                    print(f"Variable '{var}' cleared.")
+                else:
+                    print(f"Variable '{var}' not found.")
+                # Also clear from global storage if needed (define_variable(var, delete?))
+                # Currently define_variable doesn't support deletion easily without helper.
+                # But client-side deletion resolves the shadowing.
+                return True
 
     # === Health Check ===
     if raw_lower == "health":
         # Call the robust health check from app.py
-        from .app import _health_check, _check_optional_dependencies
+        from .app import _health_check
+
         # _health_check is likely protected/internal.
         # But we can import it.
         try:
@@ -238,19 +255,21 @@ def handle_command(text: str, ctx: Any, variables: Dict[str, str]) -> bool:
             # _health_check() typically returns exit code and prints status
             _health_check()
         except ImportError:
-             print("Health check module not found.")
+            print("Health check module not found.")
         return True
 
     return False
+
 
 def _substitute_vars(text: str, variables: Dict[str, str]) -> str:
     # Helper to substitute vars before command execution
     sorted_vars = sorted(variables.keys(), key=len, reverse=True)
     for var in sorted_vars:
         if var in text:
-             pattern = r'\b' + re.escape(var) + r'\b'
-             text = re.sub(pattern, f"({variables[var]})", text)
+            pattern = r"\b" + re.escape(var) + r"\b"
+            text = re.sub(pattern, f"({variables[var]})", text)
     return text
+
 
 def _handle_show_functions():
     funcs = list_functions()
@@ -261,7 +280,7 @@ def _handle_show_functions():
             print(f"{name}({', '.join(params)})={body}")
     else:
         print("User functions: None")
-    
+
     print("\nBuilt-in functions:")
     builtins = sorted(list(BUILTIN_FUNCTION_NAMES))
     line = "  "
@@ -274,21 +293,22 @@ def _handle_show_functions():
     if line.strip():
         print(line.rstrip(", "))
 
+
 def _handle_solve_command(text: str, variables: Dict[str, str]):
     # Format: solve x^2 - 1 = 0
     # Logic: If variable in equation is in 'variables', we have shadowing.
     # The user probably means "solve for symbol x".
-    # So we do NOT substitute variables for 'solve' command generally, 
-    # OR we substitute only known constants? 
+    # So we do NOT substitute variables for 'solve' command generally,
+    # OR we substitute only known constants?
     # Current behavior: Shadowing causes implicit substitution -> Contradiction.
     # Fix: Do NOT call _substitute_vars on the whole string.
     # Just parse raw equation.
-    
+
     eq_str = text[6:].strip()
     print(f"Solving equation: {eq_str}")
-    
+
     # We pass None (no substitutions) or handle specific substitution logic?
-    # Ideally, we let the solver handle it. 
+    # Ideally, we let the solver handle it.
     # But if 'a=5' and equation is 'x+a=10', we DO want substitution of 'a'.
     # But if 'x=10' and equation is 'x+a=10' (solve for a), we substitute x=10 -> '10+a=10' -> a=0. Correct.
     # But if 'x=10' and equation is 'x^2=9' (solve for x), we substitute x=10 -> '100=9' -> Contradiction.
@@ -297,20 +317,25 @@ def _handle_solve_command(text: str, variables: Dict[str, str]):
     # User must 'clear x' to solve for x as a symbol.
     # However, to be friendly, we could check if the resulting equation is a contradiction AND contains no variables,
     # then suggest "Did you mean to solve for symbol 'x'? Value 'x=10' is currently defined."
-    
+
     # Standard logic for now (KISS): substitution is correct behavior for defined vars.
     # BUT, we need to respect the input text raw.
     eq_str_subbed = _substitute_vars(eq_str, variables)
-    
+
     res = solve_single_equation(eq_str_subbed, None)
-    
+
     # Check for "Contradiction" if variables were substituted
-    if res.get("type") == "identity_or_contradiction" and "Contradiction" in str(res.get("result", "")):
-         # Check if we substituted anything
-         if eq_str != eq_str_subbed:
-             print("Note: Variables were substituted from memory. If you meant to solve for a variable that is currently defined, try 'clear <var>' first.")
-             
+    if res.get("type") == "identity_or_contradiction" and "Contradiction" in str(
+        res.get("result", "")
+    ):
+        # Check if we substituted anything
+        if eq_str != eq_str_subbed:
+            print(
+                "Note: Variables were substituted from memory. If you meant to solve for a variable that is currently defined, try 'clear <var>' first."
+            )
+
     print_result_pretty(res)
+
 
 def _handle_export_command(text: str):
     export_match = re.match(r"export\s+(\w+)\s+to\s+(.+)", text, re.IGNORECASE)
@@ -323,29 +348,55 @@ def _handle_export_command(text: str):
         print("Usage: export <function_name> to <filename>")
 
 
+def _handle_find_ode(text: str):
+    """Handle 'find ode' command for SINDy-based ODE discovery."""
+    print("Note: 'find ode' requires data in specific format.")
+    print("Usage: find ode from x=[...], dx_dt=[...]")
+    print("This feature is experimental.")
+
+
+def _handle_discover_causal(text: str):
+    """Handle 'discover causal' command for causal discovery."""
+    print("Note: 'discover causal' is an experimental feature.")
+    print("Usage: discover causal from <data>")
+
+
+def _handle_find_dimensionless(text: str):
+    """Handle 'find dimensionless' command for dimensionless analysis."""
+    print("Note: 'find dimensionless' is an experimental feature.")
+    print("Usage: find dimensionless from <variables with units>")
+
+
+def _handle_benchmark(text: str):
+    """Handle 'benchmark' command to run performance tests."""
+    print("Running benchmark...")
+    print("Note: Full benchmark suite is experimental.")
+    print("Try: 'health' for a basic system check instead.")
+
+
 def generate_pattern_seeds(X, y, variable_names):
     """Detect patterns in data and return seed expression strings for evolve.
-    
+
     Smart seeding: detects poles (inf/nan) and frequencies, then generates
     seed expressions that give evolution a head start.
-    
+
     Args:
         X: Input data array (n_samples, n_vars) or (n_samples,)
         y: Output data array (n_samples,)
         variable_names: List of variable names like ['x'] or ['x', 'y']
-    
+
     Returns:
         List of seed expression strings like ['1/(x-1)', '1/(x-1)**2']
     """
     import numpy as np
-    
+
     seeds = []
     var = variable_names[0] if variable_names else "x"
-    
+
     # Ensure X is 2D
     if X.ndim == 1:
         X = X.reshape(-1, 1)
-    
+
     # --- 1. Detect poles (where y is inf/nan) ---
     for i, y_val in enumerate(y):
         if not np.isfinite(y_val):
@@ -356,7 +407,7 @@ def generate_pattern_seeds(X, y, variable_names):
             seeds.append(f"{var}/({var}-{pole_x})**2")
             # Also add with negative sign
             seeds.append(f"1/({pole_x}-{var})")
-    
+
     # --- 2. Detect near-zero crossings (potential 1/(x-a) patterns) ---
     # Look for large jumps in y that might indicate near-pole behavior
     if len(y) >= 3:
@@ -364,13 +415,13 @@ def generate_pattern_seeds(X, y, variable_names):
         y_max = np.max(np.abs(y_finite)) if np.any(np.isfinite(y_finite)) else 1
         if y_max > 10:  # Large dynamic range suggests poles
             for i in range(len(y) - 1):
-                if np.isfinite(y[i]) and np.isfinite(y[i+1]):
-                    ratio = abs(y[i+1] / y[i]) if y[i] != 0 else 0
+                if np.isfinite(y[i]) and np.isfinite(y[i + 1]):
+                    ratio = abs(y[i + 1] / y[i]) if y[i] != 0 else 0
                     if ratio > 10 or (ratio > 0 and ratio < 0.1):
                         # Possible pole between these points
-                        mid_x = (X[i, 0] + X[i+1, 0]) / 2
+                        mid_x = (X[i, 0] + X[i + 1, 0]) / 2
                         seeds.append(f"1/({var}-{mid_x:.2f})")
-    
+
     # Remove duplicates while preserving order
     seen = set()
     unique_seeds = []
@@ -378,7 +429,7 @@ def generate_pattern_seeds(X, y, variable_names):
         if s not in seen:
             seen.add(s)
             unique_seeds.append(s)
-    
+
     return unique_seeds
 
 
@@ -386,6 +437,7 @@ def _handle_evolve(text, variables=None):
     """Handle the 'evolve' command for genetic symbolic regression."""
     try:
         import numpy as np
+
         from ..symbolic_regression import GeneticConfig, GeneticSymbolicRegressor
 
         # Strategy 1: Seeding
@@ -416,11 +468,13 @@ def _handle_evolve(text, variables=None):
         # or: evolve f(x,y) from x=[...], y=[...], z=[...]
         # Parse: evolve f(x) from x=[...], y=[...]
         # or: evolve f(x,y) from x=[...], y=[...], z=[...]
-        match = re.match(r"evolve\s+(\w+)\s*\(([^)]+)\)\s+from\s+(.+)", text, re.IGNORECASE)
-        
+        match = re.match(
+            r"evolve\s+(\w+)\s*\(([^)]+)\)\s+from\s+(.+)", text, re.IGNORECASE
+        )
+
         is_implicit = False
         data_part = None
-        
+
         if match:
             func_name = match.group(1)
             # These are the INPUT variable names from f(x) or f(a,b)
@@ -428,10 +482,14 @@ def _handle_evolve(text, variables=None):
             data_part = match.group(3)
         else:
             # Try implicit context: evolve f(x)
-            match_implicit = re.match(r"evolve\s+(\w+)\s*\(([^)]+)\)\s*$", text, re.IGNORECASE)
+            match_implicit = re.match(
+                r"evolve\s+(\w+)\s*\(([^)]+)\)\s*$", text, re.IGNORECASE
+            )
             if match_implicit:
                 func_name = match_implicit.group(1)
-                input_var_names = [v.strip() for v in match_implicit.group(2).split(",")]
+                input_var_names = [
+                    v.strip() for v in match_implicit.group(2).split(",")
+                ]
                 is_implicit = True
                 if not variables:
                     print("Error: No data provided and no active variables in session.")
@@ -453,46 +511,58 @@ def _handle_evolve(text, variables=None):
         data_dict = {}
         points_y = []
         points_x = {}
-        
+
         if is_implicit:
-             # Load from context
-             for name, val in variables.items():
-                 # Handle raw objects (list, tuple, ndarray) directly
-                 if isinstance(val, (list, tuple, np.ndarray)):
-                     try:
-                         arr = np.array(val)
-                         # Explicitly check for numeric array
-                         # Strings might sneak in if not careful, validation ensures numbers
-                         if arr.dtype.kind in 'iuf': # Integer, Unsigned, Float
-                             data_dict[name] = arr
-                         else:
-                             # Warn if it looks like data but isn't numeric
-                             print(f"Warning: Variable '{name}' ignored. Expected numeric array, got dtype '{arr.dtype.kind}'.")
-                             pass
-                     except Exception as e:
-                         print(f"Warning: Failed to load variable '{name}' as numpy array: {e}")
-                     continue
-                 
-                 # String handling
-                 if isinstance(val, str):
-                     # If it looks like a list
-                     if "[" in val or "array" in val:
+            # Load from context
+            for name, val in variables.items():
+                # Handle raw objects (list, tuple, ndarray) directly
+                if isinstance(val, (list, tuple, np.ndarray)):
+                    try:
+                        arr = np.array(val)
+                        # Explicitly check for numeric array
+                        # Strings might sneak in if not careful, validation ensures numbers
+                        if arr.dtype.kind in "iuf":  # Integer, Unsigned, Float
+                            data_dict[name] = arr
+                        else:
+                            # Warn if it looks like data but isn't numeric
+                            print(
+                                f"Warning: Variable '{name}' ignored. Expected numeric array, got dtype '{arr.dtype.kind}'."
+                            )
+                            pass
+                    except Exception as e:
+                        print(
+                            f"Warning: Failed to load variable '{name}' as numpy array: {e}"
+                        )
+                    continue
+
+                # String handling
+                if isinstance(val, str):
+                    # If it looks like a list
+                    if "[" in val or "array" in val:
                         try:
                             # Evaluate in safe context with numpy
-                            safe_dict = {"__builtins__": {}, "np": np, "array": np.array}
+                            safe_dict = {
+                                "__builtins__": {},
+                                "np": np,
+                                "array": np.array,
+                            }
                             val_eval = eval(val, safe_dict)
                             arr = np.array(val_eval)
-                            if arr.dtype.kind in 'iuf': # Integer, Unsigned, Float
+                            if arr.dtype.kind in "iuf":  # Integer, Unsigned, Float
                                 data_dict[name] = arr
                             else:
-                                print(f"Warning: Variable '{name}' ignored. Expected numeric array, got dtype '{arr.dtype.kind}'.")
+                                print(
+                                    f"Warning: Variable '{name}' ignored. Expected numeric array, got dtype '{arr.dtype.kind}'."
+                                )
                                 pass
                         except Exception as e:
                             # Ignore non-numeric variables, but warn if it looks like data
                             if "[" in val:
-                                print(f"Warning: Failed to parse variable '{name}': {e}")
+                                print(
+                                    f"Warning: Failed to parse variable '{name}': {e}"
+                                )
                             pass
-                            
+
         else:
             array_pattern = re.compile(r"(\w+)\s*=\s*\[([^\]]+)\]")
             for m in array_pattern.finditer(data_part):
@@ -507,45 +577,60 @@ def _handle_evolve(text, variables=None):
                 points_x = {v: [] for v in input_var_names}
                 points_y = []
                 skipped_complex = 0  # Track skipped complex data points
-                
+
                 for m in point_pattern.finditer(data_part):
                     p_func = m.group(1)
-                    if p_func != func_name: 
+                    if p_func != func_name:
                         continue
-                    
+
                     try:
                         p_args_str = m.group(2)
                         p_val_str = m.group(3).strip()
-                        
+
                         # Check for complex/imaginary values (skip with warning)
-                        if any(indicator in p_val_str for indicator in ['i', 'I', 'j']) and not p_val_str.replace('.','').replace('-','').replace('+','').replace('e','').isdigit():
+                        if (
+                            any(indicator in p_val_str for indicator in ["i", "I", "j"])
+                            and not p_val_str.replace(".", "")
+                            .replace("-", "")
+                            .replace("+", "")
+                            .replace("e", "")
+                            .isdigit()
+                        ):
                             skipped_complex += 1
                             continue
-                        
+
                         # Basic float parsing
                         p_args = [float(a.strip()) for a in p_args_str.split(",")]
-                        
+
                         # Handle infinity values (zoo, oo, inf) for pole detection
                         p_val_lower = p_val_str.lower()
-                        if p_val_lower in ('zoo', 'oo', 'inf', 'infinity', 'complexinfinity'):
-                            p_val = float('inf')
-                        elif p_val_lower in ('nan',):
-                            p_val = float('nan')
+                        if p_val_lower in (
+                            "zoo",
+                            "oo",
+                            "inf",
+                            "infinity",
+                            "complexinfinity",
+                        ):
+                            p_val = float("inf")
+                        elif p_val_lower in ("nan",):
+                            p_val = float("nan")
                         else:
                             p_val = float(p_val_str)
-                        
+
                         # DATA ARITY AUTO-CORRECTION (Genius Mode)
                         current_arity = len(input_var_names)
                         data_arity = len(p_args)
-                        
+
                         if data_arity > current_arity:
                             # User said "evolve m(x)" but gave "m(1,2)=3"
                             # We must expand input_var_names to match data_arity
-                            print(f"Note: Data has {data_arity} variables (`{p_args_str}`), but target `{func_name}` has {current_arity}.")
-                            
+                            print(
+                                f"Note: Data has {data_arity} variables (`{p_args_str}`), but target `{func_name}` has {current_arity}."
+                            )
+
                             defaults = ["x", "y", "z", "t", "u", "v"]
                             used = set(input_var_names)
-                            
+
                             while len(input_var_names) < data_arity:
                                 next_name = None
                                 for cand in defaults:
@@ -554,60 +639,72 @@ def _handle_evolve(text, variables=None):
                                         break
                                 if not next_name:
                                     next_name = f"var_{len(input_var_names)}"
-                                    
+
                                 input_var_names.append(next_name)
                                 used.add(next_name)
                                 # Initialize storage for new var
                                 points_x[next_name] = []
-                            
-                            print(f"      -> Adapting target to `{func_name}({', '.join(input_var_names)})`")
-                        
+
+                            print(
+                                f"      -> Adapting target to `{func_name}({', '.join(input_var_names)})`"
+                            )
+
                         elif data_arity < current_arity:
-                             # User said "evolve m(x,y)" but gave "m(1)=2"
-                             # This is harder. We can't invent data. 
-                             # Treat as partial match or warn?
-                             # For now, simplistic approach: drop the extra target vars if empty?
-                             # Or just skip this point? 
-                             # Strict behavior for UNDER-specified data is safer.
-                             continue
+                            # User said "evolve m(x,y)" but gave "m(1)=2"
+                            # This is harder. We can't invent data.
+                            # Treat as partial match or warn?
+                            # For now, simplistic approach: drop the extra target vars if empty?
+                            # Or just skip this point?
+                            # Strict behavior for UNDER-specified data is safer.
+                            continue
 
                         for i, vname in enumerate(input_var_names):
                             # Ensure list exists (might be new)
-                            if vname not in points_x: points_x[vname] = []
+                            if vname not in points_x:
+                                points_x[vname] = []
                             points_x[vname].append(p_args[i])
                         points_y.append(p_val)
                     except ValueError:
                         continue
-                
+
                 # Warn about skipped complex values
                 if skipped_complex > 0:
-                    print(f"Warning: {skipped_complex} data point(s) with complex/imaginary values were skipped.")
+                    print(
+                        f"Warning: {skipped_complex} data point(s) with complex/imaginary values were skipped."
+                    )
                     print("         Evolution requires real-valued inputs and outputs.")
- 
+
             if points_y:
                 # Merge individual points into data_dict
                 for vname in input_var_names:
                     arr = np.array(points_x[vname])
                     if vname in data_dict:
-                         data_dict[vname] = np.concatenate([data_dict[vname], arr])
+                        data_dict[vname] = np.concatenate([data_dict[vname], arr])
                     else:
-                         data_dict[vname] = arr
-                
+                        data_dict[vname] = arr
+
                 # Determine default output name
-                out_name = 'y'
-                if 'y' in input_var_names: out_name = 'z'
-                
+                out_name = "y"
+                if "y" in input_var_names:
+                    out_name = "z"
+
                 out_arr = np.array(points_y)
                 if out_name in data_dict:
-                     data_dict[out_name] = np.concatenate([data_dict[out_name], out_arr])
+                    data_dict[out_name] = np.concatenate([data_dict[out_name], out_arr])
                 else:
-                     data_dict[out_name] = out_arr
+                    data_dict[out_name] = out_arr
 
         if not data_dict:
             if is_implicit:
-                print(f"Error: Could not find valid data arrays for variables: {', '.join(input_var_names)}.")
-                print(f"Available variables: {list(variables.keys()) if variables else 'None'}")
-                print("Make sure variables are defined as lists (e.g., x=[1, 2, 3]) or numpy arrays.")
+                print(
+                    f"Error: Could not find valid data arrays for variables: {', '.join(input_var_names)}."
+                )
+                print(
+                    f"Available variables: {list(variables.keys()) if variables else 'None'}"
+                )
+                print(
+                    "Make sure variables are defined as lists (e.g., x=[1, 2, 3]) or numpy arrays."
+                )
             else:
                 print("Error: No valid data points found in command.")
             return
@@ -622,16 +719,18 @@ def _handle_evolve(text, variables=None):
             output_candidates = [v for v in data_dict.keys() if v != input_vars[0]]
 
         if not output_candidates:
-            print(f"Error: Need output variable. Provide data for a variable not in {func_name}({','.join(input_var_names)})")
+            print(
+                f"Error: Need output variable. Provide data for a variable not in {func_name}({','.join(input_var_names)})"
+            )
             return
 
         # Explicitly prefer 'y' or 'z' if available
         output_var = output_candidates[0]
-        if 'y' in output_candidates:
-            output_var = 'y'
-        elif 'z' in output_candidates:
-            output_var = 'z'
-        
+        if "y" in output_candidates:
+            output_var = "y"
+        elif "z" in output_candidates:
+            output_var = "z"
+
         # Validate all input vars have data
         missing = [v for v in input_vars if v not in data_dict]
         if missing:
@@ -654,25 +753,27 @@ def _handle_evolve(text, variables=None):
         if use_hybrid:
             try:
                 from ..function_manager import find_function_from_data
-                
+
                 # Build data points for find()
                 find_data_points = []
                 for i in range(len(y)):
                     x_vals = tuple(X[i]) if X.ndim > 1 else (X[i],)
                     find_data_points.append((x_vals, y[i]))
-                
+
                 # Run find() to get approximation
                 print("Hybrid mode: running find() for initial approximation...")
                 # Signature: find_function_from_data(data_points, param_names, skip_linear)
                 success, func_str, factored, error = find_function_from_data(
                     find_data_points, input_vars
                 )
-                
+
                 # If find() succeeded, add its expression as a seed
                 if success and func_str:
                     seeds.append(func_str)
                     display = func_str[:50] + "..." if len(func_str) > 50 else func_str
-                    print(f"Hybrid seeding: using find() result '{display}' as starting point")
+                    print(
+                        f"Hybrid seeding: using find() result '{display}' as starting point"
+                    )
             except Exception as e:
                 print(f"Hybrid mode: find() failed ({e}), continuing with other seeds")
 
@@ -683,17 +784,21 @@ def _handle_evolve(text, variables=None):
             X = X[finite_mask]
             y = y[finite_mask]
 
-        print(f"Evolving {func_name}({', '.join(input_vars)}) from {len(y)} data points...")
+        print(
+            f"Evolving {func_name}({', '.join(input_vars)}) from {len(y)} data points..."
+        )
 
         # Apply boost multiplier to evolution parameters
         # --boost N gives N times more compute resources for complex functions
         base_population = 100
         base_generations = 30
         base_timeout = 15
-        
+
         if boosting_rounds > 1:
-            print(f"Boost mode: {boosting_rounds}x resources (pop={base_population*boosting_rounds}, gen={base_generations*boosting_rounds}, timeout={base_timeout*boosting_rounds}s)")
-        
+            print(
+                f"Boost mode: {boosting_rounds}x resources (pop={base_population*boosting_rounds}, gen={base_generations*boosting_rounds}, timeout={base_timeout*boosting_rounds}s)"
+            )
+
         config = GeneticConfig(
             population_size=base_population * boosting_rounds,
             n_islands=2,
@@ -710,26 +815,27 @@ def _handle_evolve(text, variables=None):
         # we should always prefer the accurate solution even if slightly more complex.
         knee = pareto.get_knee_point()
         best_mse = pareto.get_best()
-        
+
         best = knee
         if best_mse and best_mse.mse < 1e-9:
-             best = best_mse
+            best = best_mse
         elif knee:
-             best = knee
+            best = knee
         else:
-             best = best_mse
-             
+            best = best_mse
+
         if not best:
-             print("No suitable model found.")
-             return
-             
+            print("No suitable model found.")
+            return
+
         # Print Result
         print(f"\nResult: {best.expression}")
         print(f"MSE: {best.mse:.6g}, Complexity: {best.complexity}")
-                
+
         # Persist the discovered function (Engineering Standard: State Persistence)
         try:
             from ..function_manager import define_function
+
             # Convert best.expression (pretty string) or best.sympy_expr to storage format
             # define_function expects string expression
             define_function(func_name, input_vars, best.expression)
@@ -740,18 +846,20 @@ def _handle_evolve(text, variables=None):
         print(f"Error: Required module not available: {e}")
     except Exception as e:
         print(f"Error: {e}")
-        
+
+
 def _handle_save_cache(text):
     parts = text.split()
     filename = "expression_cache.json"
     if len(parts) > 1:
         filename = parts[1]
     # Use valid exported name
-    from ..cache_manager import export_cache_to_file
+
     if export_cache_to_file(filename):
         print(f"Cache saved to {filename}")
     else:
         print(f"Failed to save cache to {filename}")
+
 
 def _handle_load_cache(text):
     # loadcache <file>
@@ -760,18 +868,19 @@ def _handle_load_cache(text):
     if len(parts) > 1:
         filename = parts[1]
     # Use valid imported name
-    from ..cache_manager import replace_cache_from_file
+
     if replace_cache_from_file(filename):
         print(f"Cache loaded from {filename}")
     else:
         print(f"Failed to load cache from {filename}")
 
+
 def _handle_show_cache(text: str, ctx: Any):
-    from ..cache_manager import get_persistent_cache
+
     cache = get_persistent_cache()
-    eval_cache = cache.get('eval_cache', {})
+    eval_cache = cache.get("eval_cache", {})
     print(f"Cache contains {len(eval_cache)} items.")
-    
+
     # Check for arguments "all" or "list"
     args = text.split()
     if len(args) > 1 and args[1].lower() in ("all", "list"):
@@ -779,7 +888,7 @@ def _handle_show_cache(text: str, ctx: Any):
         # Limit to reasonable amount unless piped? No just list them.
         # But truncate values.
         for i, (k, v) in enumerate(eval_cache.items()):
-            # k is the expression hash or string? It's the input string usually? 
+            # k is the expression hash or string? It's the input string usually?
             # Actually keys are hashed strings? No, persistent cache usually keys by expression string.
             # Let's print key.
             # Truncate value if too long
@@ -787,10 +896,11 @@ def _handle_show_cache(text: str, ctx: Any):
             if len(val_str) > 60:
                 val_str = val_str[:57] + "..."
             print(f"{i+1}. {k} -> {val_str}")
-            if i >= 99 and len(args) < 3: # Safety limit unless "all force"
-                 print("... (showing first 100, use 'showcache all force' to see all)")
-                 break
+            if i >= 99 and len(args) < 3:  # Safety limit unless "all force"
+                print("... (showing first 100, use 'showcache all force' to see all)")
+                break
         print("-" * 40)
+
 
 def _handle_health_command():
     """Run health check to verify dependencies and basic operations."""
@@ -803,6 +913,7 @@ def _handle_health_command():
     # Check SymPy import
     try:
         import sympy as sp
+
         version = sp.__version__
         print(f"[OK] SymPy {version} imported successfully", flush=True)
         checks_passed += 1
@@ -813,6 +924,7 @@ def _handle_health_command():
     # Check basic parsing
     try:
         from ..parser import parse_preprocessed, preprocess
+
         test_expr = "2 + 2"
         preprocessed = preprocess(test_expr)
         parsed = parse_preprocessed(preprocessed)
@@ -829,11 +941,14 @@ def _handle_health_command():
     # Check Solver
     try:
         from ..solver import solve_single_equation
+
         res = solve_single_equation("2*x=10", "x")
         # Solver returns {'ok': True, 'type': 'equation', 'exact': ['5'], ...}
         if res.get("ok"):
             exact = res.get("exact", [])
-            if "5" in str(exact) or (isinstance(exact, list) and len(exact) > 0 and str(exact[0]) == "5"):
+            if "5" in str(exact) or (
+                isinstance(exact, list) and len(exact) > 0 and str(exact[0]) == "5"
+            ):
                 print("[OK] Solver works (2*x=10 -> 5)", flush=True)
                 checks_passed += 1
             else:
@@ -848,18 +963,19 @@ def _handle_health_command():
 
     # Check Worker Process (IPC) & Vectorization
     try:
-        from ..worker import evaluate_safely
         import numpy as np
 
+        from ..worker import evaluate_safely
+
         # Worker Test
-        res = evaluate_safely("2^10") # 1024
+        res = evaluate_safely("2^10")  # 1024
         if res.get("ok") and str(res.get("result")) == "1024":
-             print("[OK] Worker IPC works (2^10 -> 1024)", flush=True)
-             checks_passed += 1
+            print("[OK] Worker IPC works (2^10 -> 1024)", flush=True)
+            checks_passed += 1
         else:
-             print(f"[FAIL] Worker IPC failed: {res}", flush=True)
-             checks_failed += 1
-             
+            print(f"[FAIL] Worker IPC failed: {res}", flush=True)
+            checks_failed += 1
+
         # Vectorization Test
         v1 = np.array([1, 2, 3])
         v2 = np.array([4, 5, 6])
@@ -881,18 +997,25 @@ def _handle_health_command():
     # Check Regression Engine (The Core Core)
     try:
         from ..function_manager import find_function_from_data
+
         # Simple y = x + 1
         # Data format: List of (list of args, value)
         data = [(["1"], "2"), (["2"], "3"), (["3"], "4")]
         success, func_str, _, error_msg = find_function_from_data(data, ["x"])
-        
+
         # We expect x + 1 or 1 + x
         if success and ("x + 1" in func_str or "1 + x" in func_str):
-            print(f"[OK] Regression Engine works (found {func_str} from 3 points)", flush=True)
+            print(
+                f"[OK] Regression Engine works (found {func_str} from 3 points)",
+                flush=True,
+            )
             checks_passed += 1
         else:
-             print(f"[FAIL] Regression Engine failed. Got: {func_str}. Error: {error_msg}", flush=True)
-             checks_failed += 1
+            print(
+                f"[FAIL] Regression Engine failed. Got: {func_str}. Error: {error_msg}",
+                flush=True,
+            )
+            checks_failed += 1
     except Exception as e:
         print(f"[FAIL] Regression Engine exception: {e}", flush=True)
         checks_failed += 1
@@ -900,9 +1023,16 @@ def _handle_health_command():
     print("-" * 50)
     total_checks = checks_passed + checks_failed
     if checks_failed == 0:
-        print(f"Health Check Passed: {checks_passed}/{total_checks} systems operational.", flush=True)
+        print(
+            f"Health Check Passed: {checks_passed}/{total_checks} systems operational.",
+            flush=True,
+        )
     else:
-        print(f"Health Check FAILED: {checks_failed}/{total_checks} systems failed.", flush=True)
+        print(
+            f"Health Check FAILED: {checks_failed}/{total_checks} systems failed.",
+            flush=True,
+        )
+
 
 def _handle_debug_command(text: str, ctx: Any):
     _toggle_setting(text, ctx, "debug_mode", "Debug mode")
@@ -911,11 +1041,14 @@ def _handle_debug_command(text: str, ctx: Any):
     else:
         logger.setLevel(logging.INFO)
 
+
 def _handle_timing_command(text: str, ctx: Any):
     _toggle_setting(text, ctx, "timing_enabled", "Timing")
 
+
 def _handle_cachehits_command(text: str, ctx: Any):
     _toggle_setting(text, ctx, "show_cache_hits", "Cache hit display")
+
 
 def _toggle_setting(text: str, ctx: Any, attr: str, name: str):
     parts = text.lower().split()
@@ -939,73 +1072,74 @@ def _handle_find_command(text: str, variables: Dict[str, str]):
     # Syntax: find f(x) [given g(1)=2, ...]
     # But usually just "find f(x)" and it uses existing data points?
     # Or "find f(x)" triggers generation?
-    
+
     # We need to parse: "find <var>" or "find f(x)"
     # If "find f(x)", we extract name "f".
-    
-    # Actually, the logic in app.py was complex. 
-    # Let's try to pass it to `solve_system` with `find_token` logic 
+
+    # Actually, the logic in app.py was complex.
+    # Let's try to pass it to `solve_system` with `find_token` logic
     # OR `find_function_from_data`.
-    
+
     # 1. Parse target
     # Remove "find "
     content = text[5:].strip()
-    
+
     # If it asks for specific variable "find x"
     # It might be part of an equation solving flow.
     # But "find f(x)" is definitely function discovery.
-    
+
     if "(" in content and ")" in content:
         # Check for f(x) pattern
         match = re.match(r"([a-zA-Z_]\w*)\s*\(", content)
         if match:
             func_name = match.group(1)
             # Trigger function finding
-            # We need data points from somewhere. 
+            # We need data points from somewhere.
             # In Kalkulator, data points are usually just previously entered "f(1)=2".
             # Which are stored as... equations? Or define_variable?
             # They are likely just lines in history or explicit args if "given ..." is used.
             # But the user example "f(pi)=0 ... find f(x)" implies persistence of f(pi)=0 somewhere?
             # Wait, "f(pi)=0" (previous command) -> evaluated as equation?
             # If so, where does it live?
-            # If `f(pi)=0` was run, and `f` is undefined, 
+            # If `f(pi)=0` was run, and `f` is undefined,
             # `solve_single_equation` checked "Is this 0=0?" or "No real solutions".
             # It did NOT store the data point.
-            
+
             # UNEXPLAINED ARCHITECTURE: How does `find f(x)` know about `f(pi)=0`
             # if `f(pi)=0` was just parsed as an equation?
             # UNLESS `f(pi)=0` triggered `define_function` or something?
             # OR `f(pi)=0` was treated as "adding a constraint to global context"?
-            
-            # The ONLY place storing data is `function_manager` (for defined functions) 
+
+            # The ONLY place storing data is `function_manager` (for defined functions)
             # or `global variables`.
             # "Function Finding" usually implies `find_function_from_data`.
             # Data must be passed explicitly OR accumulated.
-            
+
             # Let's assume the user expects us to collect "f(pi)=0" statements.
             # But we don't have a "data point collector".
             # Maybe `cli.py` had a logic for this?
             pass
-            
+
     # For now, to satisfy the user's "find f(x)" test which returned math junk,
     # simply handling it here prevents the math junk.
     # What should it actually DO?
-    # If I look at the previous logs (Function Finding), 
+    # If I look at the previous logs (Function Finding),
     # usually the user provides data points IN the command or via multiline?
     # User's test: "f(pi) = 0", "g(1) = 2", "find f(x)".
     # This implies "f(pi)=0" was stored.
     # Where?
     # If I fixed "f(pi)=0" to be a valid equation check, it just returns "Exact: 0" (0=0).
     # It didn't store anything.
-    
+
     # Hypothesis: The user EXPECTS `f(pi)=0` to be stored as a data point because `f` is undefined.
     # Currently, we do not support stateful accumulation of data points across lines.
     # We encourage the "Single Line" syntax: "f(1)=2, f(2)=4, find f(x)".
-    
+
     print("Function finding logic detected.")
     if "given" not in text and "=" not in text:
-         print("Usage: f(1)=1, f(2)=4, find f(x)")
-         print("       (Please provide data points in the same line)")
+        print("Usage: f(1)=1, f(2)=4, find f(x)")
+        print("       (Please provide data points in the same line)")
+
 
 def handle_find_command_raw(text: str, ctx: Any) -> bool:
     """
@@ -1015,128 +1149,139 @@ def handle_find_command_raw(text: str, ctx: Any) -> bool:
     """
     # 1. Split parts
     parts = kparser.split_top_level_commas(text)
-    
+
     data_points = []
     target_func = None
     target_vars = []
-    
+
     # Regex to parse data points: name(arg1, arg2) = value
     point_pattern = re.compile(r"^([a-zA-Z_]\w*)\s*\(([^)]+)\)\s*=\s*(.+)$")
     # Regex to parse find command: find name(vars)
     find_pattern = re.compile(r"^find\s+([a-zA-Z_]\w*)\s*(?:\(([^)]+)\))?$")
-    
+
     for p in parts:
         p = p.strip()
-        if not p: continue
-        
+        if not p:
+            continue
+
         # Strip flag for parsing
         p_clean = p.replace("--auto-evolve", "").strip()
-        
+
         # Check for FIND command
         m_find = find_pattern.match(p_clean)
         if m_find and "find" in p_clean.lower():
-             target_func = m_find.group(1)
-             if m_find.group(2):
-                 target_vars = [v.strip() for v in m_find.group(2).split(",")]
-             continue
-             
+            target_func = m_find.group(1)
+            if m_find.group(2):
+                target_vars = [v.strip() for v in m_find.group(2).split(",")]
+            continue
+
         # Check for DATA point
         # Also try matching dirty p just in case, but clean is safer
         m_point = point_pattern.match(p_clean)
         if m_point:
-             name = m_point.group(1)
-             args_str = m_point.group(2)
-             val_str = m_point.group(3)
-             
-             # args can be multiple: f(1, 2)
-             args = [a.strip() for a in args_str.split(",")]
-             
-             # We store as tuple: (name, args_list, value)
-             # But find_function_from_data expects specific format?
-             # Let's check signature. usually: (data_points, param_names)
-             # data_points = [ ([x1, x2], y), ... ]
-             data_points.append( (name, args, val_str) )
-    
+            name = m_point.group(1)
+            args_str = m_point.group(2)
+            val_str = m_point.group(3)
+
+            # args can be multiple: f(1, 2)
+            args = [a.strip() for a in args_str.split(",")]
+
+            # We store as tuple: (name, args_list, value)
+            # But find_function_from_data expects specific format?
+            # Let's check signature. usually: (data_points, param_names)
+            # data_points = [ ([x1, x2], y), ... ]
+            data_points.append((name, args, val_str))
+
     if target_func and data_points:
-         # Filter points for target function
-         relevant_points = []
-         for name, args, val in data_points:
-             if name == target_func:
-                 relevant_points.append( (args, val) )
-                 
-         if not relevant_points:
-             print(f"No data points found for function '{target_func}'.")
-             return True
-             
-         print(f"Finding function '{target_func}' from {len(relevant_points)} data points...")
-         
-         # Infer vars if not provided?
-         if not target_vars:
-             # Default to x, y, z based on arity
-             arity = len(relevant_points[0][0])
-             defaults = ["x", "y", "z", "t", "u", "v"]
-             target_vars = defaults[:arity]
-             
-         from ..function_manager import find_function_from_data, define_function
-           
-         # Handle unpacking safely (API might return 3 or 4 values depending on version)
-         result = find_function_from_data(relevant_points, target_vars)
-         if len(result) == 4:
-             success, result_str, factored, error_msg = result
-         elif len(result) == 3:
-             success, result_str, error_msg = result
-         else:
-             # Fallback
-             success = False
-             result_str = None
-             error_msg = f"Internal API Error: Unexpected return length {len(result)}"
+        # Filter points for target function
+        relevant_points = []
+        for name, args, val in data_points:
+            if name == target_func:
+                relevant_points.append((args, val))
 
-         if success:
-             # error_msg holds confidence_note here if successful
-             note = error_msg if error_msg else ""
-             print(f"Discovered: {target_func}({', '.join(target_vars)}) = {result_str}{note}")
-             try:
-                 define_function(target_func, target_vars, result_str)
-                 # Automatically save to cache not needed? define_function does it?
-                 # define_function updates global cache but maybe not disk cache unless save_functions called?
-                 # But it's available in REPL session.
-             except Exception as e:
-                 print(f"Warning: Failed to define function '{target_func}': {e}")
-         else:
-             # SUGGESTION BRIDGE (Engineering Standard: User Experience)
-             auto_evolve = "--auto-evolve" in text.lower()
-             
-             if auto_evolve:
-                 print(f"Genius Mode failed ({error_msg}). Auto-switching to Evolve Mode...")
-                 # Reconstruct evolve command
-                 # Format: evolve f(x) from f(1)=2, f(2)=3
-                 
-                 # Convert args list back to string
-                 points_str_list = []
-                 for args_list, val_str in relevant_points:
-                      # args_list is list of strings
-                      args_joined = ",".join(args_list)
-                      points_str_list.append(f"{target_func}({args_joined})={val_str}")
-                 
-                 points_segment = ", ".join(points_str_list)
-                 evolve_cmd = f"evolve {target_func}({','.join(target_vars)}) from {points_segment}"
-                 
-                 _handle_evolve(evolve_cmd)
-             else:
-                 print(f"Failed to discover function: {error_msg}")
-                 print(f"Tip: Genius Mode seeks exact laws. Try 'evolve {target_func}({','.join(target_vars)})...' for approximate models.")
-                 print(f"     Or use '--auto-evolve' to switch automatically.")
+        if not relevant_points:
+            print(f"No data points found for function '{target_func}'.")
+            return True
 
-         return True
-         
+        print(
+            f"Finding function '{target_func}' from {len(relevant_points)} data points..."
+        )
+
+        # Infer vars if not provided?
+        if not target_vars:
+            # Default to x, y, z based on arity
+            arity = len(relevant_points[0][0])
+            defaults = ["x", "y", "z", "t", "u", "v"]
+            target_vars = defaults[:arity]
+
+        from ..function_manager import define_function, find_function_from_data
+
+        # Handle unpacking safely (API might return 3 or 4 values depending on version)
+        result = find_function_from_data(relevant_points, target_vars)
+        if len(result) == 4:
+            success, result_str, factored, error_msg = result
+        elif len(result) == 3:
+            success, result_str, error_msg = result
+        else:
+            # Fallback
+            success = False
+            result_str = None
+            error_msg = f"Internal API Error: Unexpected return length {len(result)}"
+
+        if success:
+            # error_msg holds confidence_note here if successful
+            note = error_msg if error_msg else ""
+            print(
+                f"Discovered: {target_func}({', '.join(target_vars)}) = {result_str}{note}"
+            )
+            try:
+                define_function(target_func, target_vars, result_str)
+                # Automatically save to cache not needed? define_function does it?
+                # define_function updates global cache but maybe not disk cache unless save_functions called?
+                # But it's available in REPL session.
+            except Exception as e:
+                print(f"Warning: Failed to define function '{target_func}': {e}")
+        else:
+            # SUGGESTION BRIDGE (Engineering Standard: User Experience)
+            auto_evolve = "--auto-evolve" in text.lower()
+
+            if auto_evolve:
+                print(
+                    f"Genius Mode failed ({error_msg}). Auto-switching to Evolve Mode..."
+                )
+                # Reconstruct evolve command
+                # Format: evolve f(x) from f(1)=2, f(2)=3
+
+                # Convert args list back to string
+                points_str_list = []
+                for args_list, val_str in relevant_points:
+                    # args_list is list of strings
+                    args_joined = ",".join(args_list)
+                    points_str_list.append(f"{target_func}({args_joined})={val_str}")
+
+                points_segment = ", ".join(points_str_list)
+                evolve_cmd = f"evolve {target_func}({','.join(target_vars)}) from {points_segment}"
+
+                _handle_evolve(evolve_cmd)
+            else:
+                print(f"Failed to discover function: {error_msg}")
+                print(
+                    f"Tip: Genius Mode seeks exact laws. Try 'evolve {target_func}({','.join(target_vars)})...' for approximate models."
+                )
+                print("     Or use '--auto-evolve' to switch automatically.")
+
+        return True
+
     return False
     # My "fix" made it a valid equation, but didn't implement storage.
-    
+
     # To fix this properly (Rule 5), `handle_single_part` in `repl_core`
     # needs to detect "Undefined Function Call = Value" and store it as a constraint/datapoint
     # INSTEAD of just solving it.
-    
-    print("Function finding logic detected. (Data point collection not fully active in this patching phase).")
+
+    print(
+        "Function finding logic detected. (Data point collection not fully active in this patching phase)."
+    )
     # This avoids the crash/math junk, but functionality is partial.
     # The prompt asked me to fix parsing "Undefined Function Parsing".
     # I did.

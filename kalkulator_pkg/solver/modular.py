@@ -1,12 +1,15 @@
+
 import sympy as sp
-from typing import Any
 
 try:
     from ..logging_config import get_logger
+
     logger = get_logger("solver.modular")
 except ImportError:
     import logging
+
     logger = logging.getLogger("solver.modular")
+
 
 def _solve_modulo_equation(equation: sp.Eq, variable: sp.Symbol) -> list[sp.Basic]:
     """Solve a modulo equation of the form Mod(x, n) = k or x % n = k.
@@ -72,7 +75,7 @@ def _solve_modulo_equation(equation: sp.Eq, variable: sp.Symbol) -> list[sp.Basi
 
 
 def solve_system_of_congruences(
-    congruences: list[tuple[int, int]]
+    congruences: list[tuple[int, int]],
 ) -> tuple[int, int] | None:
     """Solve a system of congruences using the Chinese Remainder Theorem.
 
@@ -238,14 +241,14 @@ def solve_system_of_congruences(
         # USE STANDARD LIBRARY: sympy.ntheory.modular.solve_congruence
         # This handles non-coprime moduli correctly and is maintained by SymPy.
         from sympy.ntheory.modular import solve_congruence
-        
+
         # solve_congruence takes arguments as tuples (rem, mod)
         # Our input is (rem, mod) tuples, so we unpack them
         result = solve_congruence(*congruences)
-        
+
         if result is None:
             return None
-            
+
         return result
 
         # LEGACY MANUAL IMPLEMENTATION (COMMENTED OUT FOR PRESERVATION)

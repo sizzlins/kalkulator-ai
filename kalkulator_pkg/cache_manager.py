@@ -215,7 +215,6 @@ def get_cached_eval(
     if entry is None:
         return None
     # Track cache hit
-    global _cache_hit_tracking
     _cache_hit_tracking.append((preprocessed_expr, "eval"))
     if len(_cache_hit_tracking) > _MAX_CACHE_HIT_TRACKING:
         _cache_hit_tracking.pop(0)  # Remove oldest
@@ -267,7 +266,6 @@ def get_cached_subexpr(preprocessed_expr: str) -> str | None:
     if entry is None:
         return None
     # Track cache hit
-    global _cache_hit_tracking
     _cache_hit_tracking.append((preprocessed_expr, "subexpr"))
     if len(_cache_hit_tracking) > _MAX_CACHE_HIT_TRACKING:
         _cache_hit_tracking.pop(0)  # Remove oldest
@@ -304,7 +302,6 @@ def get_cache_hits() -> list[tuple[str, str]]:
     Returns:
         List of tuples (expression, cache_type) where cache_type is "eval" or "subexpr"
     """
-    global _cache_hit_tracking
     return _cache_hit_tracking.copy()
 
 
@@ -316,7 +313,6 @@ def clear_cache_hits() -> None:
 
 def save_cache_to_disk() -> None:
     """Save the current cache state to disk."""
-    global _persistent_cache
     if _persistent_cache is not None:
         save_persistent_cache(_persistent_cache)
 

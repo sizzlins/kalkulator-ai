@@ -33,52 +33,64 @@ class NodeType(Enum):
 # Operator definitions with arities and safe evaluation functions
 # Operator definitions with arities and safe evaluation functions
 def safe_tan(x):
-    with np.errstate(all='ignore'):
+    with np.errstate(all="ignore"):
         return np.tan(np.clip(x, -1e6, 1e6))
 
+
 def safe_exp(x):
-    with np.errstate(all='ignore'):
+    with np.errstate(all="ignore"):
         return np.exp(np.clip(x, -700, 700))
 
+
 def safe_log(x):
-    with np.errstate(all='ignore'):
+    with np.errstate(all="ignore"):
         return np.log(np.abs(x) + 1e-10)
 
+
 def safe_sqrt(x):
-    with np.errstate(all='ignore'):
+    with np.errstate(all="ignore"):
         return np.sqrt(np.abs(x))
 
+
 def safe_inv(x):
-    with np.errstate(all='ignore'):
+    with np.errstate(all="ignore"):
         return 1.0 / (x + 1e-10 * np.sign(x + 1e-10))
 
+
 def safe_mul(x, y):
-    with np.errstate(all='ignore'):
+    with np.errstate(all="ignore"):
         return np.clip(x * y, -1e100, 1e100)
 
+
 def safe_div(x, y):
-    with np.errstate(all='ignore'):
+    with np.errstate(all="ignore"):
         return x / (y + 1e-10 * np.sign(y + 1e-10))
 
+
 def safe_pow(x, y):
-    with np.errstate(all='ignore'):
+    with np.errstate(all="ignore"):
         return np.clip(np.power(np.abs(x) + 1e-10, np.clip(y, -10, 10)), -1e100, 1e100)
 
+
 def safe_sinh(x):
-    with np.errstate(all='ignore'):
+    with np.errstate(all="ignore"):
         return np.sinh(np.clip(x, -700, 700))
 
+
 def safe_cosh(x):
-    with np.errstate(all='ignore'):
+    with np.errstate(all="ignore"):
         return np.cosh(np.clip(x, -700, 700))
 
+
 def safe_square(x):
-    with np.errstate(all='ignore'):
+    with np.errstate(all="ignore"):
         return np.clip(x * x, -1e100, 1e100)
 
+
 def safe_cube(x):
-    with np.errstate(all='ignore'):
+    with np.errstate(all="ignore"):
         return np.clip(x * x * x, -1e100, 1e100)
+
 
 UNARY_OPERATORS: dict[str, Callable[[float], float]] = {
     "sin": np.sin,
@@ -547,11 +559,11 @@ class ExpressionTree:
             if node.is_Symbol:
                 name = str(node)
                 if name in variables:
-                     return ExpressionNode(NodeType.VARIABLE, name)
+                    return ExpressionNode(NodeType.VARIABLE, name)
                 else:
-                     # Treat unknown symbol as variable anyway? Or error?
-                     # For seeding, better be lenient or assume parameter
-                     return ExpressionNode(NodeType.VARIABLE, name)
+                    # Treat unknown symbol as variable anyway? Or error?
+                    # For seeding, better be lenient or assume parameter
+                    return ExpressionNode(NodeType.VARIABLE, name)
 
             # 3. Operations
             func_name = None
@@ -602,29 +614,34 @@ class ExpressionTree:
             elif isinstance(node, sp.Function) or hasattr(node, "func"):
                 fname = node.func.__name__.lower()
                 if fname == "max":
-                     operands = node.args
-                     current = _convert_node(operands[0])
-                     for i in range(1, len(operands)):
+                    operands = node.args
+                    current = _convert_node(operands[0])
+                    for i in range(1, len(operands)):
                         rhs = _convert_node(operands[i])
-                        parent = ExpressionNode(NodeType.BINARY_OP, "max", [current, rhs])
+                        parent = ExpressionNode(
+                            NodeType.BINARY_OP, "max", [current, rhs]
+                        )
                         current.parent = parent
                         rhs.parent = parent
                         current = parent
-                     return current
+                    return current
                 elif fname == "min":
-                     operands = node.args
-                     current = _convert_node(operands[0])
-                     for i in range(1, len(operands)):
+                    operands = node.args
+                    current = _convert_node(operands[0])
+                    for i in range(1, len(operands)):
                         rhs = _convert_node(operands[i])
-                        parent = ExpressionNode(NodeType.BINARY_OP, "min", [current, rhs])
+                        parent = ExpressionNode(
+                            NodeType.BINARY_OP, "min", [current, rhs]
+                        )
                         current.parent = parent
                         rhs.parent = parent
                         current = parent
-                     return current
-                     
+                    return current
+
                 child = _convert_node(node.args[0])
-                if fname == "abs": fname = "abs"
-                
+                if fname == "abs":
+                    fname = "abs"
+
                 parent = ExpressionNode(NodeType.UNARY_OP, fname, [child])
                 child.parent = parent
                 return parent
