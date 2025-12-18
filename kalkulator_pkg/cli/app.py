@@ -37,7 +37,7 @@ from ..solver import solve_inequality, solve_single_equation, solve_system
 from ..types import ParseError, ValidationError
 from ..worker import evaluate_safely
 
-logger = logging.getLogger(__name__)
+_logger = logging.getLogger(__name__)
 
 from ..utils.formatting import format_inverse_solutions as _format_inverse_solutions
 from ..utils.formatting import (
@@ -1345,7 +1345,7 @@ def repl_loop(output_format: str = "human") -> None:
                     if find_func_cmd is not None:
                         is_find_command = True
                 except Exception as e:
-                    logger.exception("Error parsing find function command")
+                    _logger.exception("Error parsing find function command")
                     # If "find" is in the expression but parsing failed, don't try to parse as normal expression
                     print(f"Error: Failed to parse function finding command: {e}")
                     continue
@@ -1400,7 +1400,7 @@ def repl_loop(output_format: str = "human") -> None:
                                     # Use the modified expression for parsing
                                     expr = expr_with_find
                 except Exception:
-                    logger.exception(
+                    _logger.exception(
                         "Error detecting function finding from multiple assignments"
                     )
 
@@ -1659,7 +1659,7 @@ def repl_loop(output_format: str = "human") -> None:
 
                                     data_points.append((final_args, final_value))
                                 except Exception as e:
-                                    logger.debug(
+                                    logging.getLogger(__name__).debug(
                                         f"Error parsing value '{value_str}': {e}"
                                     )
 
@@ -1692,7 +1692,9 @@ def repl_loop(output_format: str = "human") -> None:
                         print("Error: No valid data points found for function finding")
                     continue  # Skip further processing
                 except Exception as e:
-                    logger.exception("Error processing function finding in eval mode")
+                    logging.getLogger(__name__).exception(
+                        "Error processing function finding in eval mode"
+                    )
                     print(f"Error: Failed to process function finding: {e}")
                     continue
 
@@ -2536,7 +2538,7 @@ def repl_loop(output_format: str = "human") -> None:
                     from ..logging_config import get_logger
 
                     logger = get_logger("cli")
-                    logger.error(f"Error handling --eval in REPL: {e}", exc_info=True)
+                    _logger.error(f"Error handling --eval in REPL: {e}", exc_info=True)
                 except ImportError:
                     pass
 
@@ -3753,7 +3755,7 @@ def repl_loop(output_format: str = "human") -> None:
                                                                                 )
                                                                             )
                                                         except Exception:
-                                                            logger.exception(
+                                                            _logger.exception(
                                                                 "Error extracting specific solution from diophantine result"
                                                             )
 
@@ -3849,7 +3851,7 @@ def repl_loop(output_format: str = "human") -> None:
                                                     }
                                             except ValueError as ve:
                                                 # coefficient non-numeric or not linear
-                                                logger.exception(
+                                                _logger.exception(
                                                     "Integer-solution validation failed"
                                                 )
                                                 no_int_solution_msg = f"Integer-solution validation failed: {ve}"
@@ -3859,7 +3861,7 @@ def repl_loop(output_format: str = "human") -> None:
                                                 }
                                             except Exception as ex:
                                                 # unexpected: log and keep a useful message for debugging
-                                                logger.exception(
+                                                _logger.exception(
                                                     "Unexpected error while finding integer solutions"
                                                 )
                                                 no_int_solution_msg = f"Unexpected error while finding integer solutions: {ex}"
@@ -4006,7 +4008,7 @@ def repl_loop(output_format: str = "human") -> None:
                                                                     "no_solution": None,
                                                                 }
                                                 except Exception:
-                                                    logger.exception(
+                                                    _logger.exception(
                                                         "Error building integerized equation fallback"
                                                     )
                                                     pass
@@ -4036,7 +4038,7 @@ def repl_loop(output_format: str = "human") -> None:
                                                         )
                                                     solutions.append(sol_dict)
                                             except Exception:
-                                                logger.exception(
+                                                _logger.exception(
                                                     "Error solving for multiple variables"
                                                 )
                                                 pass
@@ -4416,7 +4418,7 @@ def repl_loop(output_format: str = "human") -> None:
                                                 f"Could not solve {func_name}({', '.join(param_names)}) = {current_target_str}"
                                             )
                                     except Exception as e:
-                                        logger.exception(
+                                        _logger.exception(
                                             "Outer try block failed while processing equation"
                                         )
                                         print(f"Error solving {solve_part}: {e}")
@@ -4561,7 +4563,7 @@ def repl_loop(output_format: str = "human") -> None:
             # Give an error instead of trying to parse as normal expression
             if is_find_command:
                 try:
-                    logger.exception("Error processing function finding command")
+                    _logger.exception("Error processing function finding command")
                 except Exception:
                     pass
                 print(f"Error: Failed to process function finding command: {e}")
@@ -4944,7 +4946,7 @@ def repl_loop(output_format: str = "human") -> None:
                     continue
                 except Exception:
                     # If system solving fails, fall through to normal processing
-                    logger.exception("Error solving system of equations")
+                    _logger.exception("Error solving system of equations")
 
         # Check for mixed function definition + function call (e.g., f(x)=2x, f(2))
         # Split by top-level commas and handle each part separately
@@ -5268,7 +5270,7 @@ def repl_loop(output_format: str = "human") -> None:
                                 # Check if function is defined for inverse solving
                                 from ..function_manager import _function_registry
 
-                                logger.debug(
+                                _logger.debug(
                                     f"Checking registry for {func_name}: {func_name in _function_registry}, registry keys: {list(_function_registry.keys())}"
                                 )
                                 if func_name in _function_registry:
@@ -5359,7 +5361,7 @@ def repl_loop(output_format: str = "human") -> None:
                             continue
 
                         except Exception as e:
-                            logger.exception("Error processing find function command")
+                            _logger.exception("Error processing find function command")
                             print(f"Error: {e}")
                             continue
                 except Exception:
@@ -5626,7 +5628,7 @@ def repl_loop(output_format: str = "human") -> None:
                             print(f"[Time: {elapsed:.4f}s]")
                         continue
                     except Exception as e:
-                        logger.debug(f"Failed to solve system with find: {e}")
+                        _logger.debug(f"Failed to solve system with find: {e}")
                         # Fall through to error message
                 # Fall through to chained execution for sequential commands
                 # This handles cases like "y=f(5), 5*y" where variables are defined and used sequentially
@@ -6001,7 +6003,7 @@ def repl_loop(output_format: str = "human") -> None:
                 from ..logging_config import get_logger
 
                 logger = get_logger("cli")
-                logger.error(f"Unexpected error in REPL: {e}", exc_info=True)
+                _logger.error(f"Unexpected error in REPL: {e}", exc_info=True)
             except ImportError:
                 pass
             print("An error occurred. Please check your input and try again.")
@@ -6558,7 +6560,7 @@ def main_entry(argv: list[str] | None = None) -> int:
                     print("Error: No valid data points found for function finding")
                     return 1
             except Exception as e:
-                logger.exception("Error processing function finding in --eval")
+                _logger.exception("Error processing function finding in --eval")
                 print(f"Error: Failed to process function finding: {e}")
                 return 1
 

@@ -923,20 +923,20 @@ def preprocess(
             and (allowed_functions is None or name not in allowed_functions)
             and not name.startswith("__COMMA_SEP_")
         ):
-            # It's an undefined name being used like a function
-            # Auto-convert to implicit multiplication: x(y) -> x*(y)
-            # This is a common user intent, so we fix it automatically with a warning
-            import sys
+            # Only convert to implicit multiplication if:
+            # - Name is more than 1 character (e.g., "xy" -> "xy*(...)")
+            # - This preserves single-letter function calls like f(x) for diff(f(x), x)
+            if len(name) > 1:
+                import sys
 
-            print(
-                f"Note: Converting '{name}(...)' to '{name}*(...)' (implicit multiplication)",
-                file=sys.stderr,
-            )
+                print(
+                    f"Note: Converting '{name}(...)' to '{name}*(...)' (implicit multiplication)",
+                    file=sys.stderr,
+                )
 
-            # Replace name(...) with name*(...) in processed_str
-            # Find the exact position and replace
-            pattern_to_replace = re.compile(rf"\b{re.escape(name)}\s*\(")
-            processed_str = pattern_to_replace.sub(f"{name}*(", processed_str, count=1)
+                # Replace name(...) with name*(...) in processed_str
+                pattern_to_replace = re.compile(rf"\b{re.escape(name)}\s*\(")
+                processed_str = pattern_to_replace.sub(f"{name}*(", processed_str, count=1)
 
     return processed_str
 
