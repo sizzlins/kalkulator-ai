@@ -936,7 +936,9 @@ def preprocess(
 
                 # Replace name(...) with name*(...) in processed_str
                 pattern_to_replace = re.compile(rf"\b{re.escape(name)}\s*\(")
-                processed_str = pattern_to_replace.sub(f"{name}*(", processed_str, count=1)
+                processed_str = pattern_to_replace.sub(
+                    f"{name}*(", processed_str, count=1
+                )
 
     return processed_str
 
