@@ -32,7 +32,7 @@ from sympy.parsing.sympy_parser import (
 #     VERSION = importlib.metadata.version("kalkulator")
 # except Exception:
 #     # Fallback if package not installed
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 # Resource limits (can be overridden via environment variables)
 WORKER_CPU_SECONDS = int(os.getenv("KALKULATOR_WORKER_CPU_SECONDS", "30"))

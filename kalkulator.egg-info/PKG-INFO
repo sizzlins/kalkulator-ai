@@ -1,0 +1,112 @@
+Metadata-Version: 2.4
+Name: kalkulator
+Version: 1.2.0
+Summary: Research-grade symbolic regression engine for discovering mathematical formulas, ODEs, and causal relationships from data
+Author: Kalkulator Contributors
+License: MIT
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Developers
+Classifier: Intended Audience :: Education
+Classifier: Intended Audience :: Science/Research
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Topic :: Scientific/Engineering :: Mathematics
+Classifier: Topic :: Scientific/Engineering :: Physics
+Classifier: Topic :: Scientific/Engineering :: Artificial Intelligence
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: sympy<2.0,>=1.12
+Requires-Dist: mpmath>=1.3.0
+Requires-Dist: numpy>=1.21.0
+Requires-Dist: scipy>=1.7.0
+Requires-Dist: scikit-learn>=1.0.0
+Provides-Extra: plotting
+Requires-Dist: matplotlib>=3.5.0; extra == "plotting"
+Provides-Extra: causal
+Requires-Dist: networkx>=2.6.0; extra == "causal"
+Dynamic: license-file
+
+![Demo](demo.png)
+
+# Kalkulator-ai
+
+![Status](https://img.shields.io/badge/Status-Beta-yellow.svg)
+![Version](https://img.shields.io/badge/Version-1.2.0-blue.svg)
+![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)
+![License](https://img.shields.io/badge/License-MIT-purple.svg)
+
+Symbolic regression engine. Discovers mathematical formulas, ODEs, and causal relationships from data.
+
+## Capabilities
+
+- **Symbolic Regression**: Identifies exact equations (`y = 5*x^2`) from raw data.
+- **Physics Discovery**: Patterns include inverse square laws, exp/log, and trigonometric series.
+- **SINDy**: Discovers differential equations (`dx/dt`) from time-series.
+- **Genetic Programming**: Evolves complex functional forms via mutation/crossover.
+- **Calculus**: Symbolic differentiation (`diff`) and integration (`integrate`).
+- **Agentic Discovery**: Intelligent feature selection logic.
+
+## Installation
+
+Requires Python 3.8+.
+
+```bash
+git clone https://github.com/sizzlins/kalkulator-ai
+pip install -r requirements.txt
+```
+
+## Usage
+
+Legacy CLI:
+
+```bash
+python kalkulator.py
+```
+
+### Commands
+
+- `f(x)=...`: Define function.
+- `find f(x)`: Discover function from data.
+- `evolve ...`: Genetic programming search.
+- `diff(...)`: Differentiate.
+- `integrate(...)`: Integrate.
+- `save/load`: Persist state.
+
+### Examples
+
+**Physics (Kinetic Energy)**
+
+```
+>>> E(2,4)=16, E(4,2)=8, E(10,1)=5, find E(m,v)
+E(m, v) = 0.5*m*v^2
+```
+
+**LambertW (Inverse x^x)**
+
+```
+>>> f(4)=2, f(27)=3, f(256)=4, find f(x)
+Discovered: f(x) = exp(LambertW(log(x)))
+```
+
+**Gaussian**
+
+```
+>>> g(0)=1, g(1)=0.3679, find g(x)
+g(x) = exp(-x^2)
+```
+
+## Architecture
+
+- **Core**: `kalkulator_pkg`
+- **Solvers**: Hybrid Sparse Regression (Lasso/OMP) + Genetic Programming + SINDy.
+- **Safety**: Bounded execution, sandboxed evaluation.
+
+## License
+
+MIT.

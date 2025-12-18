@@ -1,0 +1,153 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.0, pytest-7.4.4, pluggy-1.6.0
+rootdir: C:\Users\LOQ\PycharmProjects\kalkulator-ai
+configfile: pyproject.toml
+plugins: hypothesis-6.148.7, cov-4.1.0, xdist-3.5.0
+collected 185 items
+
+tests\final_torture_test.py .                                            [  0%]
+tests\test_api_typed_returns.py ................                         [  9%]
+tests\test_blindfold_physics.py .                                        [  9%]
+tests\test_calculus.py ......                                            [ 12%]
+tests\test_comprehensive.py ............................                 [ 28%]
+tests\test_comprehensive_physics.py ......                               [ 31%]
+tests\test_damped_motion.py .                                            [ 31%]
+tests\test_error_codes.py ........                                       [ 36%]
+tests\test_failure_modes.py ...............................              [ 52%]
+tests\test_fuzzing.py ...                                                [ 54%]
+tests\test_integration.py .....                                          [ 57%]
+tests\test_integration_cli.py ........                                   [ 61%]
+tests\test_occam_razor.py .....                                          [ 64%]
+tests\test_parser.py ................                                    [ 72%]
+tests\test_parser_nested.py ....                                         [ 75%]
+tests\test_performance.py .......                                        [ 78%]
+tests\test_physics_engine.py ..                                          [ 80%]
+tests\test_reproduce_accuracy.py .                                       [ 80%]
+tests\test_scale_imbalance.py F                                          [ 81%]
+tests\test_solver.py ......s...                                          [ 86%]
+tests\test_solver_handlers.py ...........                                [ 92%]
+tests\test_sphere_debug_final.py .                                       [ 92%]
+tests\test_transcendental.py .....F.                                     [ 96%]
+tests\test_universal_blindfold.py .                                      [ 97%]
+tests\test_windows_specific.py .....                                     [100%]
+
+================================== FAILURES ===================================
+___________________ TestScaleImbalance.test_giants_vs_ants ____________________
+
+self = <tests.test_scale_imbalance.TestScaleImbalance testMethod=test_giants_vs_ants>
+
+    def test_giants_vs_ants(self):
+        """Test f(x) = x + sin(x) with exp(x) in search space."""
+        # Data points from user
+        # f(0)=0, f(1.57)=2.57, f(3.14)=3.14, f(4.71)=3.71, f(6.28)=6.28
+        data = [
+            ([0], 0),
+            ([1.57], 2.57),
+            ([3.14], 3.14),
+            ([4.71], 3.71),
+            ([6.28], 6.28),
+        ]
+    
+        success, func_str, _, error = find_function_from_data(data, ["x"])
+        print(f"\nFound function: {func_str}")
+    
+        # We expect x + sin(x)
+        # Or 1.0*x + 1.0*sin(x)
+        self.assertTrue("x" in func_str, "Missing linear term x")
+>       self.assertTrue("sin(x)" in func_str, "Missing sine term sin(x)")
+E       AssertionError: False is not true : Missing sine term sin(x)
+
+tests\test_scale_imbalance.py:25: AssertionError
+---------------------------- Captured stdout call -----------------------------
+
+Found function: 2.6985138*x - 0.8113919429*x^2 + 0.08613502578*x^3
+_________________ TestTranscendentalFunctions.test_power_law __________________
+
+self = <tests.test_transcendental.TestTranscendentalFunctions testMethod=test_power_law>
+
+    def test_power_law(self):
+        """Test finding f(x) = x^2.5 (power law)."""
+        # f(1)=1, f(4)=32, f(9)=243
+        data = [([1], 1), ([4], 32), ([9], 243)]
+        success, func_str, _, error = find_function_from_data(data, ["x"])
+        self.assertTrue(success, f"Failed to find x^2.5: {error}")
+>       self.assertIn("x^2.5", func_str)
+E       AssertionError: 'x^2.5' not found in 'x^5/2'
+
+tests\test_transcendental.py:74: AssertionError
+============================== warnings summary ===============================
+tests/test_comprehensive_physics.py::test_coulomb
+  C:\Users\LOQ\PycharmProjects\kalkulator-ai\.venv\Lib\site-packages\_pytest\python.py:198: PytestReturnNotNoneWarning: Expected None, but tests/test_comprehensive_physics.py::test_coulomb returned False, which will be an error in a future version of pytest.  Did you mean to use `assert` instead of `return`?
+    warnings.warn(
+
+tests/test_comprehensive_physics.py::test_mechanical_energy
+  C:\Users\LOQ\PycharmProjects\kalkulator-ai\.venv\Lib\site-packages\_pytest\python.py:198: PytestReturnNotNoneWarning: Expected None, but tests/test_comprehensive_physics.py::test_mechanical_energy returned True, which will be an error in a future version of pytest.  Did you mean to use `assert` instead of `return`?
+    warnings.warn(
+
+tests/test_comprehensive_physics.py::test_spacetime
+  C:\Users\LOQ\PycharmProjects\kalkulator-ai\.venv\Lib\site-packages\_pytest\python.py:198: PytestReturnNotNoneWarning: Expected None, but tests/test_comprehensive_physics.py::test_spacetime returned False, which will be an error in a future version of pytest.  Did you mean to use `assert` instead of `return`?
+    warnings.warn(
+
+tests/test_comprehensive_physics.py::test_gas_law
+  C:\Users\LOQ\PycharmProjects\kalkulator-ai\.venv\Lib\site-packages\_pytest\python.py:198: PytestReturnNotNoneWarning: Expected None, but tests/test_comprehensive_physics.py::test_gas_law returned True, which will be an error in a future version of pytest.  Did you mean to use `assert` instead of `return`?
+    warnings.warn(
+
+tests/test_comprehensive_physics.py::test_kinetic_energy
+  C:\Users\LOQ\PycharmProjects\kalkulator-ai\.venv\Lib\site-packages\_pytest\python.py:198: PytestReturnNotNoneWarning: Expected None, but tests/test_comprehensive_physics.py::test_kinetic_energy returned True, which will be an error in a future version of pytest.  Did you mean to use `assert` instead of `return`?
+    warnings.warn(
+
+tests/test_comprehensive_physics.py::test_sphere_volume
+  C:\Users\LOQ\PycharmProjects\kalkulator-ai\.venv\Lib\site-packages\_pytest\python.py:198: PytestReturnNotNoneWarning: Expected None, but tests/test_comprehensive_physics.py::test_sphere_volume returned True, which will be an error in a future version of pytest.  Did you mean to use `assert` instead of `return`?
+    warnings.warn(
+
+tests/test_occam_razor.py::test_linear_offset
+  C:\Users\LOQ\PycharmProjects\kalkulator-ai\.venv\Lib\site-packages\_pytest\python.py:198: PytestReturnNotNoneWarning: Expected None, but tests/test_occam_razor.py::test_linear_offset returned True, which will be an error in a future version of pytest.  Did you mean to use `assert` instead of `return`?
+    warnings.warn(
+
+tests/test_occam_razor.py::test_pure_cosine
+  C:\Users\LOQ\PycharmProjects\kalkulator-ai\.venv\Lib\site-packages\_pytest\python.py:198: PytestReturnNotNoneWarning: Expected None, but tests/test_occam_razor.py::test_pure_cosine returned True, which will be an error in a future version of pytest.  Did you mean to use `assert` instead of `return`?
+    warnings.warn(
+
+tests/test_occam_razor.py::test_simple_product
+  C:\Users\LOQ\PycharmProjects\kalkulator-ai\.venv\Lib\site-packages\_pytest\python.py:198: PytestReturnNotNoneWarning: Expected None, but tests/test_occam_razor.py::test_simple_product returned True, which will be an error in a future version of pytest.  Did you mean to use `assert` instead of `return`?
+    warnings.warn(
+
+tests/test_occam_razor.py::test_triple_product
+  C:\Users\LOQ\PycharmProjects\kalkulator-ai\.venv\Lib\site-packages\_pytest\python.py:198: PytestReturnNotNoneWarning: Expected None, but tests/test_occam_razor.py::test_triple_product returned True, which will be an error in a future version of pytest.  Did you mean to use `assert` instead of `return`?
+    warnings.warn(
+
+tests/test_occam_razor.py::test_newtons_law
+  C:\Users\LOQ\PycharmProjects\kalkulator-ai\.venv\Lib\site-packages\_pytest\python.py:198: PytestReturnNotNoneWarning: Expected None, but tests/test_occam_razor.py::test_newtons_law returned True, which will be an error in a future version of pytest.  Did you mean to use `assert` instead of `return`?
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+
+---------- coverage: platform win32, python 3.14.0-final-0 -----------
+Name                                         Stmts   Miss  Cover   Missing
+--------------------------------------------------------------------------
+kalkulator_pkg\__init__.py                       3      0   100%
+kalkulator_pkg\__main__.py                       3      3     0%   13-17
+kalkulator_pkg\abpn.py                           0      0   100%
+kalkulator_pkg\api.py                           64     18    72%   61, 63-64, 68, 138, 169-182, 273
+kalkulator_pkg\cache_manager.py                194     97    50%   20-21, 53, 65-67, 75, 77, 85-88, 111-112, 117-118, 130-132, 221, 225, 240-252, 272, 276, 290-297, 326-331, 343-353, 366-399, 412-448
+kalkulator_pkg\calculus.py                      83     47    43%   25, 31, 36, 45-57, 73, 79, 82-87, 93-105, 120, 124, 128-142
+kalkulator_pkg\cli.py                         3244   2801    14%   42-93, 101-107, 129-172, 183-251, 268-351, 363-373, 380-493, 512-560, 573-623, 645-647, 660-664, 675-679, 690-693, 701-704, 711-714, 724-725, 736-737, 743-744, 761-762, 765-798, 800-818, 820-822, 829-835, 837, 839-850, 853-859, 864-865, 869-876, 881-884, 888, 901, 905, 909, 913, 918, 939-940, 958-964, 971-973, 980, 986, 1018, 1021, 1026-1030, 1036-1052, 1055, 1074, 1112-1113, 1118-1133, 1136-1140, 1145-1304, 1306-1333, 1335-1397, 1399-1410, 1412-1425, 1427-1443, 1445-2502, 2508-2509, 2511-2512, 2516-2740, 2816, 2833-2901, 2930, 2933-2941, 2952-2953, 2961, 2967-2983, 2996, 3018-3019, 3049-3050, 3083-3084, 3093-3095, 3097-3101, 3113-3115, 3129-3153, 3160, 3168-3192, 3196-3200, 3239-3295, 3303-3304, 3310-4341, 4353-4437, 4444-4465, 4468-5730, 5735-5911, 5929-5930, 6009, 6016-6017, 6025, 6027, 6029, 6031-6032, 6034, 6036-6039, 6042, 6044-6048, 6050-6058, 6066, 6069-6072, 6089-6091, 6109-6140, 6144-6410, 6417, 6423-6499, 6519-6520, 6535-6536, 6542-6543
+kalkulator_pkg\config.py                        45      2    96%   32-34
+kalkulator_pkg\function_finder_advanced.py     453    183    60%   24-25, 71-121, 143-201, 224-234, 250-257, 274-276, 293-295, 318-360, 382-426, 444-493, 514, 850, 875, 877, 879, 888, 893-895, 916, 936-940, 959, 970-971
+kalkulator_pkg\function_manager.py            2199   1326    40%   66, 70, 77-85, 112-115, 132, 148-150, 156-219, 238-269, 279, 326, 334, 352-353, 375-407, 436, 441, 454, 459, 463, 478-481, 493-557, 598-599, 646, 659, 661, 666-669, 677, 679, 683-686, 706, 712, 728, 741-743, 759-762, 766, 799, 806-815, 821-843, 855-858, 889-890, 945-993, 1026-1027, 1032, 1040-1059, 1065, 1077-1078, 1083, 1110, 1115, 1119, 1124-1133, 1137, 1143-1147, 1149-1153, 1166, 1170, 1181, 1208, 1220, 1227, 1233-1239, 1250-1270, 1319-1358, 1369-1371, 1381, 1384, 1390-1391, 1434, 1436, 1440, 1451-1458, 1463-1464, 1504-1509, 1515-1529, 1534-1535, 1560-1567, 1599, 1622, 1638, 1651-1676, 1689, 1695, 1701, 1721, 1728, 1734, 1740, 1746, 1753, 1759, 1766-1777, 1810-1856, 1867, 1876, 1889-1937, 1951, 1967-1972, 1985-2001, 2018-2035, 2050-2067, 2086-2089, 2099-2111, 2129-2144, 2158, 2165, 2172, 2200-2210, 2219-2234, 2247-2257, 2272-2282, 2295-2305, 2320-2330, 2359, 2391-2399, 2424-2432, 2445-2463, 2476, 2518, 2819-3127, 3141, 3167, 3193-3196, 3204-3206, 3218, 3239, 3255-3265, 3278-3288, 3306, 3315-3947, 3953, 3958-3966, 3969-4095, 4109-4135, 4146-4153, 4171-4202, 4250-4257, 4293, 4298-4368, 4377-4378, 4391-4397, 4410-4411, 4413-4414, 4421-4426, 4432, 4437-4444, 4456-4461, 4473, 4480-4490, 4494, 4536, 4552-4554, 4563, 4568-4569, 4573-4595, 4627-4727, 4751, 4779-4798, 4828-4879, 4890-4923, 4928-4953
+kalkulator_pkg\logging_config.py                33     13    61%   42-44, 77-89
+kalkulator_pkg\parser.py                       614    280    54%   87-89, 102-104, 118-120, 199, 203, 210, 221-229, 233-243, 267-270, 280, 288-289, 292-293, 297, 315-365, 378-380, 439, 581-582, 589, 642-647, 674, 680, 685-687, 697-710, 719-725, 790-792, 813-818, 841, 851-1026, 1055-1082, 1110-1125, 1149, 1151, 1216-1288, 1305-1330, 1335-1343
+kalkulator_pkg\plotting.py                     151    138     9%   16-28, 44-63, 109-295
+kalkulator_pkg\regression_solver.py            271     53    80%   14-28, 43, 53, 65-69, 80, 82-83, 288-294, 303-328, 349, 363, 366, 379, 399, 431-432
+kalkulator_pkg\solver.py                      1103    728    34%   48-66, 70-73, 96-99, 110-133, 149-215, 228-239, 255-305, 325-442, 458, 462-464, 483-496, 517-525, 559-563, 565-566, 573-579, 581, 607-608, 624, 630-631, 665-674, 686-687, 693-709, 723, 725, 729-738, 748-753, 756-774, 790-796, 802-810, 831-833, 836, 849-862, 890-896, 901-934, 967-1148, 1157-1185, 1203, 1219-1234, 1238-1421, 1428, 1442-1444, 1452-1489, 1512, 1522, 1533, 1556-1557, 1565-1567, 1574-1584, 1587-1598, 1612-1620, 1655, 1662, 1668, 1682-1717, 1722-1723, 1725-1726, 1728-1786, 1790-1792, 1799-1801, 1807, 1816, 1825-1827, 1853, 1864-1865, 1888, 1900-1903, 1909, 1920-1922, 1925-1928, 1934, 1936, 1939, 1942-1943, 1958-1959, 1971-1972, 1981-1985, 1996, 2022, 2031, 2034-2039, 2057-2058, 2068-2069, 2073-2075
+kalkulator_pkg\types.py                         82     30    63%   29, 65-78, 110-115, 143-145, 148, 157-160, 163
+kalkulator_pkg\worker.py                       798    569    29%   29-47, 53, 59-63, 80-92, 116-118, 123, 129-145, 156-317, 324-328, 331-358, 366, 388-389, 396-405, 413-416, 441-463, 481, 483, 515-532, 543-546, 550, 554, 564-566, 572-575, 579-581, 590-594, 600-602, 616-695, 705-709, 718-725, 735-743, 751-759, 763-765, 773, 783-809, 819-1024, 1050-1055, 1078, 1084-1107, 1145-1146, 1148-1195, 1202-1210, 1216-1234, 1262-1278, 1283-1295, 1320-1330, 1339-1359, 1364-1366, 1371-1375, 1383-1407, 1411-1492
+--------------------------------------------------------------------------
+TOTAL                                         9340   6288    33%
+Coverage HTML written to dir htmlcov
+Coverage XML written to file coverage.xml
+
+=========================== short test summary info ===========================
+FAILED tests/test_scale_imbalance.py::TestScaleImbalance::test_giants_vs_ants
+FAILED tests/test_transcendental.py::TestTranscendentalFunctions::test_power_law
+=========== 2 failed, 182 passed, 1 skipped, 11 warnings in 51.19s ============

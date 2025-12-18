@@ -1,12 +1,9 @@
-read this
+answer every question that is asked for you here
 5. **Root Cause First (The Wall Rule)**: Never patch a bug with a quick fix. When we have a wall, and the wall has a hole in it, we replace the entire wall with a new better wall, and we do not fix by applying a weak band-aid to it (ONLY WHEN APPROPRIATE AND NECESSARY AND DOES NOT CAUSE HARM TO THE SYSTEM). Always identify the fundamental flaw and refactor the architecture.
-
-then continue on reading
 
 
 Engineering Standards (The Kalkulator Constitution)
-rules for safety-critical systems:                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
-
+rules for safety-critical systems:
 1.  **Simple Control Flow**: Avoid complex "magic" (metaclasses, dynamic attribute injection, `exec`). Keep logic linear.
 2.  **Bounded Loops**: All loops (especially in genetic programming and numerical solvers) must have a fixed `max_iterations` failsafe.
 3.  **Object Stability**: Avoid runtime structure modification ("monkey patching"). Treat initialized objects as immutable where possible.
@@ -38,6 +35,9 @@ answer this, did you read that? if so continue reading below
 answer every single question that this text below this line ask you
 
 is this fix or feature that we will add be good for the future and present of the programs development and stability?
+
+
+how would we implement it into the program
 
 Is this idea that we have thought of to add to the program a good idea or a bad idea?
 

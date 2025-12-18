@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2025-12-19
+
+### Added
+
+- **Hybrid Evolution Mode**: `evolve --hybrid` seeds genetic algorithm with `find()` results for better convergence.
+- **Boost Mode**: `evolve --boost N` multiplies population, generations, and timeout by N× (1-5).
+- **Polyfit Fallback**: High-degree polynomial fitting (degrees 3,4,5) when R² < 0.95 from template methods.
+- **Seed Protection**: 20% of seed copies kept unmutated to preserve good solutions.
+- **Y-Normalization**: Automatic normalization for large value ranges (>1000) in evolve.
+- **Implicit Multiplication**: Auto-converts `x(x+1)` to `x*(x+1)` with warning instead of error.
+
+### Fixed
+
+- **Evolve Timeout**: Pattern-based prevention of SymPy hangs (complexity > 50, nested powers).
+- **Smart Seeding**: Fixed pole detection and priority in hint generation.
+
+### Changed
+
+- **Help Text**: Updated with new `--hybrid` and `--boost` flags.
+- **Documentation**: Added high-degree polynomial limitations to README.
+
 ## [1.2.0] - 2025-12-11
 
 ### Added
