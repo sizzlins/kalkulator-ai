@@ -236,7 +236,7 @@ def g2_test(
     if conditioning_set:
         # Condition on each stratum
         z_combined = np.zeros(len(X), dtype=int)
-        for k, idx in enumerate(conditioning_set):
+        for _k, idx in enumerate(conditioning_set):
             z_combined = z_combined * n_bins + discretize(X[:, idx])
 
         g2_total = 0

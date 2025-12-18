@@ -566,12 +566,9 @@ class ExpressionTree:
                     return ExpressionNode(NodeType.VARIABLE, name)
 
             # 3. Operations
-            func_name = None
-            children = []
 
             # SymPy Internals Mapping
             if node.is_Add:
-                func_name = "add"
                 # SymPy Add is n-ary. We must chain binary adds.
                 # (a+b+c) -> add(a, add(b, c))
                 operands = node.args
@@ -587,7 +584,6 @@ class ExpressionTree:
                 return current
 
             elif node.is_Mul:
-                func_name = "mul"
                 operands = node.args
                 current = _convert_node(operands[0])
                 for i in range(1, len(operands)):
@@ -605,7 +601,6 @@ class ExpressionTree:
                 # SymPy usually represents sqrt(x) as Pow(x, 1/2).
                 # But ExpressionTree might have "sqrt".
                 # Standard pow is fine.
-                func_name = "pow"
                 parent = ExpressionNode(NodeType.BINARY_OP, "pow", [base, exp])
                 base.parent = parent
                 exp.parent = parent

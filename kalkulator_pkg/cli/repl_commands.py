@@ -282,7 +282,7 @@ def _handle_show_functions():
         print("User functions: None")
 
     print("\nBuilt-in functions:")
-    builtins = sorted(list(BUILTIN_FUNCTION_NAMES))
+    builtins = sorted(BUILTIN_FUNCTION_NAMES)
     line = "  "
     for b in builtins:
         entry = f"{b}(...)"
@@ -1092,7 +1092,7 @@ def _handle_find_command(text: str, variables: Dict[str, str]):
         # Check for f(x) pattern
         match = re.match(r"([a-zA-Z_]\w*)\s*\(", content)
         if match:
-            func_name = match.group(1)
+            match.group(1)
             # Trigger function finding
             # We need data points from somewhere.
             # In Kalkulator, data points are usually just previously entered "f(1)=2".

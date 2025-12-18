@@ -169,7 +169,7 @@ def find_integer_solutions_for_linear(equation, x, y):
     # Check coefficients are numeric (no free symbols left other than x,y were removed by Poly)
     for coef in (a, b, c):
         if coef.free_symbols:
-            raise ValueError("Non-numeric coefficient found: %r" % coef)
+            raise ValueError(f"Non-numeric coefficient found: {coef!r}")
 
     # Convert coefficients to rationals and scale to integer coefficients:
     def denom_of(sympy_number):
@@ -185,7 +185,7 @@ def find_integer_solutions_for_linear(equation, x, y):
                 return int(r.q)
         except Exception:
             pass
-        raise ValueError("Coefficient is not rational/integer: %r" % sympy_number)
+        raise ValueError(f"Coefficient is not rational/integer: {sympy_number!r}")
 
     denoms = [denom_of(v) for v in (a, b, c)]
     lcm_den = _math_lcm(*denoms) if denoms else 1

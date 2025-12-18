@@ -151,8 +151,8 @@ class ParetoFront:
         sorted_sols = sorted(self.solutions, key=lambda s: s.complexity)
 
         # Get extreme points
-        simplest = sorted_sols[0]
-        most_accurate = min(sorted_sols, key=lambda s: s.mse)
+        sorted_sols[0]
+        min(sorted_sols, key=lambda s: s.mse)
 
         # Line from simplest to most accurate
         # Normalize both axes

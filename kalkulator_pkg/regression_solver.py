@@ -344,7 +344,7 @@ def solve_regression_stage(
                         if abs(corr) > 0.9:  # High correlation = good fit
                             detected_feature_idx = candidate_idx
                         # else: detection fired but feature doesn't fit well, skip override
-                    except:
+                    except Exception:
                         pass
             except Exception:
                 pass  # Detection failed - fall back to regular search
@@ -417,7 +417,7 @@ def solve_regression_stage(
                 coeffs = np.zeros(X_norm.shape[1])
                 for idx, val in zip(exact_indices, c_vals):
                     coeffs[idx] = val
-            except:
+            except Exception:
                 exact_indices = None  # Fallback
 
         if exact_indices is None:
@@ -462,7 +462,7 @@ def solve_regression_stage(
             coeffs = np.zeros(X_norm.shape[1])
             for idx, val in zip(exact_indices, c_vals):
                 coeffs[idx] = val
-        except:
+        except Exception:
             pass  # Keep OMP/Lasso result if override fails
 
     # If OMP fails or returns None (e.g., variance is 0 => Constant function),
@@ -474,7 +474,7 @@ def solve_regression_stage(
         # but here we might just want to return "failed" for this stage or "empty model".
         # Actually, if coeffs is None, usually it means we couldn't find a better fit than mean.
         # Note: y_centered is available here.
-        fallback_model = {
+        {
             "name": "constant_fallback",
             "mse": np.mean(
                 y_centered**2
@@ -544,7 +544,6 @@ def solve_regression_stage(
     # Refit OLS
     refined_coeffs = None
     intercept = 0.0
-    ols = None
 
     for _ in range(3):
         X_selected = X_matrix[:, selected_indices]
@@ -721,7 +720,7 @@ def solve_regression_stage(
 
                         if pole_x is not None and has_oscillation:
                             residual_hint = f" [Hint: Try sin(c/(x-{pole_x})) or cos(c/(x-{pole_x}))]"
-                except:
+                except Exception:
                     pass
 
                 # Generic frequency hint (only if no specific hint yet)
@@ -730,7 +729,7 @@ def solve_regression_stage(
                         freq_hints = detect_frequency(x_vals, residuals)
                         if freq_hints:
                             residual_hint = " [Hint: try adding trig terms]"
-                    except:
+                    except Exception:
                         pass
 
                 # Saturation hint (only if no hints yet)
@@ -739,7 +738,7 @@ def solve_regression_stage(
                         sat_hints = detect_saturation(x_vals, residuals)
                         if sat_hints.get("softplus") or sat_hints.get("sigmoid"):
                             residual_hint = " [Hint: try sigmoid/softplus]"
-                    except:
+                    except Exception:
                         pass
             except Exception:
                 pass
@@ -863,11 +862,11 @@ def find_best_subset_small_data(
                             )
                             if power_val >= 4:
                                 penalty *= 1.5
-                        except:
+                        except Exception:
                             pass
 
             return mse_val * penalty
-        except:
+        except Exception:
             return float("inf")
 
     # 2. Check 1-term

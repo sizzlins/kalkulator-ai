@@ -343,7 +343,7 @@ class GeneticSymbolicRegressor:
 
         # Occasionally optimize constants (reduced rate to prevent timeout issues)
         if random.random() < 0.02:  # Reduced from 0.1 to prevent long runs
-            for i in range(min(2, len(new_population))):  # Reduced from 5
+            for _i in range(min(2, len(new_population))):  # Reduced from 5
                 idx = random.randrange(len(new_population))
                 new_population[idx] = constant_optimization(
                     new_population[idx],
@@ -475,8 +475,8 @@ class GeneticSymbolicRegressor:
                     X, y, test_size=0.2, random_state=42
                 )
             except ImportError:
-                X_train, y_train = X, y
-                X_val, y_val = X, y
+                _X_train, y_train = X, y
+                _X_val, y_val = X, y
 
         # Normalize y if value range is very large (>1000)
         # This prevents MSE from becoming astronomically large for high-degree polynomials
@@ -605,7 +605,7 @@ class GeneticSymbolicRegressor:
                     expr_str = current_model_tree.to_pretty_string()
                     try:
                         sympy_expr = current_model_tree.to_sympy()
-                    except:
+                    except Exception:
                         sympy_expr = sp.sympify(0)
 
                     sol = ParetoSolution(
@@ -616,7 +616,7 @@ class GeneticSymbolicRegressor:
                         tree=current_model_tree,
                     )
                     final_front.add(sol)
-                except:
+                except Exception:
                     pass
             return final_front
         else:

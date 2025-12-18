@@ -133,12 +133,19 @@ select = [
 ]
 ignore = [
     "E501",  # line too long (handled by black)
+    "E402",  # module level import not at top (intentional for circular import avoidance)
+    "E741",  # ambiguous variable name (I is standard for current in physics)
+    "B007",  # loop control variable not used (intentional: enumerate for position tracking)
     "B008",  # do not perform function calls in argument defaults
+    "B025",  # duplicate exception in try-except (intentional for explicit handling)
     "C901",  # too complex
+    "F811",  # redefinition of unused (intentional for fallback/override patterns)
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["E501", "S101"]  # Allow longer lines and assert in tests
+"kalkulator_pkg/cli/*" = ["F401"]  # Unused imports are often intentional re-exports
+"kalkulator_pkg/cli/commands/*" = ["F401"]  # Module re-exports
 
 [tool.pytest.ini_options]
 minversion = "7.0"

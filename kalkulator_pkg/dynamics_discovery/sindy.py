@@ -297,7 +297,7 @@ class SINDy:
             terms = []
             coefs = self.coefficients[:, var_idx]
 
-            for feat_idx, (coef, feat_name) in enumerate(
+            for _feat_idx, (coef, feat_name) in enumerate(
                 zip(coefs, self.feature_names)
             ):
                 if abs(coef) > 1e-10:

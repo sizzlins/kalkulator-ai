@@ -35,7 +35,7 @@ class REPL:
 
     def _setup_readline(self):
         try:
-            import readline
+            import readline  # noqa: F401
         except ImportError:
             pass
 
@@ -459,7 +459,7 @@ class REPL:
                 pass
 
             # 4. Buffer Output
-            approx = res.get("approx")
+            res.get("approx")
             item = f"{var_name} = {format_solution(val_str)}"
             # (Omitted complex formatting logic for brevity on first pass, adhering to clarity)
             self.results_buffer.append(item)

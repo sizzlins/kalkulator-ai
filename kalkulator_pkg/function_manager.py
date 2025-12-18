@@ -350,7 +350,7 @@ def define_function(name: str, params: list[str], body_expr: str) -> None:
         from .parser import _parse_preprocessed_impl, preprocess
 
         # Preprocess the body string (converts √ -> sqrt, etc.)
-        params_set = set(params)
+        set(params)
         body_expr_preprocessed = preprocess(body_expr)
 
         # Create a local dict with parameter symbols
@@ -1530,7 +1530,7 @@ def find_function_from_data(
                     try:
                         expr = sp.sympify(x_arg)
                         parsed_x_tuple.append(expr)
-                    except:
+                    except Exception:
                         parsed_x_tuple.append(x_arg)
 
         # Check if output is complex

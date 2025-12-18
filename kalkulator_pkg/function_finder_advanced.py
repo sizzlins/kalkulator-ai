@@ -535,7 +535,7 @@ def detect_power_laws(x_col: np.ndarray, y_col: np.ndarray) -> list[float]:
         try:
             coeffs = np.polyfit(lx, ly, 1)
             candidates.add(round(coeffs[0] * 2) / 2)
-        except:
+        except Exception:
             pass
 
         # Local slopes
@@ -597,7 +597,7 @@ def detect_frequency(x_col: np.ndarray, y_col: np.ndarray) -> list[float]:
         try:
             trend = np.polyval(np.polyfit(x, y, 1), x)
             y_detrended = y - trend
-        except:
+        except Exception:
             y_detrended = y
 
         # 3. Zero-Crossing Analysis
@@ -1189,7 +1189,7 @@ def generate_candidate_features(
                 for k in detected_freqs:
                     freq_candidates.add(k)
                     # Trust the detector's harmonic expansion
-            except:
+            except Exception:
                 pass
 
         for k in sorted(freq_candidates):
@@ -1416,7 +1416,7 @@ def generate_candidate_features(
                     for k in [2.0, 5.0, 10.0, 50.0, 100.0]:
                         features.append(np.tanh(k * col))
                         feature_names.append(f"tanh({k}*{name})")
-            except:
+            except Exception:
                 pass
 
         # --- PHASE 2 & 3: GENIUS MODE FEATURES ---
@@ -1530,10 +1530,10 @@ def generate_candidate_features(
                     for e in detected:
                         if e < -1.0:  # Negative powers (Inverse)
                             pow_candidates.add(abs(e))
-                except:
+                except Exception:
                     pass
 
-            for p in sorted(list(pow_candidates)):
+            for p in sorted(pow_candidates):
                 # Handle fractional powers? 2.5?
                 with np.errstate(all="ignore"):
                     if isinstance(p, float) and p.is_integer():

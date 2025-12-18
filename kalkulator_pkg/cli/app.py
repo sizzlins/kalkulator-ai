@@ -389,13 +389,13 @@ def repl_loop(output_format: str = "human") -> None:
                                     else:
                                         # Has undefined symbols -> Function Definition
                                         is_numeric = False
-                                except:
+                                except Exception:
                                     # Parse fail -> likely not a simple math arg
                                     is_numeric = False
 
                             if is_numeric:
                                 numeric_args_count += 1
-                        except:
+                        except Exception:
                             # Fallback: assume not numeric
                             pass
 
@@ -569,7 +569,7 @@ def repl_loop(output_format: str = "human") -> None:
 
             # Show built-ins
             print("\nBuilt-in functions:")
-            builtins = sorted(list(BUILTIN_FUNCTION_NAMES))
+            builtins = sorted(BUILTIN_FUNCTION_NAMES)
             # Grid display for builtins
             line = "  "
             for i, b in enumerate(builtins):
