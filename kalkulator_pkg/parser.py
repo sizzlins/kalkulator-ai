@@ -919,18 +919,15 @@ def preprocess(
             allowed_functions is None or name not in allowed_functions
         ) and not name.startswith("__COMMA_SEP_"):
             # It's an undefined name being used like a function
-            # Check if it might be valid through implicit multiplication (e.g. variable 'a')
-            # BUT per user philosophy, we prefer explicit error over implicit "a(b) -> a*b" ambiguity for unknowns.
-            # "f(1)" should define f or error, not return f*1.
+            # Auto-convert to implicit multiplication: x(y) -> x*(y)
+            # This is a common user intent, so we fix it automatically with a warning
+            import sys
+            print(f"Note: Converting '{name}(...)' to '{name}*(...)' (implicit multiplication)", file=sys.stderr)
             
-            # Additional check: Is it a locally bound variable in the REPL context?
-            # Parser doesn't know about REPL context.
-            # However, standard practice: implicit multiplication requires simple juxtaposition (ab) or number (2x).
-            # "x(y)" is structurally a function call.
-            raise ValidationError(
-                f"Undefined function '{name}'. If you meant implicit multiplication, use '{name}*(...)'",
-                "UNDEFINED_FUNCTION"
-            )
+            # Replace name(...) with name*(...) in processed_str
+            # Find the exact position and replace
+            pattern_to_replace = re.compile(rf"\b{re.escape(name)}\s*\(")
+            processed_str = pattern_to_replace.sub(f"{name}*(", processed_str, count=1)
 
     return processed_str
 
