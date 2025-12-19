@@ -15,7 +15,9 @@ import warnings
 
 import numpy as np
 from scipy import stats
-from sklearn.linear_model import HuberRegressor, LinearRegression, RANSACRegressor
+from sklearn.linear_model import HuberRegressor
+from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import RANSACRegressor
 
 
 def huber_loss(y_true: np.ndarray, y_pred: np.ndarray, delta: float = 1.35) -> float:

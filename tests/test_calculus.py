@@ -2,7 +2,9 @@
 
 import unittest
 
-from kalkulator_pkg.calculus import differentiate, integrate, matrix_determinant
+from kalkulator_pkg.calculus import differentiate
+from kalkulator_pkg.calculus import integrate
+from kalkulator_pkg.calculus import matrix_determinant
 
 
 class TestDifferentiation(unittest.TestCase):

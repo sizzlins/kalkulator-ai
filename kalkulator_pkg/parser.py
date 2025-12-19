@@ -17,19 +17,17 @@ from typing import Any
 import sympy as sp
 from sympy import parse_expr
 
-from .config import (
-    ALLOWED_SYMPY_NAMES,
-    AMBIG_FRACTION_REGEX,
-    CACHE_SIZE_PARSE,
-    DIGIT_LETTERS_REGEX,
-    MAX_EXPRESSION_DEPTH,
-    MAX_EXPRESSION_NODES,
-    MAX_INPUT_LENGTH,
-    OUTPUT_PRECISION,
-    PERCENT_REGEX,
-    SQRT_UNICODE_REGEX,
-    TRANSFORMATIONS,
-)
+from .config import ALLOWED_SYMPY_NAMES
+from .config import AMBIG_FRACTION_REGEX
+from .config import CACHE_SIZE_PARSE
+from .config import DIGIT_LETTERS_REGEX
+from .config import MAX_EXPRESSION_DEPTH
+from .config import MAX_EXPRESSION_NODES
+from .config import MAX_INPUT_LENGTH
+from .config import OUTPUT_PRECISION
+from .config import PERCENT_REGEX
+from .config import SQRT_UNICODE_REGEX
+from .config import TRANSFORMATIONS
 from .types import ValidationError
 
 
@@ -1366,11 +1364,9 @@ def expand_function_calls(expr_str: str) -> str:
         ValidationError: If a function call has wrong number of arguments (WRONG_ARGUMENT_COUNT)
     """
     try:
-        from .function_manager import (
-            evaluate_function,
-            list_functions,
-            parse_function_call,
-        )
+        from .function_manager import evaluate_function
+        from .function_manager import list_functions
+        from .function_manager import parse_function_call
         from .types import ValidationError
 
         # If no functions are defined, return original

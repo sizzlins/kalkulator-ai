@@ -2,8 +2,10 @@
 
 import pytest
 
-from kalkulator_pkg.parser import parse_preprocessed, preprocess
-from kalkulator_pkg.solver import solve_inequality, solve_single_equation
+from kalkulator_pkg.parser import parse_preprocessed
+from kalkulator_pkg.parser import preprocess
+from kalkulator_pkg.solver import solve_inequality
+from kalkulator_pkg.solver import solve_single_equation
 from kalkulator_pkg.types import ValidationError
 from kalkulator_pkg.worker import evaluate_safely
 

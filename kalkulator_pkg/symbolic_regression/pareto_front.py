@@ -6,7 +6,8 @@ This is key for symbolic regression where we want the simplest model that fits w
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from dataclasses import field
 from typing import Any
 
 import numpy as np

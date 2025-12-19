@@ -1,8 +1,6 @@
-from .algebraic import (
-    _solve_linear_equation,
-    _solve_polynomial_equation,
-    _solve_quadratic_equation,
-)
+from .algebraic import _solve_linear_equation
+from .algebraic import _solve_polynomial_equation
+from .algebraic import _solve_quadratic_equation
 from .dispatch import solve_single_equation
 from .inequality import solve_inequality
 from .inverse import solve_inverse_function

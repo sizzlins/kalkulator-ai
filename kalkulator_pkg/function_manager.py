@@ -37,7 +37,8 @@ from typing import Any
 import sympy as sp
 from sympy import parse_expr
 
-from .config import ALLOWED_SYMPY_NAMES, TRANSFORMATIONS
+from .config import ALLOWED_SYMPY_NAMES
+from .config import TRANSFORMATIONS
 from .types import ValidationError
 
 # Built-in function names that should not be used as user-defined function names
@@ -347,7 +348,8 @@ def define_function(name: str, params: list[str], body_expr: str) -> None:
     try:
         # Preprocess body to handle unicode symbols (Unicode sqrt -> sqrt, etc.) and implicit multiplication
         # Use local import to avoid circular dependency
-        from .parser import _parse_preprocessed_impl, preprocess
+        from .parser import _parse_preprocessed_impl
+        from .parser import preprocess
 
         # Preprocess the body string (converts √ -> sqrt, etc.)
         set(params)

@@ -7,7 +7,8 @@ import numpy as np
 # Ensure we can import the package
 sys.path.append(os.getcwd())
 
-from kalkulator_pkg.dynamics_discovery import SINDy, SINDyConfig
+from kalkulator_pkg.dynamics_discovery import SINDy
+from kalkulator_pkg.dynamics_discovery import SINDyConfig
 from kalkulator_pkg.regression_solver import solve_regression_stage
 
 

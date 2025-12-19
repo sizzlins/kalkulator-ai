@@ -5,7 +5,8 @@ import sympy as sp
 from sklearn.linear_model import OrthogonalMatchingPursuit
 from sklearn.preprocessing import StandardScaler
 
-from .function_finder_advanced import generate_candidate_features, lasso_regression
+from .function_finder_advanced import generate_candidate_features
+from .function_finder_advanced import lasso_regression
 from .noise_handling.robust_regression import robust_fit
 
 
@@ -307,10 +308,8 @@ def solve_regression_stage(
         detected_feature_idx = None  # Track the detected pattern's index
         if y_data is not None and len(y_data) >= 8 and include_transcendentals:
             try:
-                from kalkulator_pkg.function_finder_advanced import (
-                    detect_curvature,
-                    detect_saturation,
-                )
+                from kalkulator_pkg.function_finder_advanced import detect_curvature
+                from kalkulator_pkg.function_finder_advanced import detect_saturation
 
                 x_col = X_data[:, 0] if X_data.ndim > 1 else X_data
                 sat_hints = detect_saturation(x_col, y_data)
@@ -664,10 +663,8 @@ def solve_regression_stage(
         residual_hint = ""
         if r_squared < 0.7 and len(y_values) >= 8:
             try:
-                from kalkulator_pkg.function_finder_advanced import (
-                    detect_frequency,
-                    detect_saturation,
-                )
+                from kalkulator_pkg.function_finder_advanced import detect_frequency
+                from kalkulator_pkg.function_finder_advanced import detect_saturation
 
                 # Compute residuals
                 residuals = []

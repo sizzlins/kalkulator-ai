@@ -4,7 +4,8 @@ import sys
 import unittest
 
 from kalkulator_pkg.cli import _health_check
-from kalkulator_pkg.worker import HAS_RESOURCE, _limit_resources
+from kalkulator_pkg.worker import HAS_RESOURCE
+from kalkulator_pkg.worker import _limit_resources
 
 
 class TestWindowsResourceLimits(unittest.TestCase):

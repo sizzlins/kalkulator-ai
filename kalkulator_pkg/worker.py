@@ -12,14 +12,12 @@ from typing import Any
 import numpy as np
 import sympy as sp
 
-from .config import (
-    CACHE_SIZE_SOLVE,
-    ENABLE_PERSISTENT_WORKER,
-    WORKER_AS_MB,
-    WORKER_CPU_SECONDS,
-    WORKER_POOL_SIZE,
-    WORKER_TIMEOUT,
-)
+from .config import CACHE_SIZE_SOLVE
+from .config import ENABLE_PERSISTENT_WORKER
+from .config import WORKER_AS_MB
+from .config import WORKER_CPU_SECONDS
+from .config import WORKER_POOL_SIZE
+from .config import WORKER_TIMEOUT
 from .parser import parse_preprocessed
 from .types import ValidationError
 
@@ -56,7 +54,10 @@ except (ImportError, OSError):
     HAS_RESOURCE = False
 
 try:
-    from multiprocessing import Event, Manager, Process, Queue
+    from multiprocessing import Event
+    from multiprocessing import Manager
+    from multiprocessing import Process
+    from multiprocessing import Queue
 except Exception:
     Process = None  # type: ignore
     Queue = None  # type: ignore
@@ -1093,7 +1094,8 @@ def _worker_eval_cached(
     """Evaluate expression with persistent cache support."""
     # Check persistent cache first
     try:
-        from .cache_manager import get_cache_hits, get_cached_eval
+        from .cache_manager import get_cache_hits
+        from .cache_manager import get_cached_eval
 
         cached_result = get_cached_eval(preprocessed_expr, context_hash)
         if cached_result is not None:
@@ -1153,7 +1155,8 @@ def _worker_eval_cached(
         result_json = json.dumps(resp)
         # Save to persistent cache if evaluation was successful
         try:
-            from .cache_manager import update_eval_cache, update_subexpr_cache
+            from .cache_manager import update_eval_cache
+            from .cache_manager import update_subexpr_cache
 
             if resp.get("ok"):
                 update_eval_cache(
@@ -1191,7 +1194,8 @@ def _worker_eval_cached(
         result_text = proc.stdout or ""
         # Try to save to persistent cache
         try:
-            from .cache_manager import update_eval_cache, update_subexpr_cache
+            from .cache_manager import update_eval_cache
+            from .cache_manager import update_subexpr_cache
 
             try:
                 result_data = json.loads(result_text)
@@ -1271,7 +1275,8 @@ def evaluate_safely(
     allowed_functions: frozenset[str] | None = None,
 ) -> dict[str, Any]:
     """Safely evaluate an expression string via worker sandbox."""
-    from .cache_manager import clear_cache_hits, get_cache_hits
+    from .cache_manager import clear_cache_hits
+    from .cache_manager import get_cache_hits
     from .parser import preprocess
 
     # Clear cache hits at the start (before any operations)
@@ -1280,10 +1285,8 @@ def evaluate_safely(
     # Track sub-expression cache hits from preprocessing
     subexpr_cache_hits: list[tuple[str, str]] = []
     try:
-        from .function_manager import (
-            get_function_registry_dump,
-            get_function_registry_hash,
-        )
+        from .function_manager import get_function_registry_dump
+        from .function_manager import get_function_registry_hash
 
         context_hash = get_function_registry_hash()
         registry_dump = get_function_registry_dump()

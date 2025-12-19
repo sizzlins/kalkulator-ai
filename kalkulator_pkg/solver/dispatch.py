@@ -1,18 +1,20 @@
+from __future__ import annotations
+
 from typing import Any
 
 import sympy as sp
 
-from ..config import NUMERIC_FALLBACK_ENABLED, NUMERIC_TOLERANCE
+from ..config import NUMERIC_FALLBACK_ENABLED
+from ..config import NUMERIC_TOLERANCE
 from ..parser import parse_preprocessed
-from ..types import ParseError, ValidationError
+from ..types import ParseError
+from ..types import ValidationError
 from ..worker import evaluate_safely
-from .algebraic import (
-    _solve_linear_equation,
-    _solve_polynomial_equation,
-    _solve_quadratic_equation,
-    is_pell_equation_from_eq,
-    solve_pell_equation_from_eq,
-)
+from .algebraic import _solve_linear_equation
+from .algebraic import _solve_polynomial_equation
+from .algebraic import _solve_quadratic_equation
+from .algebraic import is_pell_equation_from_eq
+from .algebraic import solve_pell_equation_from_eq
 from .modular import _solve_modulo_equation
 from .numeric import _numeric_roots_for_single_var
 

@@ -2,7 +2,8 @@ import unittest
 
 import sympy as sp
 
-from kalkulator_pkg.utils.formatting import format_solution, simplify_exponential_bases
+from kalkulator_pkg.utils.formatting import format_solution
+from kalkulator_pkg.utils.formatting import simplify_exponential_bases
 
 
 class TestExponentialSimplification(unittest.TestCase):

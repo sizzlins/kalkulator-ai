@@ -4,14 +4,15 @@ import time  # Added for timing
 from typing import Optional
 
 from ..config import VAR_NAME_RE
-from ..function_manager import (
-    define_function,
-    define_variable,
-    parse_function_definition,
-)
-from ..parser import ALLOWED_SYMPY_NAMES, split_top_level_commas
-from ..solver import solve_single_equation, solve_system
-from ..utils.formatting import format_solution, print_result_pretty
+from ..function_manager import define_function
+from ..function_manager import define_variable
+from ..function_manager import parse_function_definition
+from ..parser import ALLOWED_SYMPY_NAMES
+from ..parser import split_top_level_commas
+from ..solver import solve_single_equation
+from ..solver import solve_system
+from ..utils.formatting import format_solution
+from ..utils.formatting import print_result_pretty
 from ..utils.numeric import solve_modulo_system_if_applicable
 from ..worker import evaluate_safely
 from .context import ReplContext

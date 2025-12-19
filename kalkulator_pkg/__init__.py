@@ -2,18 +2,23 @@
 
 __version__ = "1.0.0"
 
-from . import api, cli, config, logging_config, parser, solver, types, worker
-from .api import (
-    det,
-    diff,
-    evaluate,
-    integrate_expr,
-    plot,
-    solve_equation,
-    solve_inequality,
-    solve_system,
-    validate_expression,
-)
+from . import api
+from . import cli
+from . import config
+from . import logging_config
+from . import parser
+from . import solver
+from . import types
+from . import worker
+from .api import det
+from .api import diff
+from .api import evaluate
+from .api import integrate_expr
+from .api import plot
+from .api import solve_equation
+from .api import solve_inequality
+from .api import solve_system
+from .api import validate_expression
 
 __all__ = [
     "config",

@@ -1,16 +1,16 @@
 """Test that API functions return typed dataclasses."""
 
-from kalkulator_pkg.api import (
-    det,
-    diff,
-    evaluate,
-    integrate_expr,
-    solve_equation,
-    solve_inequality,
-    solve_system,
-    validate_expression,
-)
-from kalkulator_pkg.types import EvalResult, InequalityResult, SolveResult
+from kalkulator_pkg.api import det
+from kalkulator_pkg.api import diff
+from kalkulator_pkg.api import evaluate
+from kalkulator_pkg.api import integrate_expr
+from kalkulator_pkg.api import solve_equation
+from kalkulator_pkg.api import solve_inequality
+from kalkulator_pkg.api import solve_system
+from kalkulator_pkg.api import validate_expression
+from kalkulator_pkg.types import EvalResult
+from kalkulator_pkg.types import InequalityResult
+from kalkulator_pkg.types import SolveResult
 
 
 class TestAPITypedReturns:

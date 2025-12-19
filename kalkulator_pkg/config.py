@@ -17,13 +17,12 @@ import os
 import re
 
 import sympy as sp
-from sympy.parsing.sympy_parser import (
-    convert_xor,
-    implicit_multiplication_application,
-    standard_transformations,
-)
+from sympy.parsing.sympy_parser import convert_xor
+from sympy.parsing.sympy_parser import implicit_multiplication_application
+from sympy.parsing.sympy_parser import standard_transformations
 
-from .utils.custom_functions import log2, log10
+from .utils.custom_functions import log2
+from .utils.custom_functions import log10
 
 # Version is defined in pyproject.toml [project] section
 # Import here for backward compatibility

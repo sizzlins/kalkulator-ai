@@ -2,20 +2,22 @@
 
 import random
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from dataclasses import field
 
 import numpy as np
 import sympy as sp
 
-from .expression_tree import BINARY_OPERATORS, UNARY_OPERATORS, ExpressionTree
-from .operators import (
-    constant_optimization,
-    crossover,
-    hoist_mutation,
-    point_mutation,
-    shrink_mutation,
-)
-from .pareto_front import ParetoFront, ParetoSolution
+from .expression_tree import BINARY_OPERATORS
+from .expression_tree import UNARY_OPERATORS
+from .expression_tree import ExpressionTree
+from .operators import constant_optimization
+from .operators import crossover
+from .operators import hoist_mutation
+from .operators import point_mutation
+from .operators import shrink_mutation
+from .pareto_front import ParetoFront
+from .pareto_front import ParetoSolution
 
 
 def huber_loss(y_true, y_pred, delta=1.0):
@@ -565,7 +567,8 @@ class GeneticSymbolicRegressor:
                 current_model_tree = best_round.tree
             else:
                 # Merge: F_new = F_old + f_round
-                from .expression_tree import ExpressionNode, NodeType
+                from .expression_tree import ExpressionNode
+                from .expression_tree import NodeType
 
                 # Create 'add' node
                 root = ExpressionNode(

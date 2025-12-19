@@ -7,11 +7,13 @@ and comparison capabilities with other methods.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from dataclasses import field
 
 import numpy as np
 
-from .feynman_equations import FeynmanEquation, get_equations_by_complexity
+from .feynman_equations import FeynmanEquation
+from .feynman_equations import get_equations_by_complexity
 
 
 @dataclass
@@ -165,7 +167,8 @@ def run_single_benchmark(
 
     try:
         if method == "genetic":
-            from ..symbolic_regression import GeneticConfig, GeneticSymbolicRegressor
+            from ..symbolic_regression import GeneticConfig
+            from ..symbolic_regression import GeneticSymbolicRegressor
 
             config = GeneticConfig(
                 population_size=200,

@@ -5,24 +5,21 @@ Extracted from app.py to enforce Rule 4 (Small Units).
 
 import logging
 import re
-from typing import Any, Dict
+from typing import Any
+from typing import Dict
 
 import kalkulator_pkg.parser as kparser
 
-from ..cache_manager import (
-    export_cache_to_file,
-    get_persistent_cache,
-    replace_cache_from_file,
-)
-from ..function_manager import (
-    BUILTIN_FUNCTION_NAMES,
-    clear_functions,
-    clear_saved_functions,
-    export_function_to_file,
-    list_functions,
-    load_functions,
-    save_functions,
-)
+from ..cache_manager import export_cache_to_file
+from ..cache_manager import get_persistent_cache
+from ..cache_manager import replace_cache_from_file
+from ..function_manager import BUILTIN_FUNCTION_NAMES
+from ..function_manager import clear_functions
+from ..function_manager import clear_saved_functions
+from ..function_manager import export_function_to_file
+from ..function_manager import list_functions
+from ..function_manager import load_functions
+from ..function_manager import save_functions
 from ..solver.dispatch import solve_single_equation
 from ..utils.formatting import print_result_pretty
 from ..worker import clear_caches
@@ -438,7 +435,8 @@ def _handle_evolve(text, variables=None):
     try:
         import numpy as np
 
-        from ..symbolic_regression import GeneticConfig, GeneticSymbolicRegressor
+        from ..symbolic_regression import GeneticConfig
+        from ..symbolic_regression import GeneticSymbolicRegressor
 
         # Strategy 1: Seeding
         # Parse "--seed 'expr'" or "--seed "expr""
@@ -923,7 +921,8 @@ def _handle_health_command():
 
     # Check basic parsing
     try:
-        from ..parser import parse_preprocessed, preprocess
+        from ..parser import parse_preprocessed
+        from ..parser import preprocess
 
         test_expr = "2 + 2"
         preprocessed = preprocess(test_expr)
@@ -1214,7 +1213,8 @@ def handle_find_command_raw(text: str, ctx: Any) -> bool:
             defaults = ["x", "y", "z", "t", "u", "v"]
             target_vars = defaults[:arity]
 
-        from ..function_manager import define_function, find_function_from_data
+        from ..function_manager import define_function
+        from ..function_manager import find_function_from_data
 
         # Handle unpacking safely (API might return 3 or 4 values depending on version)
         result = find_function_from_data(relevant_points, target_vars)

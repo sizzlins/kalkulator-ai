@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import sympy as sp
 
-from ..config import (
-    COARSE_GRID_MIN_SIZE,
-    MAX_NSOLVE_GUESSES,
-    MAX_NSOLVE_STEPS,
-    NUMERIC_TOLERANCE,
-    ROOT_DEDUP_TOLERANCE,
-    ROOT_SEARCH_TOLERANCE,
-)
+from ..config import COARSE_GRID_MIN_SIZE
+from ..config import MAX_NSOLVE_GUESSES
+from ..config import MAX_NSOLVE_STEPS
+from ..config import NUMERIC_TOLERANCE
+from ..config import ROOT_DEDUP_TOLERANCE
+from ..config import ROOT_SEARCH_TOLERANCE
 
 
 def _numeric_roots_for_single_var(

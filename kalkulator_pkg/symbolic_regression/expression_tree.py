@@ -13,9 +13,12 @@ from __future__ import annotations
 
 import math
 import random
-from dataclasses import dataclass, field
-from enum import Enum, auto
-from typing import Any, Callable
+from dataclasses import dataclass
+from dataclasses import field
+from enum import Enum
+from enum import auto
+from typing import Any
+from typing import Callable
 
 import numpy as np
 import sympy as sp

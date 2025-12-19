@@ -8,20 +8,16 @@ Components:
     - uncertainty: Confidence intervals, p-values, error propagation
 """
 
-from .robust_regression import (
-    detect_outliers,
-    huber_loss_regression,
-    iteratively_reweighted_lst_sq,
-    ransac_regression,
-    robust_fit,
-)
-from .uncertainty import (
-    bootstrap_confidence_interval,
-    coefficient_significance,
-    format_with_uncertainty,
-    monte_carlo_uncertainty,
-    prediction_interval,
-)
+from .robust_regression import detect_outliers
+from .robust_regression import huber_loss_regression
+from .robust_regression import iteratively_reweighted_lst_sq
+from .robust_regression import ransac_regression
+from .robust_regression import robust_fit
+from .uncertainty import bootstrap_confidence_interval
+from .uncertainty import coefficient_significance
+from .uncertainty import format_with_uncertainty
+from .uncertainty import monte_carlo_uncertainty
+from .uncertainty import prediction_interval
 
 __all__ = [
     # Robust Regression

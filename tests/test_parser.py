@@ -2,14 +2,12 @@
 
 import unittest
 
-from kalkulator_pkg.parser import (
-    format_number,
-    format_superscript,
-    is_balanced,
-    parse_preprocessed,
-    preprocess,
-    split_top_level_commas,
-)
+from kalkulator_pkg.parser import format_number
+from kalkulator_pkg.parser import format_superscript
+from kalkulator_pkg.parser import is_balanced
+from kalkulator_pkg.parser import parse_preprocessed
+from kalkulator_pkg.parser import preprocess
+from kalkulator_pkg.parser import split_top_level_commas
 from kalkulator_pkg.types import ValidationError
 
 

@@ -28,10 +28,15 @@ except ImportError:
         return res
 
 
-from ..config import VAR_NAME_RE, VERSION
-from ..parser import format_superscript, split_top_level_commas
-from ..solver import solve_inequality, solve_single_equation, solve_system
-from ..types import ParseError, ValidationError
+from ..config import VAR_NAME_RE
+from ..config import VERSION
+from ..parser import format_superscript
+from ..parser import split_top_level_commas
+from ..solver import solve_inequality
+from ..solver import solve_single_equation
+from ..solver import solve_system
+from ..types import ParseError
+from ..types import ValidationError
 from ..worker import evaluate_safely
 
 _logger = logging.getLogger(__name__)
@@ -41,16 +46,12 @@ from ..utils.formatting import (
     format_number_no_trailing_zeros as _format_number_no_trailing_zeros,
 )
 from ..utils.formatting import format_special_values as _format_special_values
-from ..utils.formatting import (
-    print_result_pretty,
-)
+from ..utils.formatting import print_result_pretty
 from ..utils.numeric import (
     compute_integerized_equation as _compute_integerized_equation,
 )
 from ..utils.numeric import extended_gcd as _extended_gcd
-from ..utils.numeric import (
-    find_integer_solutions_for_linear,
-)
+from ..utils.numeric import find_integer_solutions_for_linear
 from ..utils.numeric import (
     parse_target_with_ambiguity_detection as _parse_target_with_ambiguity_detection,
 )
@@ -84,7 +85,8 @@ def _health_check() -> int:
 
     # Check basic parsing
     try:
-        from ..parser import parse_preprocessed, preprocess
+        from ..parser import parse_preprocessed
+        from ..parser import preprocess
 
         test_expr = "2 + 2"
         preprocessed = preprocess(test_expr)
@@ -551,7 +553,8 @@ def repl_loop(output_format: str = "human") -> None:
             continue
 
         if raw_lower in ("showfunction", "showfunctions", "list"):
-            from ..function_manager import BUILTIN_FUNCTION_NAMES, list_functions
+            from ..function_manager import BUILTIN_FUNCTION_NAMES
+            from ..function_manager import list_functions
 
             # Show user functions first
             funcs = list_functions()
@@ -672,10 +675,8 @@ def repl_loop(output_format: str = "human") -> None:
             try:
                 import numpy as np
 
-                from ..symbolic_regression import (
-                    GeneticConfig,
-                    GeneticSymbolicRegressor,
-                )
+                from ..symbolic_regression import GeneticConfig
+                from ..symbolic_regression import GeneticSymbolicRegressor
 
                 # Parse: evolve f(x) from x=[...], y=[...]
                 # or: evolve f(x,y) from x=[...], y=[...], z=[...]
@@ -782,7 +783,8 @@ def repl_loop(output_format: str = "human") -> None:
             try:
                 import numpy as np
 
-                from ..dynamics_discovery import SINDy, SINDyConfig
+                from ..dynamics_discovery import SINDy
+                from ..dynamics_discovery import SINDyConfig
 
                 # Parse: find ode from t=[...], x=[...], v=[...]
                 ode_match = re.match(r"find\s+ode\s+from\s+(.+)", raw, re.IGNORECASE)
@@ -893,22 +895,20 @@ def repl_loop(output_format: str = "human") -> None:
             import re
 
             try:
-                from ..dimensional_analysis import (
-                    ACCELERATION,
-                    DENSITY,
-                    ENERGY,
-                    FORCE,
-                    FREQUENCY,
-                    LENGTH,
-                    MASS,
-                    POWER,
-                    PRESSURE,
-                    TIME,
-                    VELOCITY,
-                    Dimension,
-                    find_dimensionless_groups,
-                    format_pi_group,
-                )
+                from ..dimensional_analysis import ACCELERATION
+                from ..dimensional_analysis import DENSITY
+                from ..dimensional_analysis import ENERGY
+                from ..dimensional_analysis import FORCE
+                from ..dimensional_analysis import FREQUENCY
+                from ..dimensional_analysis import LENGTH
+                from ..dimensional_analysis import MASS
+                from ..dimensional_analysis import POWER
+                from ..dimensional_analysis import PRESSURE
+                from ..dimensional_analysis import TIME
+                from ..dimensional_analysis import VELOCITY
+                from ..dimensional_analysis import Dimension
+                from ..dimensional_analysis import find_dimensionless_groups
+                from ..dimensional_analysis import format_pi_group
 
                 dim_map = {
                     "mass": MASS,
@@ -982,7 +982,8 @@ def repl_loop(output_format: str = "human") -> None:
         # Quick benchmark command
         if raw_lower.startswith("benchmark"):
             try:
-                from ..benchmarks import FEYNMAN_EQUATIONS, quick_benchmark
+                from ..benchmarks import FEYNMAN_EQUATIONS
+                from ..benchmarks import quick_benchmark
 
                 parts = raw.split()
                 n_eq = 5
@@ -1175,7 +1176,8 @@ def repl_loop(output_format: str = "human") -> None:
             continue
         if raw.lower().startswith("savecache"):
             try:
-                from ..cache_manager import export_cache_to_file, get_persistent_cache
+                from ..cache_manager import export_cache_to_file
+                from ..cache_manager import get_persistent_cache
 
                 parts = raw.split(None, 1)
                 if len(parts) > 1:
@@ -1206,11 +1208,9 @@ def repl_loop(output_format: str = "human") -> None:
             try:
                 import os  # noqa: F811
 
-                from ..cache_manager import (
-                    get_persistent_cache,
-                    import_cache_from_file,
-                    replace_cache_from_file,
-                )
+                from ..cache_manager import get_persistent_cache
+                from ..cache_manager import import_cache_from_file
+                from ..cache_manager import replace_cache_from_file
 
                 parts = raw.split()
                 replace_mode = False
@@ -1296,7 +1296,8 @@ def repl_loop(output_format: str = "human") -> None:
             continue
         if raw.lower() in ("showcachehits", "show-cache-hits", "cachehits show"):
             try:
-                from ..cache_manager import clear_cache_hits, get_cache_hits
+                from ..cache_manager import clear_cache_hits
+                from ..cache_manager import get_cache_hits
 
                 hits = get_cache_hits()
                 if hits:
@@ -1332,10 +1333,8 @@ def repl_loop(output_format: str = "human") -> None:
             if "find" in expr.lower():
 
                 try:
-                    from ..function_manager import (
-                        find_function_from_data,
-                        parse_find_function_command,
-                    )
+                    from ..function_manager import find_function_from_data
+                    from ..function_manager import parse_find_function_command
 
                     find_func_cmd = parse_find_function_command(expr)
 
@@ -1350,10 +1349,8 @@ def repl_loop(output_format: str = "human") -> None:
             # If no explicit "find" keyword, check for multiple function assignments (like main REPL)
             if not is_find_command:
                 try:
-                    from ..function_manager import (  # noqa: F811
-                        find_function_from_data,
-                        parse_find_function_command,
-                    )
+                    from ..function_manager import find_function_from_data  # noqa: F811
+                    from ..function_manager import parse_find_function_command
 
                     # Count function assignment patterns: func_name(args) = value
                     func_assignment_pattern = (
@@ -1404,11 +1401,9 @@ def repl_loop(output_format: str = "human") -> None:
             # Process function finding if detected
             if is_find_command and find_func_cmd is not None:
                 try:
-                    from ..function_manager import (  # noqa: F811
-                        define_function,
-                        find_function_from_data,
-                        parse_function_definition,
-                    )
+                    from ..function_manager import define_function  # noqa: F811
+                    from ..function_manager import find_function_from_data
+                    from ..function_manager import parse_function_definition
 
                     func_name, param_names = find_func_cmd
                     find_pattern = rf"find\s+{re.escape(func_name)}\s*\([^)]*\)"
@@ -1744,10 +1739,8 @@ def repl_loop(output_format: str = "human") -> None:
                                 continue
                             # Check if it's a function definition
                             try:
-                                from ..function_manager import (
-                                    define_function,
-                                    parse_function_definition,
-                                )
+                                from ..function_manager import define_function
+                                from ..function_manager import parse_function_definition
 
                                 func_def = parse_function_definition(part)
                                 if func_def is not None:
@@ -1812,10 +1805,8 @@ def repl_loop(output_format: str = "human") -> None:
 
                 # Check for single function definition in --eval mode
                 try:
-                    from ..function_manager import (
-                        define_function,
-                        parse_function_definition,
-                    )
+                    from ..function_manager import define_function
+                    from ..function_manager import parse_function_definition
 
                     func_def = parse_function_definition(expr)
                     if func_def is not None:
@@ -1995,10 +1986,8 @@ def repl_loop(output_format: str = "human") -> None:
                         if has_numeric_args_eval and func_groups_eval:
                             # Process each function finding pattern
                             try:
-                                from ..function_manager import (
-                                    define_function,
-                                    find_function_from_data,
-                                )
+                                from ..function_manager import define_function
+                                from ..function_manager import find_function_from_data
 
                                 processed_any = False
                                 for (
@@ -2124,10 +2113,8 @@ def repl_loop(output_format: str = "human") -> None:
                         ):
                             # Process as function finding
                             try:
-                                from ..function_manager import (
-                                    define_function,
-                                    find_function_from_data,
-                                )
+                                from ..function_manager import define_function
+                                from ..function_manager import find_function_from_data
 
                                 # Parse arguments
                                 arg_list_eval = []
@@ -2813,11 +2800,9 @@ def repl_loop(output_format: str = "human") -> None:
         find_func_cmd = None
 
         try:
-            from ..function_manager import (
-                define_function,
-                find_function_from_data,
-                parse_find_function_command,
-            )
+            from ..function_manager import define_function
+            from ..function_manager import find_function_from_data
+            from ..function_manager import parse_find_function_command
 
             # split_top_level_commas is already imported at module level
             # Check if input contains "find" keyword OR multiple function assignment patterns
@@ -3769,9 +3754,9 @@ def repl_loop(output_format: str = "human") -> None:
                                                                 var2
                                                             )
                                                             c = poly.coeff_monomial(1)
-                                                            from math import (  # noqa: F811
+                                                            from math import (
                                                                 gcd as math_gcd,
-                                                            )
+                                                            )  # noqa: F811
 
                                                             def lcm(
                                                                 a: int, b: int
@@ -3953,9 +3938,9 @@ def repl_loop(output_format: str = "human") -> None:
                                                                 const, sp.Rational
                                                             )
                                                         ):
-                                                            from math import (  # noqa: F811
+                                                            from math import (
                                                                 gcd as math_gcd,
-                                                            )
+                                                            )  # noqa: F811
 
                                                             def lcm(
                                                                 a: int, b: int
@@ -4092,9 +4077,9 @@ def repl_loop(output_format: str = "human") -> None:
                                                                 var2
                                                             )
                                                             c = poly.coeff_monomial(1)
-                                                            from math import (  # noqa: F811
+                                                            from math import (
                                                                 gcd as math_gcd,
-                                                            )
+                                                            )  # noqa: F811
 
                                                             def lcm(
                                                                 a: int, b: int
@@ -4965,10 +4950,8 @@ def repl_loop(output_format: str = "human") -> None:
 
                     # Check if it's a function definition
                     try:
-                        from ..function_manager import (
-                            define_function,
-                            parse_function_definition,
-                        )
+                        from ..function_manager import define_function
+                        from ..function_manager import parse_function_definition
 
                         func_def = parse_function_definition(part)
                         if func_def is not None:
@@ -5124,7 +5107,8 @@ def repl_loop(output_format: str = "human") -> None:
         # BUT skip if it looks like a function finding pattern (f(-1)=3, not f(x)=3)
         # Function finding patterns have numeric arguments, function definitions have parameter names
         try:
-            from ..function_manager import define_function, parse_function_definition
+            from ..function_manager import define_function
+            from ..function_manager import parse_function_definition
 
             # Check if thisq(1)=1, sq(4)=2, sq(16)=4, find sq(x)s looks like a function finding pattern (numeric args) vs definition (parameter names)
             func_finding_pattern = r"([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]+\)\s*=\s*[^,]+"
@@ -5196,11 +5180,9 @@ def repl_loop(output_format: str = "human") -> None:
                         # This is a function finding/inverse solving command
                         # Use the same logic as in --eval mode
                         try:
-                            from ..function_manager import (
-                                define_function,
-                                find_function_from_data,
-                                parse_function_definition,
-                            )
+                            from ..function_manager import define_function
+                            from ..function_manager import find_function_from_data
+                            from ..function_manager import parse_function_definition
 
                             func_name, param_names = find_func_cmd
                             find_pattern = rf"find\s+{re.escape(func_name)}\s*\([^)]*\)"
@@ -5803,8 +5785,8 @@ def repl_loop(output_format: str = "human") -> None:
                             if re.search(r"[-+]?\d", args_str_check):
                                 # Process as function finding directly
                                 try:
+                                    from ..function_manager import define_function
                                     from ..function_manager import (
-                                        define_function,
                                         find_function_from_data,
                                     )
 
@@ -6220,10 +6202,8 @@ def main_entry(argv: list[str] | None = None) -> int:
         # Check for explicit "find" keyword
         if "find" in expr.lower():
             try:
-                from ..function_manager import (
-                    find_function_from_data,
-                    parse_find_function_command,
-                )
+                from ..function_manager import find_function_from_data
+                from ..function_manager import parse_find_function_command
 
                 find_func_cmd = parse_find_function_command(expr)
                 if find_func_cmd is not None:
@@ -6234,10 +6214,8 @@ def main_entry(argv: list[str] | None = None) -> int:
         # If no explicit "find" keyword, check for multiple function assignments
         if not is_find_command:
             try:
-                from ..function_manager import (  # noqa: F811
-                    find_function_from_data,
-                    parse_find_function_command,
-                )
+                from ..function_manager import find_function_from_data  # noqa: F811
+                from ..function_manager import parse_find_function_command
 
                 # Count function assignment patterns: func_name(args) = value
                 func_assignment_pattern = (
@@ -6303,11 +6281,9 @@ def main_entry(argv: list[str] | None = None) -> int:
                         continue
                     # Try to parse as function definition
                     try:
-                        from ..function_manager import (
-                            ValidationError,
-                            define_function,
-                            parse_function_definition,
-                        )
+                        from ..function_manager import ValidationError
+                        from ..function_manager import define_function
+                        from ..function_manager import parse_function_definition
 
                         func_def = parse_function_definition(part)
                         if func_def is not None:

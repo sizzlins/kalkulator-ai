@@ -11,7 +11,8 @@ This module implements:
 from __future__ import annotations
 
 import math
-from decimal import Decimal, getcontext
+from decimal import Decimal
+from decimal import getcontext
 from fractions import Fraction
 from typing import Any
 
@@ -25,13 +26,11 @@ try:
 except ImportError:
     MPMATH_AVAILABLE = False
 
-from .config import (
-    ABSOLUTE_TOLERANCE,
-    CONSTANT_DETECTION_TOLERANCE,
-    LASSO_LAMBDA,
-    OMP_MAX_ITERATIONS,
-    RELATIVE_TOLERANCE,
-)
+from .config import ABSOLUTE_TOLERANCE
+from .config import CONSTANT_DETECTION_TOLERANCE
+from .config import LASSO_LAMBDA
+from .config import OMP_MAX_ITERATIONS
+from .config import RELATIVE_TOLERANCE
 
 # Set high precision for Decimal
 getcontext().prec = 50
@@ -1772,7 +1771,8 @@ def generate_candidate_features(
 
     # --- NEW: KNOWLEDGE EXPANSION (INVERSE TRIG, PIECEWISE, SPECIAL) ---
     if include_transcendentals:
-        from scipy.special import erf, gamma
+        from scipy.special import erf
+        from scipy.special import gamma
 
         for i in range(n_vars):
             col = X_data[:, i]

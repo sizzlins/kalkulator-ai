@@ -15,13 +15,11 @@ import random
 
 import numpy as np
 
-from .expression_tree import (
-    BINARY_OPERATORS,
-    UNARY_OPERATORS,
-    ExpressionNode,
-    ExpressionTree,
-    NodeType,
-)
+from .expression_tree import BINARY_OPERATORS
+from .expression_tree import UNARY_OPERATORS
+from .expression_tree import ExpressionNode
+from .expression_tree import ExpressionTree
+from .expression_tree import NodeType
 
 
 def point_mutation(

@@ -2,12 +2,10 @@
 
 import sympy as sp
 
-from kalkulator_pkg.solver import (
-    _solve_linear_equation,
-    _solve_polynomial_equation,
-    _solve_quadratic_equation,
-    solve_single_equation,
-)
+from kalkulator_pkg.solver import _solve_linear_equation
+from kalkulator_pkg.solver import _solve_polynomial_equation
+from kalkulator_pkg.solver import _solve_quadratic_equation
+from kalkulator_pkg.solver import solve_single_equation
 
 
 class TestLinearSolver:

@@ -4,15 +4,13 @@ import sys
 # Add project root to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from kalkulator_pkg.function_manager import (
-    FUNCTION_STORAGE_PATH,
-    clear_functions,
-    clear_saved_functions,
-    define_function,
-    list_functions,
-    load_functions,
-    save_functions,
-)
+from kalkulator_pkg.function_manager import FUNCTION_STORAGE_PATH
+from kalkulator_pkg.function_manager import clear_functions
+from kalkulator_pkg.function_manager import clear_saved_functions
+from kalkulator_pkg.function_manager import define_function
+from kalkulator_pkg.function_manager import list_functions
+from kalkulator_pkg.function_manager import load_functions
+from kalkulator_pkg.function_manager import save_functions
 
 
 def test_persistence_flow():

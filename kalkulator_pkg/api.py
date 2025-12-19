@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 # Type annotations use modern | syntax (no import needed)
-from .calculus import differentiate, integrate, matrix_determinant
+from .calculus import differentiate
+from .calculus import integrate
+from .calculus import matrix_determinant
 from .parser import preprocess
 from .plotting import plot_function
 from .solver import solve_inequality as _solve_inequality
 from .solver import solve_single_equation
 from .solver import solve_system as _solve_system
-from .types import EvalResult, InequalityResult, SolveResult, ValidationError
+from .types import EvalResult
+from .types import InequalityResult
+from .types import SolveResult
+from .types import ValidationError
 from .worker import evaluate_safely
 
 

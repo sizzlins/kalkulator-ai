@@ -6,14 +6,12 @@ Components:
     - pc_algorithm: Peter-Clark algorithm for causal graph discovery
 """
 
-from .pc_algorithm import (
-    CausalGraph,
-    PCAlgorithm,
-    discover_causal_graph,
-    g2_test,
-    partial_correlation,
-    partial_correlation_test,
-)
+from .pc_algorithm import CausalGraph
+from .pc_algorithm import PCAlgorithm
+from .pc_algorithm import discover_causal_graph
+from .pc_algorithm import g2_test
+from .pc_algorithm import partial_correlation
+from .pc_algorithm import partial_correlation_test
 
 __all__ = [
     "CausalGraph",

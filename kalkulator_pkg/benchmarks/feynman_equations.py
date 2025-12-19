@@ -17,7 +17,8 @@ Each equation is stored with:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from dataclasses import field
 from typing import Callable
 
 import numpy as np

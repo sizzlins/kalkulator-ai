@@ -4,7 +4,8 @@ from typing import Any
 import sympy as sp
 
 from ..parser import parse_preprocessed
-from ..types import ParseError, ValidationError
+from ..types import ParseError
+from ..types import ValidationError
 from ..worker import evaluate_safely
 
 try:

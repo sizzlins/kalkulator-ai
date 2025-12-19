@@ -18,25 +18,24 @@ Example:
     >>> print(f"MSE: {mse:.6e}")
 """
 
-from .expression_tree import (
-    BINARY_OPERATORS,
-    UNARY_OPERATORS,
-    ExpressionNode,
-    ExpressionTree,
-    NodeType,
-)
-from .genetic_engine import GeneticConfig, GeneticSymbolicRegressor, discover_equation
-from .operators import (
-    apply_mutation,
-    constant_optimization,
-    crossover,
-    hoist_mutation,
-    point_mutation,
-    shrink_mutation,
-    subtree_mutation,
-    tournament_selection,
-)
-from .pareto_front import ParetoFront, ParetoSolution
+from .expression_tree import BINARY_OPERATORS
+from .expression_tree import UNARY_OPERATORS
+from .expression_tree import ExpressionNode
+from .expression_tree import ExpressionTree
+from .expression_tree import NodeType
+from .genetic_engine import GeneticConfig
+from .genetic_engine import GeneticSymbolicRegressor
+from .genetic_engine import discover_equation
+from .operators import apply_mutation
+from .operators import constant_optimization
+from .operators import crossover
+from .operators import hoist_mutation
+from .operators import point_mutation
+from .operators import shrink_mutation
+from .operators import subtree_mutation
+from .operators import tournament_selection
+from .pareto_front import ParetoFront
+from .pareto_front import ParetoSolution
 
 __all__ = [
     # Expression Trees
