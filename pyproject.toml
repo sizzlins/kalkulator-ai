@@ -141,6 +141,7 @@ ignore = [
     "B025",  # duplicate exception in try-except (intentional for explicit handling)
     "C901",  # too complex
     "F811",  # redefinition of unused (intentional for fallback/override patterns)
+    "I001",  # import block unsorted (handled by isort directly, force_single_line=true conflicts with ruff)
 ]
 
 [tool.ruff.lint.per-file-ignores]
