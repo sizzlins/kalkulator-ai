@@ -11,11 +11,12 @@ def test_composite():
     success, func_str, _, error = find_function_from_data(data, ["x"])
     print(f"Success: {success}")
     print(f"Function: {func_str}")
-    
+
     if "sin(x)" in func_str and "1" in func_str:
         print("PASS")
     else:
         print("FAIL")
+
 
 if __name__ == "__main__":
     test_composite()

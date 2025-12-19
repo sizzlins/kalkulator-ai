@@ -1,13 +1,14 @@
-import unittest
-import numpy as np
-import sys
 import os
+import sys
+import unittest
+
+import numpy as np
 
 # Ensure we can import the package
 sys.path.append(os.getcwd())
 
-from kalkulator_pkg.regression_solver import solve_regression_stage
 from kalkulator_pkg.dynamics_discovery import SINDy, SINDyConfig
+from kalkulator_pkg.regression_solver import solve_regression_stage
 
 
 class TestRefinements(unittest.TestCase):

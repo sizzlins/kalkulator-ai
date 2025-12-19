@@ -1,8 +1,8 @@
-import unittest
-import numpy as np
-import sys
 import os
-from io import StringIO
+import sys
+import unittest
+
+import numpy as np
 from scipy.special import erf
 
 # Ensure we can import the package

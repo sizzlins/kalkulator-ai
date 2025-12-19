@@ -1,10 +1,8 @@
-
-import subprocess
-import time
 import os
-import sys
+import subprocess
 
 EXE_PATH = r"c:\Users\LOQ\PycharmProjects\kalkulator-ai\kalkulator.exe"
+
 
 def run_interaction(commands):
     """Run the exe, send commands, and return output."""
@@ -14,11 +12,9 @@ def run_interaction(commands):
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        bufsize=0  # Unbuffered
+        bufsize=0,  # Unbuffered
     )
-    
-    output_log = []
-    
+
     try:
         # Send all commands joined by newlines
         input_str = "\n".join(commands) + "\n"
@@ -31,6 +27,7 @@ def run_interaction(commands):
         process.kill()
         return str(e)
 
+
 def test_exe_persistence():
     print(f"Testing EXE at: {EXE_PATH}")
     if not os.path.exists(EXE_PATH):
@@ -39,27 +36,16 @@ def test_exe_persistence():
 
     # Step 1: clear everything to ensure clean slate
     print("Step 1: Clear old saves...")
-    out1 = run_interaction([
-        "clearsavefunction",
-        "quit"
-    ])
-    
+    run_interaction(["clearsavefunction", "quit"])
+
     # Step 2: Define and Save
     print("Step 2: Define and Save...")
-    out2 = run_interaction([
-        "g(x) = x^3 + 10",
-        "savefunction",
-        "quit"
-    ])
-    
+    run_interaction(["g(x) = x^3 + 10", "savefunction", "quit"])
+
     # Step 3: Load and Verify
     print("Step 3: Load and Verify...")
-    out3 = run_interaction([
-        "loadfunction",
-        "showfunction",
-        "quit"
-    ])
-    
+    out3 = run_interaction(["loadfunction", "showfunction", "quit"])
+
     print("-" * 20)
     print("OUTPUT CHECK:")
     if "g(x)" in out3 and "x**3 + 10" in out3:
@@ -68,20 +54,17 @@ def test_exe_persistence():
         print("FAILURE: Function 'g(x)' was NOT found after loading.")
         print("Output from Step 3:")
         print(out3)
-        
+
     # Step 4: Verify Clear Save
     print("Step 4: Verify Clear Save logic...")
-    out4 = run_interaction([
-        "clearsavefunction",
-        "loadfunction",
-        "quit"
-    ])
-    
+    out4 = run_interaction(["clearsavefunction", "loadfunction", "quit"])
+
     if "No saved functions found" in out4:
         print("SUCCESS: clearsavefunction worked.")
     else:
         print("FAILURE: clearsavefunction might have failed.")
         print(out4)
+
 
 if __name__ == "__main__":
     test_exe_persistence()

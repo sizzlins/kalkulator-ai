@@ -1,7 +1,8 @@
-import unittest
-import numpy as np
-import sys
 import os
+import sys
+import unittest
+
+import numpy as np
 
 sys.path.append(os.getcwd())
 

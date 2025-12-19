@@ -191,10 +191,12 @@ def test_sphere_volume():
     _, result, _, _ = find_function_from_data(data_points, ["X"])
     result_clean = result.replace(" ", "") if result else ""
 
-    if "X^3" in result_clean and ("4/3*pi" in result_clean or "4*pi/3" in result_clean or "1.3333" in result_clean):
+    if "X^3" in result_clean and (
+        "4/3*pi" in result_clean or "4*pi/3" in result_clean or "1.3333" in result_clean
+    ):
         print(f"[PASS] SphereVolume: {result}")
         return True
-    elif "X^3" in result_clean and "4.188" in result_clean: # Fallback for approximate
+    elif "X^3" in result_clean and "4.188" in result_clean:  # Fallback for approximate
         print(f"[PASS] SphereVolume: {result}")
         return True
     else:
