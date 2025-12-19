@@ -4,10 +4,7 @@ import unittest
 
 import sympy as sp
 
-from kalkulator_pkg.solver import (
-    solve_inequality,
-    solve_single_equation,
-)
+from kalkulator_pkg.solver import solve_inequality, solve_single_equation
 from kalkulator_pkg.solver.algebraic import is_pell_equation_from_eq
 
 

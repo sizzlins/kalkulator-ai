@@ -5,10 +5,7 @@ from typing import Any
 
 import sympy as sp
 
-from kalkulator_pkg.parser import (
-    format_inequality_solution,
-    format_number,
-)
+from kalkulator_pkg.parser import format_inequality_solution, format_number
 
 logger = logging.getLogger(__name__)
 

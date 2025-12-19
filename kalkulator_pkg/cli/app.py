@@ -29,10 +29,7 @@ except ImportError:
 
 
 from ..config import VAR_NAME_RE, VERSION
-from ..parser import (
-    format_superscript,
-    split_top_level_commas,
-)
+from ..parser import format_superscript, split_top_level_commas
 from ..solver import solve_inequality, solve_single_equation, solve_system
 from ..types import ParseError, ValidationError
 from ..worker import evaluate_safely
