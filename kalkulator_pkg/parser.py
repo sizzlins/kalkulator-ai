@@ -741,6 +741,13 @@ def preprocess(
     def convert_hex_if_valid(match):
         """Convert hex number to decimal if it looks like one."""
         hex_digits = match.group(1)
+        start_pos = match.start()
+        end_pos = match.end()
+
+        # Check for preceding dot (part of float)
+        if start_pos > 0 and processed_str[start_pos - 1] == ".":
+            return match.group(0)
+
         # Only convert if it has letters (a-f) - this distinguishes hex from decimal
         if (
             len(hex_digits) >= 4
@@ -748,8 +755,6 @@ def preprocess(
             and all(c in "0123456789abcdefABCDEF" for c in hex_digits)
         ):
             # Check context: must be in a numeric context (not part of a variable name)
-            start_pos = match.start()
-            end_pos = match.end()
             # Check if followed by alphanumeric (would be part of variable) or preceded by letter/underscore
             if end_pos < len(processed_str) and (
                 processed_str[end_pos].isalnum() or processed_str[end_pos] == "_"
@@ -798,17 +803,44 @@ def preprocess(
 
     # Protect "find" from implicit multiplication conversion
     # "find" is a keyword for function finding, not a mathematical expression
+    
+    def implicit_mult_replacement(match):
+        """Handle implicit multiplication, respecting scientific notation."""
+        digit = match.group(1)
+        char = match.group(2)
+        
+        # If the character is 'e' or 'E', check if it looks like scientific notation
+        if char.lower() == 'e':
+            # Look ahead in the string to see if it's followed by digits or +,- then digits
+            # Note: Regex sub only gives us the match, not the full context easily without passing string
+            # But the match object has .string and .end()
+            full_str = match.string
+            end_idx = match.end()
+            
+            # Check characters immediately following 'e'
+            if end_idx < len(full_str):
+                next_char = full_str[end_idx]
+                if next_char.isdigit() or next_char in ('+', '-'):
+                    # If +, -, verify subsequent digit
+                    if next_char in ('+', '-'):
+                        if end_idx + 1 < len(full_str) and full_str[end_idx + 1].isdigit():
+                            return match.group(0) # Keep as is (scientific notation)
+                    else:
+                        return match.group(0) # Keep as is (e followed by digit)
+
+        return f"{digit}*{char}"
+
     if "find" in processed_str.lower():
         # Temporarily replace "find" with a placeholder
         processed_str = re.sub(
             r"\bfind\b", "___FIND_KEYWORD___", processed_str, flags=re.IGNORECASE
         )
-        # Apply implicit multiplication
-        processed_str = DIGIT_LETTERS_REGEX.sub(r"\1*\2", processed_str)
+        # Apply implicit multiplication with smart handler
+        processed_str = DIGIT_LETTERS_REGEX.sub(implicit_mult_replacement, processed_str)
         # Restore "find"
         processed_str = processed_str.replace("___FIND_KEYWORD___", "find")
     else:
-        processed_str = DIGIT_LETTERS_REGEX.sub(r"\1*\2", processed_str)
+        processed_str = DIGIT_LETTERS_REGEX.sub(implicit_mult_replacement, processed_str)
 
     processed_str = re.sub(r"\s+", " ", processed_str).strip()
 
