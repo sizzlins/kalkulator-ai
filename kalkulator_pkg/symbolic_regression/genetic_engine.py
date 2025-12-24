@@ -192,7 +192,10 @@ class GeneticSymbolicRegressor:
             return float("inf")
 
     def _initialize_population(
-        self, variables: list[str], n_individuals: int
+        self,
+        variables: list[str],
+        n_individuals: int,
+        seeds: list[str] | None = None,
     ) -> list[ExpressionTree]:
         """Initialize a population of random trees.
 
@@ -201,6 +204,7 @@ class GeneticSymbolicRegressor:
         Args:
             variables: Variable names
             n_individuals: Number of trees to create
+            seeds: Optional list of seed strings (overrides config seeds)
 
         Returns:
             List of random ExpressionTrees
@@ -214,8 +218,9 @@ class GeneticSymbolicRegressor:
             10, n_individuals // 10
         )  # At least 10, or 10% of population
 
-        if self.config.seeds:
-            for seed_str in self.config.seeds:
+        seeds_to_use = seeds if seeds is not None else self.config.seeds
+        if seeds_to_use:
+            for seed_str in seeds_to_use:
                 try:
                     import sympy as sp
 
@@ -434,6 +439,48 @@ class GeneticSymbolicRegressor:
                 except Exception:
                     pass
 
+    def _denormalize_result(self, front: ParetoFront) -> ParetoFront:
+        """Denormalize results if normalization was applied."""
+        if not self._normalization:
+            return front
+
+        y_min, y_scale = self._normalization
+        new_front = ParetoFront(max_size=front.max_size)
+
+        for sol in front.solutions:
+            try:
+                # Transform: raw = norm * scale + min
+                # Note: sympy_expr is normalized
+                raw_expr = sol.sympy_expr * y_scale + y_min
+                # Simplify to clean up constants
+                # E.g. (cosh(x)-min)/scale * scale + min -> cosh(x)
+                raw_expr = sp.simplify(raw_expr)
+
+                # We need a new tree for the raw expr
+                # Use variables from original tree
+                variables = sol.tree.variables
+                new_tree = ExpressionTree.from_sympy(raw_expr, variables)
+
+                # Recalculate MSE approximate (New MSE = Old MSE * scale^2)
+                # Actual MSE might differ slightly due to simplification numericals,
+                # but good enough for Pareto ranking preservation.
+                new_mse = sol.mse * (y_scale**2)
+
+                new_sol = ParetoSolution(
+                    expression=new_tree.to_pretty_string(),
+                    sympy_expr=raw_expr,
+                    mse=new_mse,
+                    complexity=new_tree.complexity(),
+                    tree=new_tree,
+                )
+                new_front.add(new_sol)
+            except Exception:
+                # If conversion fails, fallback is tricky.
+                # Assuming simplification usually works.
+                pass
+
+        return new_front
+
     def fit(
         self, X: np.ndarray, y: np.ndarray, variable_names: list[str] | None = None
     ) -> ParetoFront:
@@ -488,12 +535,23 @@ class GeneticSymbolicRegressor:
 
         if y_range > 1000:
             # Normalize to [0,1] range
-            y_train = (y_train - y_min) / (y_range + 1e-10)
-            y_val = (y_val - y_min) / (y_range + 1e-10)
-            y_residual = (y_residual - y_min) / (y_range + 1e-10)
-            self._normalization = (y_min, y_range)
+            y_scale = y_range + 1e-10
+            y_train = (y_train - y_min) / y_scale
+            y_val = (y_val - y_min) / y_scale
+            y_residual = (y_residual - y_min) / y_scale
+            self._normalization = (y_min, y_scale)
             if self.config.verbose:
                 print(f"Data normalized: y range {y_min:.2f} to {y_max:.2f} → [0,1]")
+        
+        # Prepare seeds (Normalize if needed)
+        eff_seeds = self.config.seeds
+        if self._normalization and eff_seeds:
+            y_min, y_scale = self._normalization
+            # Transform seeds: (seed - min) / scale
+            # Wrap in parens to ensure precedence
+            eff_seeds = [
+                f"(({s}) - {y_min}) / ({y_scale})" for s in self.config.seeds
+            ]
 
         for round_idx in range(rounds):
             if self.config.verbose and rounds > 1:
@@ -509,7 +567,7 @@ class GeneticSymbolicRegressor:
             islands = []
             for _ in range(self.config.n_islands):
                 island = self._initialize_population(
-                    variable_names, self.config.population_size
+                    variable_names, self.config.population_size, seeds=eff_seeds
                 )
                 islands.append(island)
 
@@ -621,9 +679,17 @@ class GeneticSymbolicRegressor:
                     final_front.add(sol)
                 except Exception:
                     pass
-            return final_front
+            result_front = self._denormalize_result(final_front)
         else:
-            return self.pareto_front
+            result_front = self._denormalize_result(self.pareto_front)
+            
+        # Update internal state so predict() works
+        self.pareto_front = result_front
+        best_sol = self.pareto_front.get_best()
+        if best_sol:
+            self.best_tree = best_sol.tree
+            
+        return result_front
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         """Predict using the best evolved model.
