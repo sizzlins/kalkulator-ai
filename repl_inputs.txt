@@ -1,6 +1,0 @@
-calc 2^100
-x = 2 mod 3
-solve x^2 - 1 = 0
-h(x) = √(x^2 + 1)
-h(3)
-quit
