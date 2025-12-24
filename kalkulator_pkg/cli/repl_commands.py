@@ -682,9 +682,18 @@ def _handle_evolve(text, variables=None):
                         data_dict[vname] = arr
 
                 # Determine default output name
+                # If we have [x, y, z, t] as inputs, we need a distinct output name
+                # If 'y' is used as an input, use 'z', then 'w', 'result', etc.
+                candidates = ["y", "z", "w", "out", "result"]
                 out_name = "y"
-                if "y" in input_var_names:
-                    out_name = "z"
+                for cand in candidates:
+                    if cand not in input_var_names:
+                        out_name = cand
+                        break
+                
+                # If all candidates taken, force a unique one
+                if out_name in input_var_names:
+                    out_name = "f_result"
 
                 out_arr = np.array(points_y)
                 if out_name in data_dict:

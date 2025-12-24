@@ -35,6 +35,11 @@ Legacy CLI:
 python kalkulator.py
 ```
 
+Or
+
+Download the .exe file, kalkulator.exe
+https://github.com/sizzlins/kalkulator-ai/blob/main/kalkulator.exe
+
 ### Commands
 
 - `f(x)=...`: Define function.

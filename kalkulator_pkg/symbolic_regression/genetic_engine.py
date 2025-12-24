@@ -452,10 +452,40 @@ class GeneticSymbolicRegressor:
                 # Transform: raw = norm * scale + min
                 # Note: sympy_expr is normalized
                 raw_expr = sol.sympy_expr * y_scale + y_min
+                
+                # Inverse Transform from Log Domain
+                if hasattr(self, "_log_strategy") and self._log_strategy:
+                    if self._log_strategy == "log":
+                         raw_expr = sp.exp(raw_expr)
+                    elif self._log_strategy == "arcsinh":
+                         raw_expr = sp.sinh(raw_expr)
+                
+                # Simplify to clean up constants
                 # Simplify to clean up constants
                 # E.g. (cosh(x)-min)/scale * scale + min -> cosh(x)
                 raw_expr = sp.simplify(raw_expr)
-
+                
+                # CLEANUP: Drop negligible additive constants (normalized noise)
+                # Since we know y_scale, any constant term significantly smaller than y_scale
+                # (e.g. 1e-10 * y_scale) is likely numerical noise from the [0,1] fit.
+                
+                # Extract constant term
+                if raw_expr.is_Add:
+                    # Strategy: Separate constant part from variable part
+                    # as_coeff_Add returns (constant, rest)
+                    coeff, rest = raw_expr.as_coeff_Add()
+                    
+                    if coeff != 0:
+                        # Check magnitude relative to data scale
+                        # If constant is < 1e-9 of the data range, drop it
+                        # For y_range=80000, this drops constants < 0.00008, which is safe
+                        # The observed artifact was 5e-8, which is 6e-13 * scale.
+                        # We can be quite aggressive here for "clean" results.
+                        
+                        relative_mag = abs(float(coeff)) / y_scale
+                        if relative_mag < 1e-9:
+                           raw_expr = rest
+                
                 # We need a new tree for the raw expr
                 # Use variables from original tree
                 variables = sol.tree.variables
@@ -532,8 +562,46 @@ class GeneticSymbolicRegressor:
         y_min, y_max = y.min(), y.max()
         y_range = y_max - y_min
         self._normalization = None
+        self._log_strategy = None  # "log" or "arcsinh"
+        
+        # Robust Scaling Strategy (Rule 5: No partial fixes)
+        # If data spans many orders of magnitude, linear normalization sucks. 
+        # Use simple heuristic: if max > 1000 * median (absolute), it's skewed.
+        
+        y_abs = np.abs(y)
+        y_median = np.median(y_abs) if len(y) > 0 else 1.0
+        if y_median == 0: y_median = 1e-10 # Prevent div by zero
+        
+        skew_ratio = y_max / y_median if y_max > 0 else 0
+        
+        if skew_ratio > 1000 or (y_range > 1e6):
+            # Apply log-like transform
+            is_positive = (y_min > 1e-12)
+            
+            if is_positive:
+                 self._log_strategy = "log"
+                 if self.config.verbose:
+                    print(f"Data skew detected (ratio {skew_ratio:.1f}). Inputs positive -> Applying LOG transform.")
+                 y_train = np.log(y_train)
+                 y_val = np.log(y_val)
+                 y_residual = np.log(y_residual)
+                 # Recalculate range
+                 y_min_log, y_max_log = np.log(y_min), np.log(y_max)
+                 y_range = y_max_log - y_min_log
+                 y_min = y_min_log
+            else:
+                 self._log_strategy = "arcsinh"
+                 if self.config.verbose:
+                    print(f"Data skew detected (ratio {skew_ratio:.1f}). Inputs mixed/neg -> Applying ARCSINH transform.")
+                 y_train = np.arcsinh(y_train)
+                 y_val = np.arcsinh(y_val)
+                 y_residual = np.arcsinh(y_residual)
+                 # Recalculate range
+                 y_min_log, y_max_log = np.arcsinh(y_min), np.arcsinh(y_max)
+                 y_range = y_max_log - y_min_log
+                 y_min = y_min_log
 
-        if y_range > 1000:
+        if y_range > 1000 or self._log_strategy: 
             # Normalize to [0,1] range
             y_scale = y_range + 1e-10
             y_train = (y_train - y_min) / y_scale
@@ -541,17 +609,25 @@ class GeneticSymbolicRegressor:
             y_residual = (y_residual - y_min) / y_scale
             self._normalization = (y_min, y_scale)
             if self.config.verbose:
-                print(f"Data normalized: y range {y_min:.2f} to {y_max:.2f} → [0,1]")
+                print(f"Data normalized ({self._log_strategy or 'linear'}): y range {y_min:.2f} to {y_max_log if self._log_strategy else y_max:.2f} → [0,1]")
         
         # Prepare seeds (Normalize if needed)
         eff_seeds = self.config.seeds
         if self._normalization and eff_seeds:
             y_min, y_scale = self._normalization
-            # Transform seeds: (seed - min) / scale
-            # Wrap in parens to ensure precedence
-            eff_seeds = [
-                f"(({s}) - {y_min}) / ({y_scale})" for s in self.config.seeds
-            ]
+            new_seeds = []
+            for s in self.config.seeds:
+                if self._log_strategy == "log":
+                     # log(seed) - min / scale
+                     # Need to be careful about seed <= 0. Assuming seeds match data distrib.
+                     # Just wrap in log()
+                     s_trans = f"(log({s}) - {y_min}) / {y_scale}"
+                elif self._log_strategy == "arcsinh":
+                     s_trans = f"(asinh({s}) - {y_min}) / {y_scale}"
+                else:
+                     s_trans = f"(({s}) - {y_min}) / ({y_scale})"
+                new_seeds.append(s_trans)
+            eff_seeds = new_seeds
 
         for round_idx in range(rounds):
             if self.config.verbose and rounds > 1:
