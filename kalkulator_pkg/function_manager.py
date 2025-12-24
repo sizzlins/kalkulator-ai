@@ -1720,11 +1720,27 @@ def find_function_from_data(
         s = s.rstrip("0").rstrip(".")
         return f"{base_name}^{s}"
 
+    # Helper for rational polishing (Common Sense simplification)
+    # Converts 0.318182 -> 7/22, etc.
+    def polish_rational(
+        val: float, tolerance: float = 2e-5, max_den: int = 2000
+    ) -> Any:
+        try:
+            f = Fraction(val).limit_denominator(max_den)
+            # If denominator is huge, it's not simpler.
+            if f.denominator > 1000 and max_den > 1000:
+                # Fallback to float if fraction is ugly (e.g. 159091/500000)
+                # But wait, 159091/500000 IS the exact fraction for 0.318182.
+                # If tolerance check fails for simple fraction, we return original val.
+                pass
+            
+            if abs(float(f) - val) <= tolerance:
+                return f
+        except Exception:
+            pass
+        return val
+
     # --- NEW: PRE-CHECK - Linear Fit (Occam's Razor for sparse data) ---
-    # Moved to TOP PRIORITY to prevent log-linear checks from claiming imperfect exponential fits
-    # For single-variable, always check for perfect linear fit first.
-    # --- NEW: PRE-CHECK - Linear Fit (Occam's Razor for sparse data) ---
-    # Moved to TOP PRIORITY to prevent log-linear checks from claiming imperfect exponential fits
     # Generalized to multi-variable linear regression.
     if not skip_linear:
         try:
@@ -1760,24 +1776,39 @@ def find_function_from_data(
                         if abs(coef) < 1e-10:
                             continue
 
+                        # Rational Polish
+                        polished = polish_rational(coef)
+
                         # Get variable name
                         var_name = (
                             param_names[idx] if idx < len(param_names) else f"x{idx}"
                         )
 
                         term = ""
-                        coef_round = round(coef)
-                        is_int = abs(coef - coef_round) < 1e-9
-
-                        if is_int:
-                            if coef_round == 1:
-                                term = var_name
-                            elif coef_round == -1:
-                                term = f"-{var_name}"
+                        if (
+                            isinstance(polished, Fraction)
+                            and polished.denominator != 1
+                        ):
+                            # It's a fraction! Use its string representation (e.g., "7/22")
+                            if polished < 0:
+                                term = f"{polished}*{var_name}"
                             else:
-                                term = f"{int(coef_round)}*{var_name}"
+                                term = f"{polished}*{var_name}"
                         else:
-                            term = f"{coef:.10g}*{var_name}"
+                            # Float or Integer logic
+                            val = float(polished)
+                            coef_round = round(val)
+                            is_int = abs(val - coef_round) < 1e-9
+
+                            if is_int:
+                                if coef_round == 1:
+                                    term = var_name
+                                elif coef_round == -1:
+                                    term = f"-{var_name}"
+                                else:
+                                    term = f"{int(coef_round)}*{var_name}"
+                            else:
+                                term = f"{val:.10g}*{var_name}"
 
                         # Add to parts handling sign
                         if not parts:
@@ -1791,19 +1822,29 @@ def find_function_from_data(
                     # Process intercept
                     intercept = lr.intercept_
                     if abs(intercept) > 1e-10:
+                        # Rational Polish for intercept too
+                        polished_inc = polish_rational(intercept)
+
                         term = ""
-                        b_round = round(intercept)
-                        is_int = abs(intercept - b_round) < 1e-9
-
-                        val_str = str(int(b_round)) if is_int else f"{intercept:.10g}"
-
-                        if not parts:
-                            parts.append(val_str)
+                        if (
+                            isinstance(polished_inc, Fraction)
+                            and polished_inc.denominator != 1
+                        ):
+                             val_str = str(polished_inc)
                         else:
-                            if intercept > 0:
-                                parts.append(f"+ {val_str}")
+                            val = float(polished_inc)
+                            b_round = round(val)
+                            is_int = abs(val - b_round) < 1e-9
+                            val_str = str(int(b_round)) if is_int else f"{val:.10g}"
+
+                        if val_str != "0":
+                            if not parts:
+                                parts.append(val_str)
                             else:
-                                parts.append(f"- {val_str.lstrip('-')}")
+                                if val_str.startswith("-"):
+                                    parts.append(f"- {val_str.lstrip('-')}")
+                                else:
+                                    parts.append(f"+ {val_str}")
 
                     if parts:
                         return (True, " ".join(parts), None, None)
