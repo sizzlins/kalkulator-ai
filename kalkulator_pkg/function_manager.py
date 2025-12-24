@@ -1723,71 +1723,92 @@ def find_function_from_data(
     # --- NEW: PRE-CHECK - Linear Fit (Occam's Razor for sparse data) ---
     # Moved to TOP PRIORITY to prevent log-linear checks from claiming imperfect exponential fits
     # For single-variable, always check for perfect linear fit first.
-    if n_params == 1 and not skip_linear:
+    # --- NEW: PRE-CHECK - Linear Fit (Occam's Razor for sparse data) ---
+    # Moved to TOP PRIORITY to prevent log-linear checks from claiming imperfect exponential fits
+    # Generalized to multi-variable linear regression.
+    if not skip_linear:
         try:
-            X_vals = [
-                (
-                    eval_to_float(p[0][0])
-                    if isinstance(p[0], (list, tuple))
-                    else eval_to_float(p[0])
-                )
-                for p in data_points
-            ]
+            X_vals = []
+            for p in data_points:
+                raw_in = p[0]
+                # Ensure input is a list/tuple of floats
+                if isinstance(raw_in, (list, tuple)):
+                    row = [eval_to_float(v) for v in raw_in]
+                else:
+                    row = [eval_to_float(raw_in)]
+                X_vals.append(row)
+
             y_vals = [eval_to_float(p[1]) for p in data_points]
 
-            # Try y = a*x + b
-
-            X_arr = np.array(X_vals).reshape(-1, 1)
+            X_arr = np.array(X_vals)
             y_arr = np.array(y_vals)
 
-            lr = LinearRegression()
-            lr.fit(X_arr, y_arr)
+            # Requires at least 2 points to fit a line/plane meaningfully
+            if len(X_vals) >= 2:
+                lr = LinearRegression()
+                lr.fit(X_arr, y_arr)
 
-            # Check if it's a perfect fit
-            y_pred = lr.predict(X_arr)
-            mse = np.mean((y_arr - y_pred) ** 2)
+                # Check if it's a perfect fit
+                y_pred = lr.predict(X_arr)
+                mse = np.mean((y_arr - y_pred) ** 2)
 
-            if mse < 1e-10:  # Perfect linear fit
-                a = lr.coef_[0]
-                b = lr.intercept_
-                var_name = param_names[0]
+                if mse < 1e-9:  # Good linear fit
+                    parts = []
 
-                # Format the result
-                parts = []
-                # Format slope
-                if abs(a) > 1e-10:
-                    a_round = round(a)
-                    if abs(a - a_round) < 1e-9 and a_round != 0:
-                        if a_round == 1:
-                            parts.append(var_name)
-                        elif a_round == -1:
-                            parts.append(f"-{var_name}")
+                    # Process coefficients
+                    for idx, coef in enumerate(lr.coef_):
+                        if abs(coef) < 1e-10:
+                            continue
+
+                        # Get variable name
+                        var_name = (
+                            param_names[idx] if idx < len(param_names) else f"x{idx}"
+                        )
+
+                        term = ""
+                        coef_round = round(coef)
+                        is_int = abs(coef - coef_round) < 1e-9
+
+                        if is_int:
+                            if coef_round == 1:
+                                term = var_name
+                            elif coef_round == -1:
+                                term = f"-{var_name}"
+                            else:
+                                term = f"{int(coef_round)}*{var_name}"
                         else:
-                            parts.append(f"{int(a_round)}*{var_name}")
+                            term = f"{coef:.10g}*{var_name}"
+
+                        # Add to parts handling sign
+                        if not parts:
+                            parts.append(term)
+                        else:
+                            if term.startswith("-"):
+                                parts.append(f"- {term[1:]}")
+                            else:
+                                parts.append(f"+ {term}")
+
+                    # Process intercept
+                    intercept = lr.intercept_
+                    if abs(intercept) > 1e-10:
+                        term = ""
+                        b_round = round(intercept)
+                        is_int = abs(intercept - b_round) < 1e-9
+
+                        val_str = str(int(b_round)) if is_int else f"{intercept:.10g}"
+
+                        if not parts:
+                            parts.append(val_str)
+                        else:
+                            if intercept > 0:
+                                parts.append(f"+ {val_str}")
+                            else:
+                                parts.append(f"- {val_str.lstrip('-')}")
+
+                    if parts:
+                        return (True, " ".join(parts), None, None)
                     else:
-                        parts.append(f"{a:.10g}*{var_name}")
-
-                # Format intercept
-                if abs(b) > 1e-10:
-                    b_round = round(b)
-                    if abs(b - b_round) < 1e-9:
-                        if b_round > 0:
-                            parts.append(
-                                f"+ {int(b_round)}" if parts else str(int(b_round))
-                            )
-                        else:
-                            parts.append(
-                                f"- {abs(int(b_round))}" if parts else str(int(b_round))
-                            )
-                    else:
-                        if b > 0:
-                            parts.append(f"+ {b:.10g}" if parts else f"{b:.10g}")
-                        else:
-                            parts.append(f"- {abs(b):.10g}" if parts else f"{b:.10g}")
-
-                if parts:
-                    func_str = " ".join(parts)
-                    return (True, func_str, None, None)
+                        return (True, "0", None, None)
         except Exception:
             pass  # Fall through to other methods
 
