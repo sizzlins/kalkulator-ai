@@ -103,75 +103,29 @@ def handle_command(text: str, ctx: Any, variables: Dict[str, str]) -> bool:
         _handle_cachehits_command(text, ctx)
         return True
 
-    # === Function Finding/System ===
-    if raw_lower.startswith("find "):
-        # e.g. "find f(x)" or "find f(x) given ..."
-        # Implement _handle_find_command logic here or call helper
-        _handle_find_command(text, variables)
-        return True
-
-    # === Calculation Commands ===
-    if raw_lower.startswith("calc "):
-        # calc <expr> -> print result (legacy wrapper)
-        # REPL handles expressions natively, but explicit calc strips prefix.
-        # Returning False allows REPL to process the stripped text?
-        # No, REPL dispatch is strict. We should process it here via evaluate_safely mechanism?
-        # Or return a special signal?
-        # Actually, REPL can handle the stripped arithmetic if we return handled=True but print result ourselves?
-        # Better: let REPL handle "calc" by stripping it in process_input?
-        # No, "process_input" calls "handle_command". If handle_command processes it, great.
-        # But handle_command needs access to REPL's evaluate logic?
-        # To avoid circular dep, we can return False and let REPL handle.
-        # BUT REPL needs to know to strip "calc ".
-        # Let's handle it here if possible or return a modified text?
-        # Protocol: return (handled: bool, modified_text: Optional[str])?
-        # Too complex. Let's just strip and assume REPL handles expressions.
-        # Wait, if I return True, REPL stops.
-        # So I must evaluate here if I return True.
-        # But I don't want to duplicate evaluate_safely.
-        # Let's SKIP "calc" here and handle it in REPL core explicitly?
-        # Or import evaluate_safely here.
-        # Since evaluate_safely is in worker.py/worker usage, we can import it.
-        # But REPL core uses REPL.evaluate_safely wrapper logic? No, it uses 'from ..worker import evaluate_safely'.
-        from ..worker import evaluate_safely
-
-        eval_text = text[5:].strip()
-        # We need to substitute variables?
-        # handle_command receives 'variables' dict.
-        eval_text_subbed = _substitute_vars(eval_text, variables)
-        res = evaluate_safely(eval_text_subbed)
-        print_result_pretty(res)
-        return True
-
-    # === Solver Command ===
-    # "solve" is partly handled in repl_core for shadowing check, but the heavy lifting is here.
-    # Actually repl_core had special logic to detect "solve" and pass to handle_single_part.
-    # If we move logic here, we centralization it.
-    if raw_lower.startswith("solve "):
-        # Logic from app.py
-        _handle_solve_command(text, variables)
-        return True
-
-    # === Export Command ===
-    if raw_lower.startswith("export "):
-        _handle_export_command(text)
-        return True
-
     # === Research Commands (Evolve, SINDy, Causal, Dimensionless) ===
-    if raw_lower.startswith("evolve "):
-        _handle_evolve(text, variables)
-        return True
-
+    # Must check these BEFORE generic "find " to avoid shadowing
     if raw_lower.startswith("find ode"):
         _handle_find_ode(text)
+        return True
+
+    if raw_lower.startswith("find dimensionless"):
+        _handle_find_dimensionless(text)
         return True
 
     if raw_lower.startswith("discover causal"):
         _handle_discover_causal(text)
         return True
 
-    if raw_lower.startswith("find dimensionless"):
-        _handle_find_dimensionless(text)
+    if raw_lower.startswith("evolve "):
+        _handle_evolve(text, variables)
+        return True
+
+    # === Function Finding/System ===
+    if raw_lower.startswith("find "):
+        # e.g. "find f(x)" or "find f(x) given ..."
+        # Implement _handle_find_command logic here or call helper
+        _handle_find_command(text, variables)
         return True
 
     if raw_lower.startswith("benchmark"):
