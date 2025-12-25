@@ -72,6 +72,20 @@ Discovered: f(x) = exp(LambertW(log(x)))
 g(x) = exp(-x^2)
 ```
 
+### Calculus
+
+**Differentiation**
+Syntax: `diff(expression, variable)`
+
+- **Why the variable?** In multi-variable calculus, you must specify which variable changes.
+  - `diff(x*y, x)` -> `y` (Slope with respect to x)
+  - `diff(x*y, y)` -> `x` (Slope with respect to y)
+
+```
+>>> diff(log(x), x)
+Result: diff(log(x), x) = 1/x
+```
+
 ## Limitations
 
 ### Function Types
@@ -115,9 +129,20 @@ Warning: 4 data point(s) with complex/imaginary values were skipped.
 
 **Workaround:** Use only real-valued data points for regression.
 
-### Numerical Limits
+### Numerical Limits & Precision
 
-High-power polynomials (`x^10`, `x^11`, etc.) may hit numerical precision limits:
+**Floating Point Limits (Machine Epsilon):**
+Standard 64-bit floating point math breaks down when values differ by more than 15 decimal places ("Catastrophic Cancellation").
+
+**Example:** `f(x) = (1+x)^(1/x)` (approaches `e` as x→0).
+
+- `f(1e-10) ≈ 2.718` (Correct)
+- `f(1e-16)` → `1.0` (Incorrect)
+
+**Why**: `1.0 + 1e-16` is exactly `1.0` in computer memory. Then `1.0^Huge` is `1.0`. The tiny `x` information is lost before the exponentiation happens.
+
+**High-Power Polynomials:**
+Polynomials (`x^10`, `x^11`)...
 
 - `find` works for `x^10` but may struggle with `x^11` and above (values exceed 10^11)
 - `evolve` finds approximate exponents (e.g., `x^10.16` instead of `x^10`)
