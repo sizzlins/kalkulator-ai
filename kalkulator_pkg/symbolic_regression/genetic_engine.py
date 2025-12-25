@@ -22,12 +22,21 @@ from .pareto_front import ParetoSolution
 
 def huber_loss(y_true, y_pred, delta=1.0):
     """Calculate Huber loss."""
+    # Complex-aware Huber loss (using magnitude of error)
     error = y_true - y_pred
-    # Clip error to prevent overflow in square
-    error = np.clip(error, -1e100, 1e100)
-    is_small_error = np.abs(error) <= delta
-    squared_loss = 0.5 * error**2
-    linear_loss = delta * (np.abs(error) - 0.5 * delta)
+    # Clip error magnitude to prevent overflow
+    # For complex, we need to handle real/imag parts or just magnitude?
+    # Simple magnitude clip:
+    # error = np.clip(np.abs(error), 0, 1e100) # Wait, this returns float
+    # We need error to stay complex if we were doing gradient descent, but here we just need scalar loss
+    
+    abs_error = np.abs(error)
+    # Clip magnitude
+    abs_error = np.clip(abs_error, 0, 1e100)
+    
+    is_small_error = abs_error <= delta
+    squared_loss = 0.5 * abs_error**2
+    linear_loss = delta * (abs_error - 0.5 * delta)
     return np.where(is_small_error, squared_loss, linear_loss).mean()
 
 
@@ -177,15 +186,25 @@ class GeneticSymbolicRegressor:
         """
         try:
             predictions = tree.evaluate(X)
-            # Clip predictions to avoid overflow in square
-            # Use float64 max sqrt approx 1e150, but let's be safer 1e100
-            np.clip(predictions, -1e100, 1e100, out=predictions)
+            # Clip predictions magnitude
+            # np.clip on complex numbers only supports real-part clipping in older numpy, 
+            # or raises error. Safe way: clip magnitude.
+            mag = np.abs(predictions)
+            mask = mag > 1e100
+            if np.any(mask):
+                 scale = np.ones_like(mag)
+                 scale[mask] = 1e100 / mag[mask]
+                 predictions = predictions * scale
 
             diff = predictions - y
-            # Further protection against squaring large diffs
-            np.clip(diff, -1e100, 1e100, out=diff)
-
-            return float(np.mean(diff**2))
+            
+            # Magnitude squared error
+            # return float(np.mean(np.abs(diff)**2))
+            # But handle overflow in square
+            abs_diff = np.abs(diff)
+            np.clip(abs_diff, 0, 1e100, out=abs_diff)
+            
+            return float(np.mean(abs_diff**2))
         except (OverflowError, ValueError, RuntimeWarning):
             return float("inf")
         except Exception:
@@ -559,8 +578,17 @@ class GeneticSymbolicRegressor:
 
         # Normalize y if value range is very large (>1000)
         # This prevents MSE from becoming astronomically large for high-degree polynomials
-        y_min, y_max = y.min(), y.max()
-        y_range = y_max - y_min
+        # Normalize y if value range is very large (>1000)
+        # This prevents MSE from becoming astronomically large for high-degree polynomials
+        
+        # Handle complex min/max safely
+        if np.iscomplexobj(y):
+             y_min = 0 # Concept of min/max flawed for complex
+             y_max = np.max(np.abs(y)) # Use max magnitude
+             y_range = y_max # Range is effectively radius
+        else:
+             y_min, y_max = y.min(), y.max()
+             y_range = y_max - y_min
         self._normalization = None
         self._log_strategy = None  # "log" or "arcsinh"
         
@@ -571,33 +599,80 @@ class GeneticSymbolicRegressor:
         y_abs = np.abs(y)
         y_median = np.median(y_abs) if len(y) > 0 else 1.0
         if y_median == 0: y_median = 1e-10 # Prevent div by zero
-        
         skew_ratio = y_max / y_median if y_max > 0 else 0
         
         if skew_ratio > 1000 or (y_range > 1e6):
             # Apply log-like transform
-            is_positive = (y_min > 1e-12)
-            
-            if is_positive:
+            # Check for complex data first
+            is_complex_y = np.iscomplexobj(y)
+            if is_complex_y:
+                 # Complex data: TRY LOG FIRST (scimath.log) to catch x^y -> y*log(x)
+                 # Arcsinh destroys power law structure for complex/negatives.
+                 # Log preserves it (linearizes it).
                  self._log_strategy = "log"
+                 
+                 # Use scimath.log to handle negative/complex inputs
+                 # Note: Branch cuts exist, but it's better than arcsinh for powers.
+                 y_residual = np.lib.scimath.log(y_residual)
                  if self.config.verbose:
-                    print(f"Data skew detected (ratio {skew_ratio:.1f}). Inputs positive -> Applying LOG transform.")
-                 y_train = np.log(y_train)
-                 y_val = np.log(y_val)
-                 y_residual = np.log(y_residual)
-                 # Recalculate range
-                 y_min_log, y_max_log = np.log(y_min), np.log(y_max)
-                 y_range = y_max_log - y_min_log
-                 y_min = y_min_log
+                    print(f"Data skew detected (ratio {skew_ratio:.1f}). Complex data -> Applying COMPLEX LOG transform.")
             else:
-                 self._log_strategy = "arcsinh"
-                 if self.config.verbose:
-                    print(f"Data skew detected (ratio {skew_ratio:.1f}). Inputs mixed/neg -> Applying ARCSINH transform.")
+                is_positive = (y_min > 1e-12)
+                
+                if is_positive:
+                    self._log_strategy = "log"
+                    y_residual = np.log(y_residual)
+                    if self.config.verbose:
+                        print(f"Data skew detected (ratio {skew_ratio:.1f}). Inputs positive -> Applying LOG transform.")
+                else: 
+                     # For mixed real data, log is risky (generates complex from real).
+                     # But for x^y with negative base, we WANT complex log.
+                     # So let's check if we CAN use complex log?
+                     # Actually, let's just use complex log if skew is huge.
+                     # If the user gives real data but huge skew involving negatives, 
+                     # likely it's a power law with even/odd integers or exp.
+                     
+                     # FORCE LOG (Complex) for high skew
+                     self._log_strategy = "log"
+                     y_residual = np.lib.scimath.log(y_residual)
+                     if self.config.verbose:
+                         print(f"Data skew detected (ratio {skew_ratio:.1f}). Inputs mixed/neg -> Applying COMPLEX LOG transform.")
+                    
+                     # Fallback to arcsinh if log failed? No scimath.log works.
+                     # self._log_strategy = "arcsinh"
+                     # y_residual = np.arcsinh(y_residual)
+
+            if self._log_strategy == "log":
+                 # Use scimath to handle complex or negative inputs safely
+                 y_train = np.lib.scimath.log(y_train)
+                 y_val = np.lib.scimath.log(y_val)
+                 
+                 # Recalculate range for normalization
+                 # For complex log, range is tricky. Use real part range or magnitude?
+                 # Log compresses magnitude. 
+                 # Let's use magnitude of the log values.
+                 # y_min_log, y_max_log = np.log(y_min), np.log(y_max) 
+                 
+                 y_min_log = 0 
+                 y_max_log = np.max(np.abs(y_residual))
+                 
+                 y_range = y_max_log # Radius
+                 y_min = 0 # Center at 0 approx? 
+                 # No, we should normalize by subtracting mean?
+                 # Let's just scale by max magnitude.
+                 y_min = 0
+            else:
                  y_train = np.arcsinh(y_train)
                  y_val = np.arcsinh(y_val)
-                 y_residual = np.arcsinh(y_residual)
                  # Recalculate range
-                 y_min_log, y_max_log = np.arcsinh(y_min), np.arcsinh(y_max)
+                 # Handle complex min/max for range scaling
+                 if is_complex_y:
+                      # range is radius
+                      y_min_log = 0
+                      y_max_log = np.max(np.abs(y_residual))
+                 else:
+                      y_min_log, y_max_log = np.arcsinh(y_min), np.arcsinh(y_max)
+                 
                  y_range = y_max_log - y_min_log
                  y_min = y_min_log
 

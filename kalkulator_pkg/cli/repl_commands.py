@@ -349,15 +349,23 @@ def generate_pattern_seeds(X, y, variable_names):
         X = X.reshape(-1, 1)
 
     # --- 1. Detect poles (where y is inf/nan) ---
+    # --- 1. Detect poles (where y is inf/nan) ---
     for i, y_val in enumerate(y):
-        if not np.isfinite(y_val):
-            pole_x = X[i, 0]
-            # Generate pole-based seeds
-            seeds.append(f"1/({var}-{pole_x})")
-            seeds.append(f"1/({var}-{pole_x})**2")
-            seeds.append(f"{var}/({var}-{pole_x})**2")
-            # Also add with negative sign
-            seeds.append(f"1/({pole_x}-{var})")
+        try:
+            # np.isfinite works for complex but be safe
+            if not np.isfinite(y_val):
+                pole_x = X[i, 0]
+                # Format pole_x cleanly (handle complex pole location too)
+                pole_str = str(pole_x).replace("(", "").replace(")", "")
+                
+                # Generate pole-based seeds
+                seeds.append(f"1/({var}-({pole_str}))")
+                seeds.append(f"1/({var}-({pole_str}))**2")
+                seeds.append(f"{var}/({var}-({pole_str}))**2")
+                # Also add with negative sign
+                seeds.append(f"1/({pole_str}-({var}))")
+        except TypeError:
+            continue
 
     # --- 2. Detect near-zero crossings (potential 1/(x-a) patterns) ---
     # Look for large jumps in y that might indicate near-pole behavior
@@ -539,20 +547,16 @@ def _handle_evolve(text, variables=None):
                         p_args_str = m.group(2)
                         p_val_str = m.group(3).strip()
 
-                        # Check for complex/imaginary values (skip with warning)
-                        if (
-                            any(indicator in p_val_str for indicator in ["i", "I", "j"])
-                            and not p_val_str.replace(".", "")
-                            .replace("-", "")
-                            .replace("+", "")
-                            .replace("e", "")
-                            .isdigit()
-                        ):
-                            skipped_complex += 1
-                            continue
-
-                        # Basic float parsing
-                        p_args = [float(a.strip()) for a in p_args_str.split(",")]
+                        # Check for complex values
+                        # We SUPPORT complex values now for Genetic Engine
+                        # if (
+                        #     "i" in p_args_str
+                        #     or "j" in p_args_str
+                        #     or "i" in p_val_str
+                        #     or "j" in p_val_str
+                        # ):
+                        #     skipped_complex += 1
+                        #     continue
 
                         # Handle infinity values (zoo, oo, inf) for pole detection
                         p_val_lower = p_val_str.lower()
@@ -567,7 +571,52 @@ def _handle_evolve(text, variables=None):
                         elif p_val_lower in ("nan",):
                             p_val = float("nan")
                         else:
-                            p_val = float(p_val_str)
+                            # Try parsing as float first (faster), then complex
+                            try:
+                                p_val = float(p_val_str)
+                            except ValueError:
+                                try:
+                                    p_val = complex(p_val_str.replace("i", "j"))
+                                except ValueError:
+                                     # Last resort: SymPy eval (e.g. for "sin(1)+i")
+                                     try:
+                                         import sympy as sp
+                                         local_ns = {
+                                             "e": sp.E, "E": sp.E, "pi": sp.pi, "I": sp.I, "i": sp.I,
+                                             "sin": sp.sin, "cos": sp.cos, "tan": sp.tan,
+                                             "exp": sp.exp, "log": sp.log, "sqrt": sp.sqrt
+                                         }
+                                         val_expr = sp.sympify(p_val_str, locals=local_ns)
+                                         p_val = complex(val_expr.evalf())
+                                     except Exception:
+                                         continue
+
+                        # Parse arguments (supports complex validation)
+                        p_args = []
+                        for a in p_args_str.split(","):
+                             a = a.strip()
+                             try:
+                                 arg_val = float(a)
+                             except ValueError:
+                                 try:
+                                     arg_val = complex(a.replace("i", "j"))
+                                 except ValueError:
+                                      # SymPy fallback
+                                     try:
+                                         import sympy as sp
+                                         # Define safe locals for parsing constants/funcs
+                                         local_ns = {
+                                             "e": sp.E, "E": sp.E, "pi": sp.pi, "I": sp.I, "i": sp.I,
+                                             "sin": sp.sin, "cos": sp.cos, "tan": sp.tan,
+                                             "exp": sp.exp, "log": sp.log, "sqrt": sp.sqrt
+                                         }
+                                         arg_expr = sp.sympify(a, locals=local_ns)
+                                         arg_val = complex(arg_expr.evalf())
+                                     except Exception:
+                                         # If arg fails, skip point
+                                         raise ValueError
+                             p_args.append(arg_val)
+
 
                         # DATA ARITY AUTO-CORRECTION (Genius Mode)
                         current_arity = len(input_var_names)
@@ -602,12 +651,6 @@ def _handle_evolve(text, variables=None):
                             )
 
                         elif data_arity < current_arity:
-                            # User said "evolve m(x,y)" but gave "m(1)=2"
-                            # This is harder. We can't invent data.
-                            # Treat as partial match or warn?
-                            # For now, simplistic approach: drop the extra target vars if empty?
-                            # Or just skip this point?
-                            # Strict behavior for UNDER-specified data is safer.
                             continue
 
                         for i, vname in enumerate(input_var_names):

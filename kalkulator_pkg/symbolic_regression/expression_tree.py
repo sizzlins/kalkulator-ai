@@ -47,17 +47,25 @@ def safe_exp(x):
 
 def safe_log(x):
     with np.errstate(all="ignore"):
-        return np.log(np.abs(x) + 1e-10)
+        # Use scimath.log (handles negative inputs -> complex)
+        # Add epsilon to magnitude to avoid log(0)
+        # x + epsilon is tricky for complex, so we ensure x isn't exactly 0
+        safe_x = np.where(x == 0, 1e-10, x)
+        return np.lib.scimath.log(safe_x)
 
 
 def safe_sqrt(x):
     with np.errstate(all="ignore"):
-        return np.sqrt(np.abs(x))
+        # Use scimath.sqrt to handle negative inputs
+        return np.lib.scimath.sqrt(x)
 
 
 def safe_inv(x):
     with np.errstate(all="ignore"):
-        return 1.0 / (x + 1e-10 * np.sign(x + 1e-10))
+        # Handle complex division near zero
+        # Add small epsilon in direction of x (complex-aware)
+        safe_x = x + 1e-10 * (x / (np.abs(x) + 1e-10))
+        return 1.0 / safe_x
 
 
 def safe_mul(x, y):
@@ -67,12 +75,26 @@ def safe_mul(x, y):
 
 def safe_div(x, y):
     with np.errstate(all="ignore"):
-        return x / (y + 1e-10 * np.sign(y + 1e-10))
+        safe_y = y + 1e-10 * (y / (np.abs(y) + 1e-10))
+        return x / safe_y
 
 
 def safe_pow(x, y):
     with np.errstate(all="ignore"):
-        return np.clip(np.power(np.abs(x) + 1e-10, np.clip(y, -10, 10)), -1e100, 1e100)
+        # Use scimath.power to handle negative bases -> complex results
+        # Still clip exponent to avoid overflow, but allow complex base
+        # Output clipping is tricky for complex, we clip magnitude?
+        res = np.lib.scimath.power(x, np.clip(y, -10, 10))
+        # Complex clipping (magnitude cap)
+        # If magnitude > 1e100, scale it down
+        mag = np.abs(res)
+        mask = mag > 1e100
+        if np.any(mask):
+            # Create scale factor: 1.0 where safe, 1e100/mag where unsafe
+            scale = np.ones_like(mag)
+            scale[mask] = 1e100 / mag[mask]
+            res = res * scale
+        return res
 
 
 def safe_sinh(x):
@@ -367,7 +389,7 @@ class ExpressionTree:
         result = self.root.evaluate(var_dict)
 
         # Ensure result is array of correct shape
-        if isinstance(result, (int, float)):
+        if isinstance(result, (int, float, complex, np.number)):
             result = np.full(X.shape[0], result)
 
         return result
