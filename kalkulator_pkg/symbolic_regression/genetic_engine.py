@@ -478,6 +478,8 @@ class GeneticSymbolicRegressor:
                          raw_expr = sp.exp(raw_expr)
                     elif self._log_strategy == "arcsinh":
                          raw_expr = sp.sinh(raw_expr)
+                    elif self._log_strategy == "linear":
+                         pass
                 
                 # Simplify to clean up constants
                 # Simplify to clean up constants
@@ -606,16 +608,14 @@ class GeneticSymbolicRegressor:
             # Check for complex data first
             is_complex_y = np.iscomplexobj(y)
             if is_complex_y:
-                 # Complex data: TRY LOG FIRST (scimath.log) to catch x^y -> y*log(x)
-                 # Arcsinh destroys power law structure for complex/negatives.
-                 # Log preserves it (linearizes it).
-                 self._log_strategy = "log"
+                 # Complex data: TRY LINEAR SCALING
+                 # Log scaling fails due to branch cuts (y*log(x) != log(x^y) mod 2pi*i)
+                 # Linear scaling fits C * x^y, which is discovering 'pow(x,y)' * constant.
+                 self._log_strategy = "linear"
+                 self._normalization = (0, np.max(np.abs(y)))
                  
-                 # Use scimath.log to handle negative/complex inputs
-                 # Note: Branch cuts exist, but it's better than arcsinh for powers.
-                 y_residual = np.lib.scimath.log(y_residual)
                  if self.config.verbose:
-                    print(f"Data skew detected (ratio {skew_ratio:.1f}). Complex data -> Applying COMPLEX LOG transform.")
+                    print(f"Data skew detected (ratio {skew_ratio:.1f}). Complex data -> Applying LINEAR scaling (max magnitude).")
             else:
                 is_positive = (y_min > 1e-12)
                 
@@ -632,11 +632,15 @@ class GeneticSymbolicRegressor:
                      # If the user gives real data but huge skew involving negatives, 
                      # likely it's a power law with even/odd integers or exp.
                      
-                     # FORCE LOG (Complex) for high skew
-                     self._log_strategy = "log"
-                     y_residual = np.lib.scimath.log(y_residual)
+                     # FORCE LINEAR SCALING for high skew complex/mixed data
+                     # Log scaling fails due to branch cuts (y*log(x) != log(x^y) mod 2pi*i)
+                     # Linear scaling (divide by max) preserves structure: x^y -> C * x^y
+                     # The engine can find mul(C, pow(x,y)) easily.
+                     self._log_strategy = "linear"
+                     self._normalization = (0, np.max(np.abs(y))) # Scale by max magnitude
+                     
                      if self.config.verbose:
-                         print(f"Data skew detected (ratio {skew_ratio:.1f}). Inputs mixed/neg -> Applying COMPLEX LOG transform.")
+                         print(f"Data skew detected (ratio {skew_ratio:.1f}). Inputs mixed/neg -> Applying LINEAR scaling (max magnitude).")
                     
                      # Fallback to arcsinh if log failed? No scimath.log works.
                      # self._log_strategy = "arcsinh"
@@ -644,23 +648,40 @@ class GeneticSymbolicRegressor:
 
             if self._log_strategy == "log":
                  # Use scimath to handle complex or negative inputs safely
-                 y_train = np.lib.scimath.log(y_train)
-                 y_val = np.lib.scimath.log(y_val)
                  
-                 # Recalculate range for normalization
-                 # For complex log, range is tricky. Use real part range or magnitude?
-                 # Log compresses magnitude. 
-                 # Let's use magnitude of the log values.
-                 # y_min_log, y_max_log = np.log(y_min), np.log(y_max) 
+                 # Apply safety to train/val as well
+                 y_train_safe = y_train.copy()
+                 y_val_safe = y_val.copy()
+                 
+                 if np.iscomplexobj(y_train):
+                     y_train_safe[y_train == 0] = 1e-10+0j
+                 else:
+                     y_train_safe[y_train == 0] = 1e-10
+
+                 if np.iscomplexobj(y_val):
+                     y_val_safe[y_val == 0] = 1e-10+0j
+                 else:
+                     y_val_safe[y_val == 0] = 1e-10
+                     
+                 y_train = np.lib.scimath.log(y_train_safe)
+                 y_val = np.lib.scimath.log(y_val_safe)
                  
                  y_min_log = 0 
                  y_max_log = np.max(np.abs(y_residual))
                  
                  y_range = y_max_log # Radius
-                 y_min = 0 # Center at 0 approx? 
-                 # No, we should normalize by subtracting mean?
-                 # Let's just scale by max magnitude.
-                 y_min = 0
+                 y_min = 0 # Scale by max magnitude.
+                 
+            elif self._log_strategy == "linear":
+                 # Already set up for linear scaling (div by max)
+                 # y_min = 0, y_range = max(abs(y))
+                 # No transform on data here, just normalization later
+                 
+                 # Define variables expected by debug print
+                 # For linear, the "log" max is just the max itself (or range)
+                 y_max_log = y_range
+                 pass
+                 
             else:
                  y_train = np.arcsinh(y_train)
                  y_val = np.arcsinh(y_val)
