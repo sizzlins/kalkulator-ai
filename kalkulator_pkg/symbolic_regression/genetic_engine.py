@@ -198,9 +198,26 @@ class GeneticSymbolicRegressor:
 
             diff = predictions - y
             
+            # Phase-Aware Loss for Complex Log Scaling
+            # If we are in log domain, y*log(x) and log(x^y) differ by 2k*pi*i.
+            # We want to treat them as equal.
+            if hasattr(self, "_log_strategy") and self._log_strategy == "log" and np.iscomplexobj(diff):
+                if self._normalization:
+                     _, y_scale = self._normalization
+                     if y_scale != 0:
+                         # Un-normalize imaginary part
+                         raw_imag_diff = diff.imag * y_scale
+                         
+                         # Wrap to [-pi, pi]
+                         raw_imag_diff = (raw_imag_diff + np.pi) % (2 * np.pi) - np.pi
+                         
+                         # Re-normalize
+                         new_imag_diff = raw_imag_diff / y_scale
+                         
+                         # Reconstruct diff
+                         diff = diff.real + 1j * new_imag_diff
+
             # Magnitude squared error
-            # return float(np.mean(np.abs(diff)**2))
-            # But handle overflow in square
             abs_diff = np.abs(diff)
             np.clip(abs_diff, 0, 1e100, out=abs_diff)
             
@@ -604,18 +621,21 @@ class GeneticSymbolicRegressor:
         skew_ratio = y_max / y_median if y_max > 0 else 0
         
         if skew_ratio > 1000 or (y_range > 1e6):
-            # Apply log-like transform
             # Check for complex data first
             is_complex_y = np.iscomplexobj(y)
             if is_complex_y:
-                 # Complex data: TRY LINEAR SCALING
-                 # Log scaling fails due to branch cuts (y*log(x) != log(x^y) mod 2pi*i)
-                 # Linear scaling fits C * x^y, which is discovering 'pow(x,y)' * constant.
-                 self._log_strategy = "linear"
-                 self._normalization = (0, np.max(np.abs(y)))
+                 # Complex data: TRY LOG FIRST (scimath.log) with PHASE-AWARE LOSS
+                 # Linear scaling failed (vanishing gradients).
+                 # Log scaling works for range, but needs phase-aware loss to handle branch cuts.
+                 self._log_strategy = "log"
                  
+                 # Avoid log(0)
+                 y_residual_safe = y_residual.copy()
+                 y_residual_safe[y_residual == 0] = 1e-10+0j
+                 
+                 y_residual = np.lib.scimath.log(y_residual_safe)
                  if self.config.verbose:
-                    print(f"Data skew detected (ratio {skew_ratio:.1f}). Complex data -> Applying LINEAR scaling (max magnitude).")
+                    print(f"Data skew detected (ratio {skew_ratio:.1f}). Complex data -> Applying COMPLEX LOG transform.")
             else:
                 is_positive = (y_min > 1e-12)
                 
@@ -632,15 +652,19 @@ class GeneticSymbolicRegressor:
                      # If the user gives real data but huge skew involving negatives, 
                      # likely it's a power law with even/odd integers or exp.
                      
-                     # FORCE LINEAR SCALING for high skew complex/mixed data
-                     # Log scaling fails due to branch cuts (y*log(x) != log(x^y) mod 2pi*i)
-                     # Linear scaling (divide by max) preserves structure: x^y -> C * x^y
-                     # The engine can find mul(C, pow(x,y)) easily.
-                     self._log_strategy = "linear"
-                     self._normalization = (0, np.max(np.abs(y))) # Scale by max magnitude
+                     # FORCE LOG (Complex) for high skew
+                     self._log_strategy = "log"
                      
+                     # Avoid log(0)
+                     y_residual_safe = y_residual.copy()
+                     if np.iscomplexobj(y_residual):
+                          y_residual_safe[y_residual == 0] = 1e-10+0j
+                     else:
+                          y_residual_safe[y_residual == 0] = 1e-10
+                          
+                     y_residual = np.lib.scimath.log(y_residual_safe)
                      if self.config.verbose:
-                         print(f"Data skew detected (ratio {skew_ratio:.1f}). Inputs mixed/neg -> Applying LINEAR scaling (max magnitude).")
+                         print(f"Data skew detected (ratio {skew_ratio:.1f}). Inputs mixed/neg -> Applying COMPLEX LOG transform.")
                     
                      # Fallback to arcsinh if log failed? No scimath.log works.
                      # self._log_strategy = "arcsinh"
@@ -673,13 +697,7 @@ class GeneticSymbolicRegressor:
                  y_min = 0 # Scale by max magnitude.
                  
             elif self._log_strategy == "linear":
-                 # Already set up for linear scaling (div by max)
-                 # y_min = 0, y_range = max(abs(y))
-                 # No transform on data here, just normalization later
-                 
-                 # Define variables expected by debug print
-                 # For linear, the "log" max is just the max itself (or range)
-                 y_max_log = y_range
+                 # Fallback if needed, but we prefer log now.
                  pass
                  
             else:
