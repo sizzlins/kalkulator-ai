@@ -595,6 +595,7 @@ class GeneticSymbolicRegressor:
         current_model_tree = None
         y_residual = y.copy()
 
+        interrupted = False
         rounds = self.config.boosting_rounds
         if rounds < 1:
             rounds = 1
@@ -791,55 +792,60 @@ class GeneticSymbolicRegressor:
                     f"{self.config.population_size} individuals each..."
                 )
 
-            for gen in range(self.config.generations):
-                self.generation = gen
+            try:
+                for gen in range(self.config.generations):
+                    self.generation = gen
 
-                # Check timeout
-                if (
-                    self.config.timeout
-                    and (time.time() - start_time) > self.config.timeout
-                ):
-                    if self.config.verbose:
-                        print(f"Timeout after {gen} generations")
-                    break
-
-                # Evolve each island
-                for i, island in enumerate(islands):
-                    # Finer timeout check (responsiveness)
+                    # Check timeout
                     if (
                         self.config.timeout
                         and (time.time() - start_time) > self.config.timeout
                     ):
+                        if self.config.verbose:
+                            print(f"Timeout after {gen} generations")
                         break
 
-                    islands[i] = self._evolve_population(
-                        island, X, y_residual, gen
-                    )  # Train on Residual
+                    # Evolve each island
+                    for i, island in enumerate(islands):
+                        # Finer timeout check (responsiveness)
+                        if (
+                            self.config.timeout
+                            and (time.time() - start_time) > self.config.timeout
+                        ):
+                            break
 
-                # Migration
-                if gen > 0 and gen % self.config.migration_interval == 0:
-                    self._migrate(islands)
+                        islands[i] = self._evolve_population(
+                            island, X, y_residual, gen
+                        )  # Train on Residual
 
-                # Update Pareto front
-                for island in islands:
-                    self._update_pareto_front(island, X, y_residual)
+                    # Migration
+                    if gen > 0 and gen % self.config.migration_interval == 0:
+                        self._migrate(islands)
 
-                # Verbose progress output (every 5 generations)
-                if self.config.verbose and gen % 5 == 0:
+                    # Update Pareto front
+                    for island in islands:
+                        self._update_pareto_front(island, X, y_residual)
+
+                    # Verbose progress output (every 5 generations)
+                    if self.config.verbose and gen % 5 == 0:
+                        best_res = self.pareto_front.get_best()
+                        if best_res:
+                            # Truncate expression if too long
+                            expr_str = best_res.expression
+                            if len(expr_str) > 40:
+                                expr_str = expr_str[:37] + "..."
+                            print(f"Generation {gen}: Best MSE {best_res.mse:.2e} ({expr_str})")
+
+                    # Early stop check (on Residual)
                     best_res = self.pareto_front.get_best()
-                    if best_res:
-                        # Truncate expression if too long
-                        expr_str = best_res.expression
-                        if len(expr_str) > 40:
-                            expr_str = expr_str[:37] + "..."
-                        print(f"Generation {gen}: Best MSE {best_res.mse:.2e} ({expr_str})")
-
-                # Early stop check (on Residual)
-                best_res = self.pareto_front.get_best()
-                if best_res and best_res.mse < self.config.early_stop_mse:
-                    if self.config.verbose:
-                        print(f"Early stop: MSE {best_res.mse:.2e}")
-                    break
+                    if best_res and best_res.mse < self.config.early_stop_mse:
+                        if self.config.verbose:
+                            print(f"Early stop: MSE {best_res.mse:.2e}")
+                        break
+            except KeyboardInterrupt:
+                if self.config.verbose:
+                    print("\nEvolution interrupted by user. Stopping current round.")
+                interrupted = True
 
             # End of Round
             # 1. Get best model from this round
@@ -881,6 +887,9 @@ class GeneticSymbolicRegressor:
             if final_mse < self.config.early_stop_mse:
                 if self.config.verbose:
                     print(f"Boosting converged. Final MSE: {final_mse:.6e}")
+                break
+
+            if interrupted:
                 break
 
         # Return final result
