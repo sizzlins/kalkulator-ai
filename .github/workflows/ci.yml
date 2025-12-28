@@ -63,11 +63,13 @@ jobs:
           pip install build wheel
 
       - name: Build package
-        run: python -m build
+        run: |
+          rm -rf dist/
+          python -m build
 
       - name: Check package installation
         run: |
-          pip install dist/*.whl
+          pip install dist/kalkulator-*.whl
           python -c "import kalkulator_pkg; print('Package imports successfully')"
 
       - name: Upload artifacts
