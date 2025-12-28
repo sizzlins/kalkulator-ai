@@ -34,6 +34,9 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
+import warnings
+
+import numpy as np
 import sympy as sp
 from sympy import parse_expr
 
@@ -1492,7 +1495,7 @@ def find_function_from_data(
 
     def is_complex_value(val):
         """Check if a value is complex (has imaginary part)."""
-        if isinstance(val, complex):
+        if isinstance(val, (complex, np.complexfloating)):
             return abs(val.imag) > 1e-10
         if isinstance(val, str):
             # Check for imaginary indicators in string
@@ -1528,7 +1531,10 @@ def find_function_from_data(
                 is_complex = True
                 break
             try:
-                val_float = float(x_arg)
+                # Suppress ComplexWarning for types like np.complex128(10+0j) which are real but warn
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", category=np.ComplexWarning)
+                    val_float = float(x_arg)
                 parsed_x_tuple.append(val_float)
             except (ValueError, TypeError):
                 try:
