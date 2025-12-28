@@ -159,6 +159,10 @@ class GeneticSymbolicRegressor:
             # Now safe to evaluate
             predictions = tree.evaluate(X)
 
+            # CRITICAL: Check for NaNs/Infs immediately
+            if not np.all(np.isfinite(predictions)):
+                return float("inf")
+
             # Use Huber loss for robustness against outliers
             # This prevents a single outlier from dominating the fitness
             loss = huber_loss(y, predictions, delta=1.35)
@@ -186,6 +190,10 @@ class GeneticSymbolicRegressor:
         """
         try:
             predictions = tree.evaluate(X)
+            
+            # CRITICAL: Check for NaNs/Infs immediately
+            if not np.all(np.isfinite(predictions)):
+                return float("inf")
             # Clip predictions magnitude
             # np.clip on complex numbers only supports real-part clipping in older numpy, 
             # or raises error. Safe way: clip magnitude.
@@ -247,15 +255,16 @@ class GeneticSymbolicRegressor:
         """
         population = []
 
-        # Strategy 1: Inject seeds with multiple copies for survival
-        # Single seeds get overwhelmed by random population - inject ~10% as seed copies
+        # Strategy 1: Inject seeds but preserve diversity
+        # Limit seeds to at most 50% of population to ensure random diversity
+        max_seed_slots = n_individuals // 2
         injected_count = 0
-        seed_copies_target = max(
-            10, n_individuals // 10
-        )  # At least 10, or 10% of population
 
         seeds_to_use = seeds if seeds is not None else self.config.seeds
+        
         if seeds_to_use:
+            # 1. Parse all valid seeds first
+            parsed_trees = []
             for seed_str in seeds_to_use:
                 try:
                     import sympy as sp
@@ -264,38 +273,51 @@ class GeneticSymbolicRegressor:
                     expr = sp.sympify(seed_str, locals=local_dict)
                     tree = ExpressionTree.from_sympy(expr, variables)
                     tree.age = 0
+                    parsed_trees.append((seed_str, tree))
+                except Exception as e:
+                    if self.config.verbose:
+                        print(f"Warning: Failed to seed '{seed_str[:50]}...': {e}")
+            
+            # 2. Distribute slots among seeds
+            num_seeds = len(parsed_trees)
+            if num_seeds > 0:
+                # Calculate how many copies per seed we can afford
+                slots_per_seed = max(1, max_seed_slots // num_seeds)
+                
+                for seed_str, tree in parsed_trees:
+                    if len(population) >= max_seed_slots:
+                        break
 
                     # Add original seed
                     population.append(tree)
                     injected_count += 1
+                    
+                    # Add mutated copies if budget allows
+                    copies_needed = slots_per_seed - 1
+                    
+                    # Cap copies if single seed to avoid dominating with just one idea
+                    if num_seeds < 5:
+                         copies_needed = min(copies_needed, n_individuals // 5)
 
-                    # Add mutated copies to fill ~10% of population
-                    copies_to_add = min(
-                        seed_copies_target - 1, n_individuals - len(population)
-                    )
-                    unmutated_count = max(1, copies_to_add // 5)  # Keep 20% unmutated
-
-                    for i in range(copies_to_add):
+                    for i in range(copies_needed):
+                        if len(population) >= max_seed_slots:
+                            break
+                        
                         copy = tree.copy()
-                        # First 20% of copies: keep exact (no mutation)
-                        # Remaining 80%: mutate for diversity
-                        if i >= unmutated_count:
-                            from .operators import point_mutation
-
-                            copy = point_mutation(
-                                copy, mutation_rate=0.3, operators=self.config.operators
-                            )
+                        # Mutate copies to explore neighborhood
+                        from .operators import point_mutation
+                        
+                        # 30% mutation rate for copies
+                        copy = point_mutation(
+                            copy, mutation_rate=0.3, operators=self.config.operators
+                        )
                         copy.age = 0
                         population.append(copy)
                         injected_count += 1
 
-                except Exception as e:
-                    if self.config.verbose:
-                        print(f"Warning: Failed to seed '{seed_str[:50]}...': {e}")
-
             if self.config.verbose and injected_count > 0:
                 print(
-                    f"Injected {injected_count} seed expressions (including copies) into population"
+                    f"Injected {injected_count} seed expressions (including copies) into population (capped at 50%)"
                 )
 
         # Ramped half-and-half: vary depth and method
@@ -783,6 +805,13 @@ class GeneticSymbolicRegressor:
 
                 # Evolve each island
                 for i, island in enumerate(islands):
+                    # Finer timeout check (responsiveness)
+                    if (
+                        self.config.timeout
+                        and (time.time() - start_time) > self.config.timeout
+                    ):
+                        break
+
                     islands[i] = self._evolve_population(
                         island, X, y_residual, gen
                     )  # Train on Residual
@@ -794,6 +823,16 @@ class GeneticSymbolicRegressor:
                 # Update Pareto front
                 for island in islands:
                     self._update_pareto_front(island, X, y_residual)
+
+                # Verbose progress output (every 5 generations)
+                if self.config.verbose and gen % 5 == 0:
+                    best_res = self.pareto_front.get_best()
+                    if best_res:
+                        # Truncate expression if too long
+                        expr_str = best_res.expression
+                        if len(expr_str) > 40:
+                            expr_str = expr_str[:37] + "..."
+                        print(f"Generation {gen}: Best MSE {best_res.mse:.2e} ({expr_str})")
 
                 # Early stop check (on Residual)
                 best_res = self.pareto_front.get_best()
