@@ -149,7 +149,15 @@ def format_inverse_solutions(
 def find_pi_fraction_form(
     num_val: float, max_denominator: int = 10000, tolerance: float = 1e-8
 ) -> str | None:
-    """Find if a number is close to a rational multiple of π and return the fraction form."""
+    """Find if a number is close to a rational multiple of π and return the fraction form.
+    
+    Only returns π fractions with "clean" denominators (1, 2, 3, 4, 6, 8, 12) to avoid
+    absurd results like -20576π/5199 for random decimals.
+    """
+    # Whitelist of recognizable denominators for π fractions
+    # These are the common denominators found in trigonometry: π/2, π/3, π/4, π/6, etc.
+    CLEAN_PI_DENOMINATORS = {1, 2, 3, 4, 6, 8, 12}
+    
     try:
         # Skip conversion for exactly zero or very small numbers close to zero
         if abs(num_val) < 1e-10:
@@ -182,6 +190,10 @@ def find_pi_fraction_form(
                 # Format as (numerator/denominator)*pi
                 num_val_int = int(rat.numerator)
                 den_val_int = int(rat.denominator)
+
+                # Only accept clean denominators to avoid absurd fractions
+                if den_val_int not in CLEAN_PI_DENOMINATORS:
+                    return None  # Reject: denominator not recognizable
 
                 if den_val_int == 1:
                     if num_val_int == 1:
@@ -329,13 +341,72 @@ def print_result_pretty(
 
         # Try to convert exact solutions to π fractions if they look like decimals
         exact_formatted = []
+        all_are_exact = True  # Track if all results are clean integers or π fractions
+        any_pi_fractions = False  # Track if we found any π fractions
+        
         for sol in exact_sols:
-            # π-fraction conversion (Casio-style) disabled
-            exact_formatted.append(format_solution(sol))
+            formatted = format_solution(sol)
+            is_exact = False
+            
+            # Check if this is effectively an integer
+            try:
+                num = float(sol)
+                if num.is_integer():
+                    formatted = str(int(num))  # Format as clean integer (29.0 → 29)
+                    is_exact = True
+                else:
+                    # Try to convert to π fraction (e.g., 0.785398 → π/4)
+                    pi_form = find_pi_fraction_form(num)
+                    if pi_form:
+                        # Format nicely: (1/4)*pi → π/4, (-3/4)*pi → -3π/4
+                        if pi_form == "pi":
+                            formatted = "π"
+                        elif pi_form == "-pi":
+                            formatted = "-π"
+                        elif "*pi" in pi_form:
+                            # Handle (n/d)*pi format
+                            coeff = pi_form.replace("*pi", "")
+                            if coeff.startswith("(") and coeff.endswith(")"):
+                                # (n/d)*pi → nπ/d
+                                inner = coeff[1:-1]  # "n/d"
+                                if "/" in inner:
+                                    num_part, den_part = inner.split("/")
+                                    if num_part == "1":
+                                        formatted = f"π/{den_part}"
+                                    elif num_part == "-1":
+                                        formatted = f"-π/{den_part}"
+                                    else:
+                                        formatted = f"{num_part}π/{den_part}"
+                                else:
+                                    formatted = f"{inner}π"
+                            else:
+                                # n*pi → nπ
+                                formatted = f"{coeff}π"
+                        else:
+                            formatted = pi_form.replace("pi", "π")
+                        is_exact = True
+                        any_pi_fractions = True
+                    else:
+                        is_exact = False
+            except (ValueError, TypeError):
+                # Not a simple number - could be symbolic or complex
+                sol_str = str(sol)
+                if '.' in sol_str and not sol_str.rstrip('0').endswith('.'):
+                    is_exact = False
+                else:
+                    # Symbolic expression (sqrt, etc.) - treat as exact
+                    is_exact = True
+            
+            if not is_exact:
+                all_are_exact = False
+            exact_formatted.append(formatted)
 
         if exact_formatted:
+            # Dynamic label: "Exact" for integers/symbols/π-fractions, "Decimal" for floats
+            label = "Exact" if all_are_exact else "Decimal"
+            
             try:
-                print("Exact:", ", ".join(exact_formatted))
+                print(f"{label}:", ", ".join(exact_formatted))
             except UnicodeEncodeError:
                 # Fallback: print without Unicode characters
                 exact_formatted_safe = []
@@ -348,9 +419,16 @@ def print_result_pretty(
                         # Replace Unicode characters with ASCII equivalents
                         safe_item = item.replace("π", "pi").replace("≈", "approx")
                         exact_formatted_safe.append(safe_item)
-                print("Exact:", ", ".join(exact_formatted_safe))
+                print(f"{label}:", ", ".join(exact_formatted_safe))
 
-        if approx_sols:
+        # Show Approx only when result contains symbols (π, √, i, /)
+        # - Hide for purely numeric results (Decimal: 12.345...) - Approx adds no value
+        # - Show for symbolic results (Exact: π/4) - user needs decimal reference
+        has_symbols = any(
+            any(c in val for c in "π√/")
+            for val in exact_formatted
+        )
+        if approx_sols and has_symbols:
             approx_display = ", ".join(
                 format_number(approx_val)
                 for approx_val in approx_sols
