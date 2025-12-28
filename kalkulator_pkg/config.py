@@ -163,6 +163,10 @@ ALLOWED_SYMPY_NAMES = {
     "e": sp.E,
     "E": sp.E,
     "I": sp.I,
+    # Special constants (must be recognized to prevent implicit mult corruption)
+    "zoo": sp.zoo,  # Complex infinity
+    "oo": sp.oo,    # Positive infinity
+    "nan": sp.nan,  # Not a Number
     "sqrt": sp.sqrt,
     "sin": sp.sin,
     "cos": sp.cos,
