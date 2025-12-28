@@ -170,6 +170,10 @@ ALLOWED_SYMPY_NAMES = {
     "asin": sp.asin,
     "acos": sp.acos,
     "atan": sp.atan,
+    # Traditional math notation aliases (arcsin = asin, etc.)
+    "arcsin": sp.asin,
+    "arccos": sp.acos,
+    "arctan": sp.atan,
     "log": sp.log,
     "ln": sp.log,
     # Use custom classes to ensure proper parsing behavior (lambdas can cause TypeErrors with implicit multiplication)
@@ -189,6 +193,7 @@ ALLOWED_SYMPY_NAMES = {
     # Calculus & algebra
     "diff": sp.diff,
     "integrate": sp.integrate,
+    "limit": sp.limit,  # For evaluating limits: limit(sin(x)/x, x, 0) -> 1
     "factor": sp.factor,
     "expand": sp.expand,
     "simplify": sp.simplify,
