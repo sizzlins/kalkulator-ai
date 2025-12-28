@@ -1446,8 +1446,15 @@ def find_function_from_data(
             except Exception as e:
                 raise ValueError(f"Could not convert '{val}' to a numeric value") from e
         # For SymPy expressions
-        # For SymPy expressions
         try:
+            # Handle numpy/Python complex with zero imaginary (e.g., (-4+0j) → -4.0)
+            # This happens when array has any complex value, numpy converts all to complex128
+            if hasattr(val, 'imag') and hasattr(val, 'real'):
+                if val.imag == 0:
+                    return float(val.real)  # Extract real part
+                else:
+                    raise ValueError(f"Complex value with non-zero imaginary: {val}")
+            
             # Check if it's infinity type
             if val is sp.zoo or val is sp.oo or val is sp.S.Infinity:
                 return float("inf")
