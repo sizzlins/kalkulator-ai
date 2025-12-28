@@ -880,7 +880,10 @@ def detect_poles_from_data(
                 if np.sum(valid_log) >= 3:
                     try:
                         # Linear regression: slope = -n
-                        coeffs = np.polyfit(log_dist[valid_log], log_y[valid_log], 1)
+                        import warnings
+                        with warnings.catch_warnings():
+                            warnings.simplefilter("ignore", np.RankWarning)
+                            coeffs = np.polyfit(log_dist[valid_log], log_y[valid_log], 1)
                         estimated_n = -coeffs[0]
 
                         # Round to nearest integer, clamp to 1-4
@@ -1158,337 +1161,8 @@ def generate_candidate_features(
             col = X_data[:, i]
             name = variable_names[i]
 
-            # Sine (sin(x))
-            features.append(np.sin(col))
-            feature_names.append(f"sin({name})")
-
-            # sin(x)/x (Sinc function - critical for signal processing)
-            if not np.any(np.isclose(col, 0, atol=1e-10)):
-                sinc_col = np.sin(col) / col
-                features.append(sinc_col)
-                feature_names.append(f"sin({name})/{name}")
-
-        # Argument Scaling: Frequency (sin(2x), sin(pi*x))
-        features.append(np.sin(2 * col))
-        feature_names.append(f"sin(2*{name})")
-        features.append(np.sin(np.pi * col))
-        feature_names.append(f"sin(pi*{name})")
-
-        # Cosine (cos(x))
-        features.append(np.cos(col))
-        feature_names.append(f"cos({name})")
-
-        # Argument Scaling: Frequency Scan (sin(kx), cos(kx))
-        # PURE DISCOVERY - No training wheels. Learn the hard way.
-        freq_candidates = set()  # Start with NOTHING. Discovery must find it.
-
-        if y_data is not None:
-            try:
-                detected_freqs = detect_frequency(col, y_data)
-                for k in detected_freqs:
-                    freq_candidates.add(k)
-                    # Trust the detector's harmonic expansion
-            except Exception:
-                pass
-
-        for k in sorted(freq_candidates):
-            k_int = int(k) if isinstance(k, float) and k.is_integer() else k
-            features.append(np.sin(k_int * col))
-            feature_names.append(f"sin({k_int}*{name})")
-            features.append(np.cos(k_int * col))
-            feature_names.append(f"cos({k_int}*{name})")
-
-        features.append(np.sin(np.pi * col))
-        feature_names.append(f"sin(pi*{name})")
-
-        # Exponential (exp(x) or e^x)
-        # Be careful with overflow! Maybe clip values or only use for small inputs
-        with np.errstate(over="ignore"):
-            exp_col = np.exp(col)
-            # Only add if values aren't infinite and not too huge
-            if np.all(np.isfinite(exp_col)) and np.max(np.abs(exp_col)) < 1e100:
-                features.append(exp_col)
-                feature_names.append(f"exp({name})")
-
-        # Exponential Decay (exp(-x))
-        with np.errstate(over="ignore"):
-            exp_neg_col = np.exp(-col)
-            if np.all(np.isfinite(exp_neg_col)) and np.max(np.abs(exp_neg_col)) < 1e100:
-                features.append(exp_neg_col)
-                feature_names.append(f"exp(-{name})")
-
-        # Arrhenius / Inverse Exponential (exp(A/x), exp(-A/x))
-        # Scan common activation energy scalings
-        numerators = [1.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0]
-
-        with np.errstate(all="ignore"):
-            if not np.any(np.isclose(col, 0, atol=1e-9)):
-                inv_col_base = 1.0 / col
-
-                for num in numerators:
-                    inv_col = num * inv_col_base
-
-                    # exp(A/x)
-                    # Only do positive scaling if necessary (often Arrhenius is exp(-A/T))
-                    # But sometimes we need exp(A/T)? Maybe rarely.
-                    # Let's stick to base 1.0 for positive, and scan negative.
-                    if num == 1.0:
-                        exp_inv = np.exp(inv_col)
-                        if (
-                            np.all(np.isfinite(exp_inv))
-                            and np.max(np.abs(exp_inv)) < 1e100
-                        ):
-                            features.append(exp_inv)
-                            feature_names.append(f"exp(1/{name})")
-
-                    # exp(-A/T) - The Standard Arrhenius
-                    exp_neg_inv = np.exp(-inv_col)
-                    if (
-                        np.all(np.isfinite(exp_neg_inv))
-                        and np.max(np.abs(exp_neg_inv)) < 1e100
-                    ):
-                        features.append(exp_neg_inv)
-                        # Use clean naming
-                        if num == 1.0:
-                            feature_names.append(f"exp(-1/{name})")
-                        else:
-                            feature_names.append(f"exp(-{int(num)}/{name})")
-
-        # --- NEW: GAUSSIAN (exp(-x^2)) - Bell Curve, Normal Distribution ---
-        # This is FUNDAMENTALLY different from exp(-x):
-        # - exp(-x) decays linearly in log scale
-        # - exp(-x^2) has the bell curve shape
-        with np.errstate(over="ignore"):
-            gaussian_col = np.exp(-(col**2))
-            if (
-                np.all(np.isfinite(gaussian_col))
-                and np.max(np.abs(gaussian_col)) < 1e100
-            ):
-                features.append(gaussian_col)
-                feature_names.append(f"exp(-{name}^2)")
-
-                # Damped Harmonic Motion Interactions (exp(-x) * sin(x), etc.)
-                # Only add if decay term is valid
-
-                # exp(-x) * sin(x)
-                features.append(exp_neg_col * np.sin(col))
-                feature_names.append(f"exp(-{name})*sin({name})")
-
-                # exp(-x) * cos(x)
-                features.append(exp_neg_col * np.cos(col))
-                feature_names.append(f"exp(-{name})*cos({name})")
-
-                # exp(-x) * sin(2x)
-                features.append(exp_neg_col * np.sin(2 * col))
-                feature_names.append(f"exp(-{name})*sin(2*{name})")
-
-                # exp(-x) * cos(2x)
-                features.append(exp_neg_col * np.cos(2 * col))
-                feature_names.append(f"exp(-{name})*cos(2*{name})")
-
-        # Logarithm (log(x))
-        # Logarithm (log(x))
-        # Only valid for positive inputs
-        if np.all(col > 0):
-            features.append(np.log(col))
-            feature_names.append(f"log({name})")
-
-            # log2(x) - Entropy (bits)
-            features.append(np.log2(col))
-            feature_names.append(f"log2({name})")
-
-            # log10(x) - Decibels, pH, etc.
-            features.append(np.log10(col))
-            feature_names.append(f"log10({name})")
-
-            # --- NEW: LOG-NORMAL (exp(-log(x)^2)) ---
-            # Common in distribution of sizes
-            with np.errstate(over="ignore"):
-                log_sq = np.log(col) ** 2
-                # exp(-log(x)^2)
-                log_norm = np.exp(-log_sq)
-                features.append(log_norm)
-                feature_names.append(f"exp(-log({name})^2)")
-
-                # exp(-log(x)^2 / 2) -> Standard LogNormal kernel with sigma=1
-                log_norm_2 = np.exp(-log_sq / 2.0)
-                features.append(log_norm_2)
-                feature_names.append(f"exp(-log({name})^2/2)")
-
-        # x * log(x) - Entropy, Information Theory
-        # Valid for x >= 0 (limit x->0 is 0)
-        if np.all(col >= 0):
-            # Compute x * log(x) safely
-            with np.errstate(invalid="ignore", divide="ignore"):
-                # Use a mask where x > 0
-                x_log_x = np.zeros_like(col)
-                mask_pos = col > 1e-12
-                if np.any(mask_pos):
-                    x_log_x[mask_pos] = col[mask_pos] * np.log(col[mask_pos])
-
-                features.append(x_log_x)
-                feature_names.append(f"{name}*log({name})")
-
-                # Also add (x*log(x))^2
-                features.append(x_log_x**2)
-                feature_names.append(f"({name}*log({name}))^2")
-
-        # --- NEW: VARIABLE-TRANSCENDENTAL PRODUCTS (Growing Wave, Modulated Signals) ---
-        # These are CRITICAL for physics: x*sin(x), x*cos(x), x*exp(x)
-
-        # x * sin(x) - Growing sine wave, modulated signals
-        features.append(col * np.sin(col))
-        feature_names.append(f"{name}*sin({name})")
-
-        # x * cos(x) - Growing cosine wave
-        features.append(col * np.cos(col))
-        feature_names.append(f"{name}*cos({name})")
-
-        # x^2 * sin(x) - Polynomial-modulated wave
-        features.append((col**2) * np.sin(col))
-        feature_names.append(f"{name}^2*sin({name})")
-
-        # x^2 * cos(x) - Polynomial-modulated wave
-        features.append((col**2) * np.cos(col))
-        feature_names.append(f"{name}^2*cos({name})")
-
-        # --- NEW: HYPERBOLIC FUNCTIONS (Catenary, Special Relativity, etc.) ---
-        # sinh(x) = (exp(x) - exp(-x)) / 2
-        # cosh(x) = (exp(x) + exp(-x)) / 2
-        with np.errstate(over="ignore"):
-            sinh_col = np.sinh(col)
-            cosh_col = np.cosh(col)
-            if np.all(np.isfinite(sinh_col)) and np.max(np.abs(sinh_col)) < 1e100:
-                features.append(sinh_col)
-                feature_names.append(f"sinh({name})")
-            if np.all(np.isfinite(cosh_col)) and np.max(np.abs(cosh_col)) < 1e100:
-                features.append(cosh_col)
-                feature_names.append(f"cosh({name})")
-
-        # --- NEW: ACTIVATION FUNCTIONS (Sigmoid, Softplus, Tanh) ---
-        # Critical for Neural Network behaviors and biological growth
-        with np.errstate(over="ignore", invalid="ignore"):
-            # Sigmoid: 1 / (1 + exp(-x))
-            exp_neg = np.exp(-col)
-            if np.all(np.isfinite(exp_neg)):
-                sigmoid = 1.0 / (1.0 + exp_neg)
-                features.append(sigmoid)
-                feature_names.append(f"1/(1+exp(-{name}))")
-
-            # Tanh: (exp(x) - exp(-x)) / (exp(x) + exp(-x))
-            features.append(np.tanh(col))
-            feature_names.append(f"tanh({name})")
-
-            # Softplus: ln(1 + exp(x))
-            # Use log1p for numerical stability
-            exp_pos = np.exp(col)
-            if np.all(np.isfinite(exp_pos)):
-                softplus = np.log1p(exp_pos)
-                features.append(softplus)
-                feature_names.append(f"log(1+exp({name}))")
-
-                # Alternative Softplus: ln(1 + exp(-x))
-                # Common in physics
-                if np.all(np.isfinite(exp_neg)):
-                    softplus_neg = np.log1p(exp_neg)
-                    features.append(softplus_neg)
-                    feature_names.append(f"log(1+exp(-{name}))")
-
-        # --- PHASE 4: SATURATION-DETECTED SIGMOID VARIANTS ---
-        # DYNAMIC DISCOVERY: If data shows saturation, add scaled variants
-        if y_data is not None:
-            try:
-                saturation_hints = detect_saturation(col, y_data)
-                if saturation_hints.get("softplus") or saturation_hints.get(
-                    "sigmoid_family"
-                ):
-                    # Add scaled Softplus: k * log(1 + exp(x/k))
-                    for k in [0.5, 2.0, 5.0, 10.0]:
-                        with np.errstate(all="ignore"):
-                            scaled_softplus = k * np.log1p(np.exp(col / k))
-                            if np.all(np.isfinite(scaled_softplus)):
-                                features.append(scaled_softplus)
-                                feature_names.append(f"{k}*log(1+exp({name}/{k}))")
-
-                if saturation_hints.get("tanh") or saturation_hints.get("sigmoid"):
-                    # Add steeper Tanh: tanh(k*x)
-                    for k in [2.0, 5.0, 10.0, 50.0, 100.0]:
-                        features.append(np.tanh(k * col))
-                        feature_names.append(f"tanh({k}*{name})")
-            except Exception:
-                pass
-
-        # --- PHASE 2 & 3: GENIUS MODE FEATURES ---
-
-        # 1. Self Power (x^x)
-        if np.all(col > 0):
-            with np.errstate(all="ignore"):
-                x_x = np.power(col, col)
-                if np.all(np.isfinite(x_x)) and np.max(np.abs(x_x)) < 1e100:
-                    features.append(x_x)
-                    feature_names.append(f"{name}^{name}")
-
-        # 2. Oscillator Singularity (sin(1/x))
-        with np.errstate(all="ignore"):
-            if np.count_nonzero(np.abs(col) < 1e-9) == 0:
-                sin_inv = np.sin(1.0 / col)
-                features.append(sin_inv)
-                feature_names.append(f"sin(1/{name})")
-
-        # 3. Lorentzian / Cauchy (1 / (1 + k*x^2))
-        for k in [1, 4, 10, 25, 100]:
-            lor_denom = 1.0 + k * (col**2)
-            lor_feat = 1.0 / lor_denom
-            features.append(lor_feat)
-            feature_names.append(f"1/(1+{k}*{name}^2)")
-
-        # 4. Tanh with Shelf (tanh(k*(x-c)))
-        tanh_shifts = [0.5, 0.0, 1.0]
-        tanh_scales = [100.0, 10.0, 50.0]
-        for c in tanh_shifts:
-            for k in tanh_scales:
-                t_arg = k * (col - c)
-                t_feat = np.tanh(t_arg)
-                features.append(t_feat)
-                feature_names.append(f"tanh({k}*({name}-{c}))")
-
-        # 5. Complex Composites (Ackley components)
-
-        # exp(sin(x))
-        with np.errstate(all="ignore"):
-            exp_sin = np.exp(np.sin(col))
-            if np.all(np.isfinite(exp_sin)):
-                features.append(exp_sin)
-                feature_names.append(f"exp(sin({name}))")
-
-        # exp(cos(kx)) - Scan k=1, 2pi, 2
-        k_vals = [1.0, 2.0, np.pi, 2 * np.pi]
-        for k in k_vals:
-            with np.errstate(all="ignore"):
-                arg = np.cos(k * col)
-                feat = np.exp(arg)
-                if np.all(np.isfinite(feat)):
-                    k_str = f"{k:.2f}" if (k != 1.0 and k != 2.0) else f"{int(k)}"
-                    if abs(k - np.pi) < 1e-5:
-                        k_str = "pi"
-                    if abs(k - 2 * np.pi) < 1e-5:
-                        k_str = "2*pi"
-                    fname = f"cos({k_str}*{name})" if k != 1.0 else f"cos({name})"
-                    features.append(feat)
-                    feature_names.append(f"exp({fname})")
-
-        # exp(-k * sqrt(x^2))
-        ks_ackley = [0.2, 0.5, 1.0]
-        abs_col = np.abs(col)
-        for k in ks_ackley:
-            with np.errstate(all="ignore"):
-                arg = -k * abs_col
-                feat = np.exp(arg)
-                feat_name_inner = f"-{k}*sqrt({name}^2)"
-                if np.all(np.isfinite(feat)):
-                    features.append(feat)
-                    feature_names.append(f"exp({feat_name_inner})")
-
+            # Refactored Transcendental Features logic
+            _add_transcendental_features(col, name, features, feature_names, y_data)
     # --- NEW: RATIONAL FUNCTIONS (1/x) ---
     # This helps find physics laws like Inverse Square Law
 
@@ -1764,10 +1438,13 @@ def generate_candidate_features(
                     features.append(col**2 * exp_neg_col)
                     feature_names.append(f"{name}^2*exp(-{name})")
 
-                # x * exp(-x^2) - Gaussian Derivative (Hermite polynomials)
                 if has_gauss:
                     features.append(col * exp_gauss)
                     feature_names.append(f"{name}*exp(-{name}^2)")
+
+        # --- NEW: TRANSCENDENTAL INTERACTIONS (exp*exp, trig*exp, trig*trig) ---
+        # Explicit interaction pass after all unary transcendentals are generated
+        _add_transcendental_interactions(features, feature_names, n_vars, variable_names)
 
     # --- NEW: KNOWLEDGE EXPANSION (INVERSE TRIG, PIECEWISE, SPECIAL) ---
     if include_transcendentals:
@@ -1990,3 +1667,273 @@ def check_log_linear_transformations(
             pass
 
     return False, None
+
+
+def _add_transcendental_features(col, name, features, feature_names, y_data):
+    """Helper to add transcendental features for a single variable with robust NaN/Inf handling."""
+    local_feats = []
+    local_names = []
+
+    # 1. Sine and Cosine (base frequency)
+    local_feats.append(np.sin(col))
+    local_names.append(f"sin({name})")
+    local_feats.append(np.cos(col))  # ADDED: cos(x) base for sin(x+y) decomposition
+    local_names.append(f"cos({name})")
+    
+    # Sinc
+    with np.errstate(divide='ignore', invalid='ignore'):
+        if not np.any(np.isclose(col, 0, atol=1e-9)):
+            local_feats.append(np.sin(col)/col)
+            local_names.append(f"sin({name})/{name}")
+    
+    # Frequency scan
+    freq_candidates = {1.0, 2.0, np.pi}
+    if y_data is not None:
+        try:
+             detected = detect_frequency(col, y_data)
+             freq_candidates.update(detected)
+        except Exception: pass
+        
+    for k in sorted(freq_candidates):
+        if k == 1.0: continue
+        k_val = k
+        k_str = f"{k:.2g}"
+        if abs(k - np.pi) < 1e-5: k_str = "pi"
+        if abs(k - 2*np.pi) < 1e-5: k_str = "2*pi"
+        
+        local_feats.append(np.sin(k_val * col))
+        local_names.append(f"sin({k_str}*{name})")
+        local_feats.append(np.cos(k_val * col))
+        local_names.append(f"cos({k_str}*{name})")
+
+    # 2. Exponentials
+    with np.errstate(over="ignore"):
+         # exp(x)
+         local_feats.append(np.exp(col))
+         local_names.append(f"exp({name})")
+         # exp(-x)
+         local_feats.append(np.exp(-col))
+         local_names.append(f"exp(-{name})")
+         # Gaussian exp(-x^2)
+         local_feats.append(np.exp(-(col**2)))
+         local_names.append(f"exp(-{name}^2)")
+         
+         # Arrhenius exp(-A/x)
+         if not np.any(np.isclose(col, 0, atol=1e-9)):
+             inv = 1.0/col
+             for A in [1, 10, 100]:
+                 local_feats.append(np.exp(-A*inv))
+                 local_names.append(f"exp(-{A}/{name})")
+
+    # 3. Logarithms (positive only)
+    if np.all(col > 1e-9):
+         local_feats.append(np.log(col))
+         local_names.append(f"log({name})")
+         local_feats.append(np.log10(col))
+         local_names.append(f"log10({name})")
+         # x * log(x)
+         local_feats.append(col * np.log(col))
+         local_names.append(f"{name}*log({name})")
+         # Log-Normal exp(-log(x)^2)
+         log_x = np.log(col)
+         local_feats.append(np.exp(-(log_x**2)))
+         local_names.append(f"exp(-log({name})^2)")
+
+    # 4. Hyperbolic
+    with np.errstate(over="ignore"):
+         local_feats.append(np.sinh(col))
+         local_names.append(f"sinh({name})")
+         local_feats.append(np.cosh(col))
+         local_names.append(f"cosh({name})")
+         local_feats.append(np.tanh(col))
+         local_names.append(f"tanh({name})")
+         
+    # 5. Activation Functions
+    with np.errstate(over="ignore"):
+         # Sigmoid 1/(1+exp(-x))
+         ex = np.exp(-col)
+         local_feats.append(1.0/(1.0+ex))
+         local_names.append(f"sigmoid({name})")
+         # Softplus log(1+exp(x))
+         local_feats.append(np.log1p(np.exp(col)))
+         local_names.append(f"softplus({name})")
+
+    # 6. Hybrid/Composite
+    # x*sin(x)
+    local_feats.append(col * np.sin(col))
+    local_names.append(f"{name}*sin({name})")
+    
+    # Filter valid features
+    for f, n in zip(local_feats, local_names):
+         if np.all(np.isfinite(f)) and np.max(np.abs(f)) < 1e100:
+              features.append(f)
+              feature_names.append(n)
+
+
+def _add_transcendental_interactions(
+    features: list[Any],
+    feature_names: list[str],
+    n_vars: int,
+    variable_names: list[str],
+    max_interaction_count: int = 10000
+) -> None:
+    """Add pairwise interactions between transcendental features (e.g. exp(x)*exp(y)).
+
+    This explicitly targets coupled physical laws like:
+    - exp(x+y) = exp(x)*exp(y) (Thermal/Diffusion)
+    - exp(x-y) = exp(x)*exp(-y)
+    - sin(x)*exp(-y) (Damped Oscillation)
+    - sin(x)*cos(y) (Wave Interference)
+
+    Args:
+        features: List of feature arrays (will be appended to)
+        feature_names: List of feature names strings (will be appended to)
+        n_vars: Number of base variables
+        variable_names: Names of base variables
+        max_interaction_count: Safety limit to prevent combinatorial explosion
+    """
+    import numpy as np
+
+    # 1. Identify "Primary Transcendental" features already generated
+    # We look for indices of features starting with "exp", "sin", "cos"
+    # We DO NOT interact things that are already interactions (avoid exp(x)*exp(y)*sin(z))
+    # We strictly look for "Unary" transcendentals of base variables.
+    
+    trans_indices = []
+    trans_types = []  # "exp", "trig"
+
+    for idx, name in enumerate(feature_names):
+        # Check if it's a simple unary transcendental
+        # Valid: "exp(x)", "sin(y)", "cos(x)", "exp(-y)"
+        # Invalid: "x*exp(x)" (already mixed), "exp(x+y)" (if it existed)
+        
+        is_unary_trans = False
+        t_type = None
+
+        if name.startswith("exp(") and name.count("(") == 1:
+            is_unary_trans = True
+            t_type = "exp"
+        elif (name.startswith("sin(") or name.startswith("cos(")) and name.count("(") == 1:
+            is_unary_trans = True
+            t_type = "trig"
+        
+        # Verify it only contains ONE variable
+        if is_unary_trans:
+            # Check variable containment
+            # "exp(x)" -> contains 'x'
+            # CRITICAL FIX: "exp" contains "x", so simple substring check fails for variable "x"
+            # We must check INSIDE the parentheses.
+            
+            try:
+                start_idx = name.find("(")
+                end_idx = name.rfind(")")
+                if start_idx != -1 and end_idx != -1:
+                    inner_content = name[start_idx+1:end_idx]
+                    
+                    # Check variables in inner content
+                    vars_in_name = 0
+                    found_var = None
+                    for v in variable_names:
+                        if v in inner_content:
+                             vars_in_name += 1
+                             found_var = v
+                    
+                    # Special check: If multiple vars found, ensure they aren't substrings of each other?
+                    # For now, strict check.
+                    if vars_in_name == 1:
+                        trans_indices.append(idx)
+                        trans_types.append(t_type)
+            except Exception:
+                pass
+    
+    # 2. Generate Pairwise Interactions
+    # We only interact features coming from DIFFERENT variables to avoid redundancy
+    # (e.g. exp(x)*exp(x) = exp(2x) which is usually covered)
+    # Actually, for sin(x)*cos(x) = 0.5*sin(2x), it might be useful, but let's prioritize inter-variable first.
+    
+    count = 0
+    n_trans = len(trans_indices)
+    
+    # Quadratic loop over identified transcendentals
+    for i in range(n_trans):
+        idx_i = trans_indices[i]
+        name_i = feature_names[idx_i]
+        col_i = features[idx_i]
+        type_i = trans_types[i]
+        
+        # Extract which variable is in name_i using ROBUST parsing
+        var_i = None
+        try:
+            start_idx = name_i.find("(")
+            end_idx = name_i.rfind(")")
+            if start_idx != -1 and end_idx != -1:
+                inner = name_i[start_idx+1:end_idx]
+                for v in variable_names:
+                    if v in inner:
+                        var_i = v
+                        break
+        except Exception:
+            pass
+            
+        # Fallback if parsing failed (shouldn't happen for these features)
+        if var_i is None:
+             for v in variable_names:
+                if v in name_i:
+                    var_i = v
+                    break
+
+        for j in range(i + 1, n_trans):
+            idx_j = trans_indices[j]
+            name_j = feature_names[idx_j]
+            col_j = features[idx_j]
+            type_j = trans_types[j]
+
+            # Extract variable j using ROBUST parsing
+            var_j = None
+            try:
+                start_idx = name_j.find("(")
+                end_idx = name_j.rfind(")")
+                if start_idx != -1 and end_idx != -1:
+                    inner = name_j[start_idx+1:end_idx]
+                    for v in variable_names:
+                        if v in inner:
+                            var_j = v
+                            break
+            except Exception:
+                pass
+                
+            if var_j is None:
+                 for v in variable_names:
+                    if v in name_j:
+                        var_j = v
+                        break
+            
+            # Constraint: Must be different variables
+            # We want exp(x)*exp(y), not exp(x)*sin(x) (which is locally handled in _add_transcendental_features)
+            # or exp(x)*exp(-x) (=1)
+            if var_i == var_j:
+                continue
+                
+            # Constraint: Limit types of interactions
+            # exp*exp (Thermal) -> High Priority
+            # trig*exp (Damping) -> High Priority
+            # trig*trig (Interference) -> High Priority
+            # We allow all mixed types between diff variables.
+
+            if count >= max_interaction_count:
+                return
+
+            new_name = f"{name_i}*{name_j}"
+            
+            # Compute product
+            with np.errstate(over="ignore", invalid="ignore"):
+                new_col = col_i * col_j
+                
+                # Validation (Constitution Rule 5)
+                if np.all(np.isfinite(new_col)) and np.max(np.abs(new_col)) < 1e100:
+                     # Check if it's not all zero
+                    if not np.all(np.abs(new_col) < 1e-10):
+                        features.append(new_col)
+                        feature_names.append(new_name)
+                        count += 1
+
