@@ -26,6 +26,24 @@ from ..worker import clear_caches
 
 logger = logging.getLogger(__name__)
 
+
+def _find_matching_paren(s: str, start: int) -> int:
+    """Find matching closing parenthesis for opening paren at start position.
+    
+    Handles nested parentheses like f(sin(1)).
+    Returns -1 if no matching paren found.
+    """
+    depth = 0
+    for i in range(start, len(s)):
+        if s[i] == '(':
+            depth += 1
+        elif s[i] == ')':
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
+
 # Registry of non-math commands for improved parsing detection
 COMMAND_REGISTRY = {
     "help",
@@ -347,26 +365,47 @@ def generate_pattern_seeds(X, y, variable_names):
     # Ensure X is 2D
     if X.ndim == 1:
         X = X.reshape(-1, 1)
+        
+    n_vars = X.shape[1]
+    derived_vars = variable_names if variable_names and len(variable_names) == n_vars else [f"x{k}" for k in range(n_vars)]
 
+    import numpy as np
+    
     # --- 1. Detect poles (where y is inf/nan) ---
-    # --- 1. Detect poles (where y is inf/nan) ---
+    seen_poles = set()
+    
     for i, y_val in enumerate(y):
         try:
-            # np.isfinite works for complex but be safe
             if not np.isfinite(y_val):
-                pole_x = X[i, 0]
-                # Format pole_x cleanly (handle complex pole location too)
-                pole_str = str(pole_x).replace("(", "").replace(")", "")
-                
-                # Generate pole-based seeds
-                seeds.append(f"1/({var}-({pole_str}))")
-                seeds.append(f"1/({var}-({pole_str}))**2")
-                seeds.append(f"{var}/({var}-({pole_str}))**2")
-                # Also add with negative sign
-                seeds.append(f"1/({pole_str}-({var}))")
+                # Check for each variable if it correlates with the pole
+                for col_idx in range(n_vars):
+                    val = X[i, col_idx]
+                    var_name = derived_vars[col_idx]
+                    
+                    # Create unique key to avoid duplicate seeds
+                    pole_key = (var_name, val)
+                    if pole_key in seen_poles:
+                        continue
+                    seen_poles.add(pole_key)
+                    
+                    val_str = str(val).replace("(", "").replace(")", "")
+                    
+                    # Generate pole-based seeds for this variable
+                    basic_pole = f"1/({var_name}-({val_str}))"
+                    seeds.append(basic_pole)
+                    seeds.append(f"1/({var_name}-({val_str}))**2")
+                    # Inverse pole
+                    seeds.append(f"1/({val_str}-({var_name}))")
+                    
+                    # --- NEW: Generate Composite Rational Seeds (x/y, z/y, etc.) ---
+                    # If we found a pole 1/y, also try x * (1/y), z * (1/y)
+                    # This bridges the gap between the pole feature and the numerator variable
+                    for other_var in derived_vars:
+                         seeds.append(f"{other_var} * ({basic_pole})")
+
         except TypeError:
             continue
-
+            
     # --- 2. Detect near-zero crossings (potential 1/(x-a) patterns) ---
     # Look for large jumps in y that might indicate near-pole behavior
     if len(y) >= 3:
@@ -423,6 +462,12 @@ def _handle_evolve(text, variables=None):
         use_hybrid = "--hybrid" in text.lower()
         if use_hybrid:
             text = re.sub(r"--hybrid", "", text, flags=re.IGNORECASE)
+
+        # Strategy 9: Verbose output
+        # Parse "--verbose" flag to show generation-by-generation progress
+        verbose_mode = "--verbose" in text.lower()
+        if verbose_mode:
+            text = re.sub(r"--verbose", "", text, flags=re.IGNORECASE)
 
         # Parse: evolve f(x) from x=[...], y=[...]
         # or: evolve f(x,y) from x=[...], y=[...], z=[...]
@@ -532,20 +577,36 @@ def _handle_evolve(text, variables=None):
 
             # Parse individual function points "f(1)=2, f(2)=3"
             # This allows "evolve f(x) from f(1)=2, f(2)=3"
+            # Uses balanced parentheses matching to support f(sin(1)), f(e), etc.
             if data_part:
-                point_pattern = re.compile(r"(\w+)\s*\(([^)]+)\)\s*=\s*([^,]+)")
                 points_x = {v: [] for v in input_var_names}
                 points_y = []
                 skipped_complex = 0  # Track skipped complex data points
 
-                for m in point_pattern.finditer(data_part):
+                # Use balanced paren matching instead of regex to handle nested parens
+                # Pattern: find "funcname(" then match balanced parens, then "= value"
+                func_start_pattern = re.compile(r"(\w+)\s*\(")
+                for m in func_start_pattern.finditer(data_part):
                     p_func = m.group(1)
                     if p_func != func_name:
                         continue
+                    
+                    paren_start = m.end() - 1  # Position of '('
+                    paren_end = _find_matching_paren(data_part, paren_start)
+                    if paren_end == -1:
+                        continue  # No matching paren found
+                    
+                    p_args_str = data_part[paren_start + 1:paren_end]
+                    
+                    # Find the '=' and value after closing paren
+                    rest = data_part[paren_end + 1:]
+                    eq_match = re.match(r"\s*=\s*([^,]+)", rest)
+                    if not eq_match:
+                        continue
+                    
+                    p_val_str = eq_match.group(1).strip()
 
                     try:
-                        p_args_str = m.group(2)
-                        p_val_str = m.group(3).strip()
 
                         # Check for complex values
                         # We SUPPORT complex values now for Genetic Engine
@@ -782,11 +843,61 @@ def _handle_evolve(text, variables=None):
                 print(f"Hybrid mode: find() failed ({e}), continuing with other seeds")
 
         # --- FILTER: Remove inf/nan from data AFTER pattern detection ---
-        # Poles were used for seeding, but must be removed for fitness calculation
-        finite_mask = np.isfinite(y)
-        if not np.all(finite_mask):
+        # Robust cleanup: Ensure data is strictly float, converting 'zoo'/'inf' strings/objects to np.inf first
+        try:
+            # Convert purely to handle potential 'zoo' strings or SymPy objects
+            # Vectorized convert is safer
+            def safe_float(val):
+                # Handle numpy complex128 with zero imaginary (e.g., (-4+0j) → -4.0)
+                # This happens when array has any complex value, numpy converts all to complex128
+                if hasattr(val, 'imag') and hasattr(val, 'real'):
+                    if val.imag == 0:
+                        val = val.real  # Extract real part
+                    else:
+                        return np.nan  # True complex value (has imaginary component)
+                
+                s = str(val).lower()
+                if "zoo" in s or "inf" in s:
+                    return np.inf
+                try:
+                    return float(val)
+                except (ValueError, TypeError):
+                    return np.nan
+
+            vector_float = np.vectorize(safe_float)
+            y = vector_float(y)
+            X = vector_float(X)
+        except Exception:
+            # Fallback if vectorization fails
+            pass
+            
+        # Now filter non-finite values (inf, nan) from both inputs (X) and outputs (y)
+        # Note: Complex values become nan during float conversion, so they're filtered here
+        original_len = len(y)
+        y_finite = np.isfinite(y)
+        # For X (2D array), check all columns - row is valid only if ALL inputs are finite
+        if X.ndim > 1:
+            x_finite = np.all(np.isfinite(X), axis=1)
+        else:
+            x_finite = np.isfinite(X)
+        finite_mask = y_finite & x_finite
+        
+        num_filtered = original_len - np.sum(finite_mask)
+        if num_filtered > 0:
             X = X[finite_mask]
             y = y[finite_mask]
+            if len(y) > 0:
+                print(f"Note: Filtered {num_filtered} non-finite data point(s) (complex/inf/nan values).")
+        
+        # Check if all data was filtered out (e.g., complex-only inputs like f(i)=i)
+        if len(y) == 0:
+            if original_len > 0:
+                print(f"Error: All {original_len} data point(s) were filtered out.")
+                print("       Complex values (like i, 2+3i) are not supported by the genetic engine.")
+                print("       Please provide real-valued data points.")
+            else:
+                print("Error: No valid data points found in command.")
+            return
 
         print(
             f"Evolving {func_name}({', '.join(input_vars)}) from {len(y)} data points..."
@@ -795,6 +906,19 @@ def _handle_evolve(text, variables=None):
         # Apply boost multiplier to evolution parameters
         # --boost N gives N times more compute resources for complex functions
         base_population = 100
+
+        # Dynamic Population Adjustment for Heavy Seeding
+        # If we have many seeds, we need a larger population to ensure we don't
+        # drown out the random diversity (even with the 50% cap).
+        # We aim for at least 5x seed count to give plenty of room for randoms.
+        if seeds:
+            min_pop_for_seeds = len(seeds) * 3
+            if min_pop_for_seeds > base_population:
+                base_population = min_pop_for_seeds
+                print(
+                    f"Dynamic scaling: increased population to {base_population} to accommodate {len(seeds)} seeds"
+                )
+
         base_generations = 30
         base_timeout = 15
 
@@ -808,7 +932,7 @@ def _handle_evolve(text, variables=None):
             n_islands=2,
             generations=base_generations * boosting_rounds,
             timeout=base_timeout * boosting_rounds,
-            verbose=True,
+            verbose=verbose_mode,  # --verbose flag controls generation progress output
             seeds=seeds,
             boosting_rounds=1,  # Already applied via parameter scaling
         )
@@ -1240,6 +1364,29 @@ def handle_find_command_raw(text: str, ctx: Any) -> bool:
             print(
                 f"Discovered: {target_func}({', '.join(target_vars)}) = {result_str}{note}"
             )
+
+            # Auto-fallback to Genetic Engine if confidence is low
+            if "LOW CONFIDENCE" in str(note):
+                print(
+                    "Confidence too low. Switching to Genetic Engine (evolve) for robust discovery..."
+                )
+
+                # Reconstruct data string from relevant_points
+                points_str_list = []
+                for args, val in relevant_points:
+                    points_str_list.append(f"{target_func}({','.join(args)})={val}")
+                data_str = ", ".join(points_str_list)
+
+                # Use --hybrid to suggest using the (bad) result as a seed, but main power is genetic
+                evolve_cmd = (
+                    f"evolve {target_func}({','.join(target_vars)}) from {data_str} --hybrid"
+                )
+
+                # Call evolve
+                # We don't have access to REPL variables here, variables=None is safe for literal data
+                _handle_evolve(evolve_cmd, variables=None)
+                return True
+
             try:
                 define_function(target_func, target_vars, result_str)
                 # Automatically save to cache not needed? define_function does it?
@@ -1279,16 +1426,7 @@ def handle_find_command_raw(text: str, ctx: Any) -> bool:
         return True
 
     return False
-    # My "fix" made it a valid equation, but didn't implement storage.
-
-    # To fix this properly (Rule 5), `handle_single_part` in `repl_core`
-    # needs to detect "Undefined Function Call = Value" and store it as a constraint/datapoint
-    # INSTEAD of just solving it.
 
     print(
         "Function finding logic detected. (Data point collection not fully active in this patching phase)."
     )
-    # This avoids the crash/math junk, but functionality is partial.
-    # The prompt asked me to fix parsing "Undefined Function Parsing".
-    # I did.
-    # Now I need to fix the REPL flow to USE that parsed info.
