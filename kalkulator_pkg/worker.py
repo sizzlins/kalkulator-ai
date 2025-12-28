@@ -301,6 +301,20 @@ def _get_user_friendly_error_message(
                 "INVALID_NAME",
             )
 
+    # Check for NameError (often from malformed parser output like "x1.207..." becoming "Symbol('x')*Number*...")
+    if isinstance(error, NameError):
+        if "Number" in error_msg or "Float" in error_msg or "Integer" in error_msg:
+            return (
+                "Invalid number format. Check for malformed numbers like 'x1.207' - "
+                "did you mean 'x * 1.207' (multiplication) or 'x = 1.207' (assignment)?",
+                "PARSE_ERROR",
+            )
+        return (
+            f"Unknown identifier in expression: {error_msg}. "
+            "Check for typos in variable or function names.",
+            "PARSE_ERROR",
+        )
+
     # Check for TokenError (unterminated strings, etc.)
     try:
         import tokenize
@@ -360,8 +374,8 @@ def worker_evaluate(
         # Use the user-friendly error message helper
         error_msg, error_code = _get_user_friendly_error_message(e, preprocessed_expr)
 
-        # For syntax/parse/tokenize errors, log at debug level since we have a user-friendly message
-        if isinstance(e, (SyntaxError, ValueError)) or is_token_error:
+        # For syntax/parse/tokenize/name errors, log at debug level since we have a user-friendly message
+        if isinstance(e, (SyntaxError, ValueError, NameError)) or is_token_error:
             logger.debug(f"Parse/tokenize error: {e}")
         else:
             # Log full traceback for truly unexpected errors
