@@ -110,6 +110,21 @@ def solve_regression_stage(
         y_original=y_original,  # Original y for pole detection
     )
 
+    # --- Step 0.5: Filter Invalid Features ---
+    # Remove any feature columns that contain NaN or Inf values
+    # This acts as a safety barrier for the Lasso solver
+    try:
+        valid_feature_mask = np.all(np.isfinite(X_matrix), axis=0)
+        if not np.all(valid_feature_mask):
+            X_matrix = X_matrix[:, valid_feature_mask]
+            feature_names = [n for i, n in enumerate(feature_names) if valid_feature_mask[i]]
+            
+            # If all features removed, return failure
+            if X_matrix.shape[1] == 0:
+                 return (False, None, None, 1e9)
+    except Exception:
+        pass
+
     # Pre-filtering: Detect and remove gross outliers using Robust Regression on Linear/Quadratic model
     # This comes AFTER feature generation but BEFORE fitting.
     # Actually, simplistic linear check might not work for complex functions.
@@ -262,9 +277,24 @@ def solve_regression_stage(
             penalty_factors[i] = max(penalty_factors[i], 5.0)
 
         # Physics Bias Scale
-        # 1. Interactions are complex -> Penalize
+        # 1. Interactions are complex -> Penalize (but with exceptions for physics patterns)
         if "*" in name:
-            penalty_factors[i] *= 2.0
+            # SPECIAL CASE: exp()*exp() interactions represent exp(x+y) thermal/diffusion laws
+            # These should be BOOSTED, not penalized
+            import re
+            exp_exp_pattern = re.match(r"^exp\([^)]+\)\*exp\([^)]+\)$", name)
+            exp_trig_pattern = re.match(r"^exp\([^)]+\)\*(sin|cos)\([^)]+\)$", name) or \
+                               re.match(r"^(sin|cos)\([^)]+\)\*exp\([^)]+\)$", name)
+            
+            if exp_exp_pattern:
+                # exp(x)*exp(y) -> STRONG BOOST (thermal/diffusion coupling)
+                penalty_factors[i] *= 0.1  # 10x boost
+            elif exp_trig_pattern:
+                # exp(x)*sin(y) -> MODERATE BOOST (damped oscillation)
+                penalty_factors[i] *= 0.3
+            else:
+                # Generic interactions are complex -> Penalize
+                penalty_factors[i] *= 2.0
 
         # 2. Rationals are physical (Inverse laws) -> Boost
         if "/" in name:

@@ -30,6 +30,14 @@ from .config import SQRT_UNICODE_REGEX
 from .config import TRANSFORMATIONS
 from .types import ValidationError
 
+# Minimal globals for SymPy literals to prevent namespace pollution
+SAFE_GLOBALS = {
+    "Symbol": sp.Symbol,
+    "Integer": sp.Integer,
+    "Float": sp.Float,
+    "Rational": sp.Rational,
+}
+
 
 def superscriptify(input_str: str) -> str:
     """Convert numeric string to Unicode superscript characters.
@@ -1162,12 +1170,14 @@ def _parse_preprocessed_impl(
                     expr_parsed = parse_expr(
                         expr_part,
                         local_dict=ALLOWED_SYMPY_NAMES,
+                        global_dict=SAFE_GLOBALS,
                         transformations=TRANSFORMATIONS,
                         evaluate=False,
                     )
                     var_parsed = parse_expr(
                         var_part,
                         local_dict=ALLOWED_SYMPY_NAMES,
+                        global_dict=SAFE_GLOBALS,
                         transformations=TRANSFORMATIONS,
                         evaluate=False,
                     )
@@ -1232,12 +1242,14 @@ def _parse_preprocessed_impl(
                 expr_parsed = parse_expr(
                     expr_part,
                     local_dict=ALLOWED_SYMPY_NAMES,
+                    global_dict=SAFE_GLOBALS,
                     transformations=TRANSFORMATIONS,
                     evaluate=False,
                 )
                 var_parsed = parse_expr(
                     var_part,
                     local_dict=ALLOWED_SYMPY_NAMES,
+                    global_dict=SAFE_GLOBALS,
                     transformations=TRANSFORMATIONS,
                     evaluate=False,
                 )
@@ -1272,6 +1284,7 @@ def _parse_preprocessed_impl(
     expr = parse_expr(
         expr_str_restored,
         local_dict=local_env,
+        global_dict=SAFE_GLOBALS,  # SANDBOX: Prevent SymPy from injecting globals (like 'test') by default
         transformations=TRANSFORMATIONS,
         evaluate=True,
     )
@@ -1464,6 +1477,7 @@ def expand_function_calls(expr_str: str) -> str:
                                         arg_expr = parse_expr(
                                             expanded_arg,
                                             local_dict=ALLOWED_SYMPY_NAMES,
+                                            global_dict=SAFE_GLOBALS,
                                             transformations=TRANSFORMATIONS,
                                             evaluate=True,
                                         )

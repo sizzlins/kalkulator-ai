@@ -34,87 +34,74 @@ class NodeType(Enum):
 
 
 # Operator definitions with arities and safe evaluation functions
-# Operator definitions with arities and safe evaluation functions
 def safe_tan(x):
-    with np.errstate(all="ignore"):
-        return np.tan(np.clip(x, -1e6, 1e6))
+    return np.tan(np.clip(x, -1e6, 1e6))
 
 
 def safe_exp(x):
-    with np.errstate(all="ignore"):
-        return np.exp(np.clip(x, -700, 700))
+    return np.exp(np.clip(x, -700, 700))
 
 
 def safe_log(x):
-    with np.errstate(all="ignore"):
-        # Use scimath.log (handles negative inputs -> complex)
-        # Add epsilon to magnitude to avoid log(0)
-        # x + epsilon is tricky for complex, so we ensure x isn't exactly 0
-        safe_x = np.where(x == 0, 1e-10, x)
-        return np.lib.scimath.log(safe_x)
+    # Use scimath.log (handles negative inputs -> complex)
+    # Add epsilon to magnitude to avoid log(0)
+    # x + epsilon is tricky for complex, so we ensure x isn't exactly 0
+    safe_x = np.where(x == 0, 1e-10, x)
+    return np.lib.scimath.log(safe_x)
 
 
 def safe_sqrt(x):
-    with np.errstate(all="ignore"):
-        # Use scimath.sqrt to handle negative inputs
-        return np.lib.scimath.sqrt(x)
+    # Use scimath.sqrt to handle negative inputs
+    return np.lib.scimath.sqrt(x)
 
 
 def safe_inv(x):
-    with np.errstate(all="ignore"):
-        # Handle complex division near zero
-        # Add small epsilon in direction of x (complex-aware)
-        safe_x = x + 1e-10 * (x / (np.abs(x) + 1e-10))
-        return 1.0 / safe_x
+    # Handle complex division near zero
+    # Add small epsilon in direction of x (complex-aware)
+    safe_x = x + 1e-10 * (x / (np.abs(x) + 1e-10))
+    return 1.0 / safe_x
 
 
 def safe_mul(x, y):
-    with np.errstate(all="ignore"):
-        return np.clip(x * y, -1e100, 1e100)
+    return np.clip(x * y, -1e100, 1e100)
 
 
 def safe_div(x, y):
-    with np.errstate(all="ignore"):
-        safe_y = y + 1e-10 * (y / (np.abs(y) + 1e-10))
-        return x / safe_y
+    safe_y = y + 1e-10 * (y / (np.abs(y) + 1e-10))
+    return x / safe_y
 
 
 def safe_pow(x, y):
-    with np.errstate(all="ignore"):
-        # Use scimath.power to handle negative bases -> complex results
-        # Still clip exponent to avoid overflow, but allow complex base
-        # Output clipping is tricky for complex, we clip magnitude?
-        res = np.lib.scimath.power(x, np.clip(y, -10, 10))
-        # Complex clipping (magnitude cap)
-        # If magnitude > 1e100, scale it down
-        mag = np.abs(res)
-        mask = mag > 1e100
-        if np.any(mask):
-            # Create scale factor: 1.0 where safe, 1e100/mag where unsafe
-            scale = np.ones_like(mag)
-            scale[mask] = 1e100 / mag[mask]
-            res = res * scale
-        return res
+    # Use scimath.power to handle negative bases -> complex results
+    # Still clip exponent to avoid overflow, but allow complex base
+    # Output clipping is tricky for complex, we clip magnitude?
+    res = np.lib.scimath.power(x, np.clip(y, -10, 10))
+    # Complex clipping (magnitude cap)
+    # If magnitude > 1e100, scale it down
+    mag = np.abs(res)
+    mask = mag > 1e100
+    if np.any(mask):
+        # Create scale factor: 1.0 where safe, 1e100/mag where unsafe
+        scale = np.ones_like(mag)
+        scale[mask] = 1e100 / mag[mask]
+        res = res * scale
+    return res
 
 
 def safe_sinh(x):
-    with np.errstate(all="ignore"):
-        return np.sinh(np.clip(x, -700, 700))
+    return np.sinh(np.clip(x, -700, 700))
 
 
 def safe_cosh(x):
-    with np.errstate(all="ignore"):
-        return np.cosh(np.clip(x, -700, 700))
+    return np.cosh(np.clip(x, -700, 700))
 
 
 def safe_square(x):
-    with np.errstate(all="ignore"):
-        return np.clip(x * x, -1e100, 1e100)
+    return np.clip(x * x, -1e100, 1e100)
 
 
 def safe_cube(x):
-    with np.errstate(all="ignore"):
-        return np.clip(x * x * x, -1e100, 1e100)
+    return np.clip(x * x * x, -1e100, 1e100)
 
 
 UNARY_OPERATORS: dict[str, Callable[[float], float]] = {
@@ -236,7 +223,11 @@ class ExpressionNode:
             try:
                 result = op_func(child_val)
                 # Handle NaN/Inf
+                # For complex numbers, isfinite checks both real/imag
+                # We do NOT use nan_to_num with scalar defaults because it might cast complex to real
                 if isinstance(result, np.ndarray):
+                    # Replace NaNs with 0, Infs with large number
+                    # This works for complex arrays in recent numpy
                     result = np.nan_to_num(result, nan=0.0, posinf=1e10, neginf=-1e10)
                 elif not np.isfinite(result):
                     result = 0.0
@@ -386,7 +377,8 @@ class ExpressionTree:
             else:
                 var_dict[var_name] = np.zeros(X.shape[0])
 
-        result = self.root.evaluate(var_dict)
+        with np.errstate(all="ignore"):
+            result = self.root.evaluate(var_dict)
 
         # Ensure result is array of correct shape
         if isinstance(result, (int, float, complex, np.number)):

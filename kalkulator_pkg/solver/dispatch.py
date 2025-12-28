@@ -541,6 +541,25 @@ def solve_single_equation(
                     # Check for the specific generator error that occurs with trigonometric functions
                     # This can be ValueError, TypeError, or other SymPy-specific exceptions
                     if "generators" in error_msg or "contains an element" in error_msg:
+                        # Try numeric fallback BEFORE giving up (e.g., asin(x) = sin(x) has x=0 solution)
+                        if NUMERIC_FALLBACK_ENABLED:
+                            # For equations with asin/acos, use restricted domain [-1, 1]
+                            if equation.has(sp.asin) or equation.has(sp.acos):
+                                search_interval = (-1, 1)
+                            else:
+                                search_interval = (-4 * sp.pi, 4 * sp.pi)
+                            numeric_roots = _numeric_roots_for_single_var(
+                                equation_expr, sym, interval=search_interval
+                            )
+                            if numeric_roots:
+                                exacts = [str(r) for r in numeric_roots]
+                                approx = [str(sp.N(r)) for r in numeric_roots]
+                                return {
+                                    "ok": True,
+                                    "type": "equation",
+                                    "exact": exacts,
+                                    "approx": approx,
+                                }
                         return {
                             "ok": False,
                             "error": "This trigonometric equation cannot be solved symbolically. No real solutions found in the search interval.",

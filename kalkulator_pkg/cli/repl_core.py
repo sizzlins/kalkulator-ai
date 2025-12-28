@@ -74,6 +74,10 @@ class REPL:
             except EOFError:
                 self.running = False
                 return
+            except UnicodeDecodeError:
+                # Handle Windows console encoding issues on interrupt
+                print("\n[Input decoding error - Interrupted]")
+                return
 
             self.process_input(raw)
         except KeyboardInterrupt:
@@ -94,7 +98,6 @@ class REPL:
         """Dispatch input to specific handlers."""
         text = text.strip()
         if not text or text.startswith("#"):
-            return
             return
 
         # 0. Check for "evolve f(1)=1, f(2)=4" pattern (evolve at START, no 'from')
@@ -361,7 +364,6 @@ class REPL:
             # We append ", find target_func(x)" to safe-guard detection.
             # handle_find_command_raw parses commas itself.
 
-            # We pass original text + find command
             # We pass original text + find command
             enhanced_text = raw_text + f", find {target_func}"
             # Print helpful message
