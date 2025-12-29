@@ -1495,12 +1495,13 @@ def handle_find_command_raw(text: str, ctx: Any) -> bool:
     return False
 
 def _load_data_file(path):
-    """Load data from a CSV file into a dictionary of numpy arrays.
+    """Load data from a CSV file (or others if pandas avail) into a dictionary of numpy arrays.
     
     Supports:
-    - CSV with headers (x,y -> variables x, y)
-    - CSV without headers (col0, col1...)
-    - Uses standard 'csv' module to avoid pandas dependency
+    - CSV (built-in or pandas)
+    - Excel, Parquet, JSON (requires pandas)
+    - Automatic header detection
+    - Output: Dict[str, np.ndarray]
     """
     import csv
     import os
@@ -1509,74 +1510,126 @@ def _load_data_file(path):
     if not os.path.exists(path):
         raise FileNotFoundError(f"File not found: {path}")
 
+    # 1. OPTIONAL: Try loading with Pandas (if installed)
+    # This enables .xlsx, .parquet, .json support and robust CSV parsing
+    try:
+        import pandas as pd
+        
+        # extensions that pandas handles well
+        ext = os.path.splitext(path)[1].lower()
+        df = None
+        
+        try:
+            if ext == '.csv':
+                df = pd.read_csv(path)
+            elif ext in ['.xlsx', '.xls']:
+                df = pd.read_excel(path)
+            elif ext == '.parquet':
+                df = pd.read_parquet(path)
+            elif ext == '.json':
+                df = pd.read_json(path)
+            elif ext == '.pkl':
+                df = pd.read_pickle(path)
+        
+            if df is not None:
+                # Convert to dict of numpy arrays
+                data = {}
+                for col in df.columns:
+                    # Convert to numeric, coercing errors to NaN
+                    # We ensure all data passed to engine is numeric
+                    try:
+                        numeric_series = pd.to_numeric(df[col], errors='coerce')
+                        # Check if mostly NaN?
+                        if numeric_series.isna().all():
+                             # Maybe string column, skip
+                             continue
+                        data[str(col)] = numeric_series.to_numpy()
+                    except Exception:
+                        pass
+                print(f"Loaded {len(data)} columns using Pandas from {path}")
+                return data
+                
+        except Exception as e:
+            # If explicit non-csv format failed, warn.
+            if ext not in ['.csv', '.txt']:
+                print(f"Warning: Failed to load {ext} file with pandas: {e}")
+                return {}
+            # If CSV failed with pandas, fall through to manual loader (rare, but robust fallback)
+            pass
+
+    except ImportError:
+        pass
+
+
+    # 2. FALLBACK: Manual CSV Loader (Standard Library)
+    # Used if pandas is missing or failed on a CSV
+    
     data = {}
     
     # Robust reading logic
-    with open(path, 'r', newline='') as f:
-        # Read all lines to avoid seek issues
-        lines = f.readlines()
-        
-    if not lines:
-        return {}
-
-    # Detect header presence
-    # Heuristic: If first row has non-numeric value and second row is numeric -> Header
-    # If first row is numeric -> No Header
-    # If all strings -> Header (maybe non-numeric columns)
-    
-    csv_reader = csv.reader(lines)
-    all_rows = list(csv_reader)
-    
-    if not all_rows:
-        return {}
-        
-    first_row = all_rows[0]
-    
-    # Try to float conversion on first row
-    is_header = False
     try:
-        [float(x) for x in first_row]
-    except ValueError:
-        is_header = True
-        
-    if is_header:
-        headers = [h.strip() for h in first_row]
-        data_rows = all_rows[1:]
-    else:
-        headers = [f"col{i}" for i in range(len(first_row))]
-        data_rows = all_rows
-        
-    if not data_rows:
-        return {}
-
-    # Transpose rows to columns
-    # Handle potentially ragged rows? Assume rectangular for now.
-    
-    # Convert to columns
-    num_cols = len(headers)
-    columns = [[] for _ in range(num_cols)]
-    
-    for r_idx, row in enumerate(data_rows):
-        if not row: continue
-        for c_idx, val in enumerate(row):
-            if c_idx < num_cols:
-                columns[c_idx].append(val)
-                
-    # Convert to numpy arrays
-    for i, h in enumerate(headers):
-        try:
-            # Try converting to float array
-            vals = []
-            for v in columns[i]:
-                try:
-                    vals.append(float(v))
-                except ValueError:
-                    vals.append(float('nan')) # Or 0? NaN is safer
+        with open(path, 'r', newline='') as f:
+            # Read all lines to avoid seek issues
+            lines = f.readlines()
             
-            arr = np.array(vals)
-            # Remove NaNs if needed? No, let user handle.
-            data[h] = arr
-        except Exception:
-            print(f"Warning: Failed to process column '{h}'")
+        if not lines:
+            return {}
+
+        # Detect header presence
+        csv_reader = csv.reader(lines)
+        all_rows = list(csv_reader)
+        
+        if not all_rows:
+            return {}
+            
+        first_row = all_rows[0]
+        
+        # Try to float conversion on first row
+        is_header = False
+        try:
+            [float(x) for x in first_row]
+        except ValueError:
+            is_header = True
+            
+        if is_header:
+            headers = [h.strip() for h in first_row]
+            data_rows = all_rows[1:]
+        else:
+            headers = [f"col{i}" for i in range(len(first_row))]
+            data_rows = all_rows
+            
+        if not data_rows:
+            return {}
+
+        # Transpose rows to columns
+        # Convert to columns
+        num_cols = len(headers)
+        columns = [[] for _ in range(num_cols)]
+        
+        for r_idx, row in enumerate(data_rows):
+            if not row: continue
+            for c_idx, val in enumerate(row):
+                if c_idx < num_cols:
+                    columns[c_idx].append(val)
+                    
+        # Convert to numpy arrays
+        for i, h in enumerate(headers):
+            try:
+                # Try converting to float array
+                vals = []
+                for v in columns[i]:
+                    try:
+                        vals.append(float(v))
+                    except ValueError:
+                        vals.append(float('nan')) 
+                
+                arr = np.array(vals)
+                data[h] = arr
+            except Exception:
+                pass
+                
+    except Exception as e:
+        print(f"Error loading file: {e}")
+        return {}
             
     return data
