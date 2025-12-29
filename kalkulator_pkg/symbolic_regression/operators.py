@@ -256,6 +256,35 @@ def constant_optimization(
                 except Exception:
                     const_node.value = original_value
 
+            # Robust Integer Snapping (Agent Handoff Rule 5: Root Cause)
+            # Hill climbing can get stuck near integers (e.g., 15.997).
+            # We explicitly test the nearest integer. If it fits well, we take it.
+            # This addresses "Integer Bias" as an optimization prior.
+            current_val = const_node.value
+            nearest_int = round(current_val)
+            
+            # Only test if we are reasonably close (avoid snapping 15.5 to 16)
+            if abs(current_val - nearest_int) < 1e-2:
+                try:
+                    const_node.value = nearest_int
+                    pred = new_tree.evaluate(X)
+                    np.clip(pred, -1e100, 1e100, out=pred)
+                    diff = pred - y
+                    np.clip(diff, -1e100, 1e100, out=diff)
+                    mse_int = np.mean(diff**2)
+                    
+                    # Accept integer if it's better, equal, or extremely close (within 1% tolerance for parsimony)
+                # Note: On perfect data, mse_int should be lower. 
+                # On noisy data, we allow a slight penalty for the sake of interpretability.
+                if mse_int <= current_mse * 1.01: 
+                    current_mse = mse_int
+                    # Keep the integer value
+                else:
+                    # Revert if integer is significantly worse
+                    const_node.value = current_val
+            except Exception:
+                const_node.value = current_val
+
     return new_tree
 
 
