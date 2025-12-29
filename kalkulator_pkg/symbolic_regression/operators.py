@@ -262,10 +262,14 @@ def constant_optimization(
                     const_node.value = original_value
 
             # Robust Integer Snapping (Agent Handoff Rule 5: Root Cause)
-            # Hill climbing can get stuck near integers (e.g., 15.997).
-            # We explicitly test the nearest integer. If it fits well, we take it.
-            # This addresses "Integer Bias" as an optimization prior.
             current_val = const_node.value
+
+            # Handle complex values (prevent TypeError: doesn't define __round__)
+            if isinstance(current_val, (complex, np.complex128, np.complex64)):
+                if abs(current_val.imag) > 1e-10:
+                    continue  # Skip complex numbers with significant imaginary part
+                current_val = float(current_val.real)
+            
             nearest_int = round(current_val)
             
             # Only test if we are reasonably close (avoid snapping 15.5 to 16)
