@@ -1013,12 +1013,16 @@ def _handle_evolve(text, variables=None):
         best_mse = pareto.get_best()
 
         best = knee
-        if best_mse and best_mse.mse < 1e-9:
-            best = best_mse
-        elif knee:
-            best = knee
-        else:
-            best = best_mse
+        # Logic: Prefer Knee (parsimony) unless:
+        # 1. Best is "perfect" (MSE < 1e-9)
+        # 2. Best is significantly better than Knee (>2x accuracy improvement)
+        if best_mse:
+            if best_mse.mse < 1e-9:
+                best = best_mse
+            elif knee and best_mse.mse < (knee.mse * 0.5):
+                best = best_mse
+            elif not knee:
+                best = best_mse
 
         if not best:
             print("No suitable model found.")
