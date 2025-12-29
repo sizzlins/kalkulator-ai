@@ -100,6 +100,36 @@ def safe_square(x):
     return np.clip(x * x, -1e100, 1e100)
 
 
+# Protected Operators (Agent Handoff Rule 5: Root Cause)
+# These prevent complex/NaN values and "max()" safety patches
+# that trap the optimizer.
+
+def psqrt(x):
+    """Protected Sqrt: sqrt(abs(x)). Returns real float."""
+    return np.sqrt(np.abs(x))
+
+
+def plog(x):
+    """Protected Log: log(abs(x) + epsilon). Returns real float."""
+    return np.log(np.abs(x) + 1e-10)
+
+
+
+# Protected Operators (Agent Handoff Rule 5: Root Cause)
+# These prevent complex/NaN values and "max()" safety patches
+# that trap the optimizer.
+
+def psqrt(x):
+    """Protected Sqrt: sqrt(abs(x)). Returns real float."""
+    return np.sqrt(np.abs(x))
+
+
+def plog(x):
+    """Protected Log: log(abs(x) + epsilon). Returns real float."""
+    return np.log(np.abs(x) + 1e-10)
+
+
+
 def safe_cube(x):
     return np.clip(x * x * x, -1e100, 1e100)
 
@@ -110,7 +140,9 @@ UNARY_OPERATORS: dict[str, Callable[[float], float]] = {
     "tan": safe_tan,
     "exp": safe_exp,
     "log": safe_log,
+    "plog": plog,  # Protected log
     "sqrt": safe_sqrt,
+    "psqrt": psqrt,  # Protected sqrt
     "abs": np.abs,
     "neg": lambda x: -x,
     "inv": safe_inv,
@@ -138,7 +170,9 @@ SYMPY_UNARY: dict[str, Callable] = {
     "tan": sp.tan,
     "exp": sp.exp,
     "log": sp.log,
+    "plog": lambda x: sp.log(sp.Abs(x)),  # Protected log
     "sqrt": sp.sqrt,
+    "psqrt": lambda x: sp.sqrt(sp.Abs(x)),  # Protected sqrt
     "abs": sp.Abs,
     "neg": lambda x: -x,
     "inv": lambda x: 1 / x,

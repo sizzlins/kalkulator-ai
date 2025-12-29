@@ -62,9 +62,9 @@ class GeneticConfig:
             "sin",
             "cos",
             "exp",
-            "log",
+            "plog",  # Safe (Protected) log
             "square",
-            "sqrt",
+            "psqrt",  # Safe (Protected) sqrt
             "neg",
             "abs",
             "max",
