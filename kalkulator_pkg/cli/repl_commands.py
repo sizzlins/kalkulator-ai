@@ -21,6 +21,7 @@ from ..function_manager import list_functions
 from ..function_manager import load_functions
 from ..function_manager import save_functions
 from ..solver.dispatch import solve_single_equation
+from ..utils.formatting import format_solution
 from ..utils.formatting import print_result_pretty
 from ..worker import clear_caches
 
@@ -1024,7 +1025,7 @@ def _handle_evolve(text, variables=None):
             return
 
         # Print Result
-        print(f"\nResult: {best.expression}")
+        print(f"\nResult: {format_solution(best.expression)}")
         print(f"MSE: {best.mse:.6g}, Complexity: {best.complexity}")
 
         # Persist the discovered function (Engineering Standard: State Persistence)
