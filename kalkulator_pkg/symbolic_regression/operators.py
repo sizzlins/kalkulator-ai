@@ -207,6 +207,11 @@ def constant_optimization(
         Tree with optimized constants
     """
     new_tree = tree.copy()
+    
+    # Pre-optimization: Fold constant subtrees (Agent Handoff Rule 5)
+    # This prevents "rational jamming" where 100/6 is seen as two integers
+    # instead of one float (16.66) that can be improved.
+    new_tree.fold_constants()
 
     # Find all constant nodes
     nodes = new_tree.get_all_nodes()

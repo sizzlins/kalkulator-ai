@@ -473,6 +473,34 @@ class ExpressionTree:
                 parent.children[idx] = new_subtree
                 new_subtree.parent = parent
 
+    def fold_constants(self):
+        """Recursively fold constant subtrees into single constant nodes.
+        
+        Example: sqrt(x^2 - 100/6) -> sqrt(x^2 - 16.66)
+        This exposes the computed float value to optimization logic.
+        """
+        self.root = self._fold_recursive(self.root)
+        self.root.parent = None
+
+    def _fold_recursive(self, node: ExpressionNode) -> ExpressionNode:
+        # 1. Fold children first (bottom-up)
+        for i, child in enumerate(node.children):
+            node.children[i] = self._fold_recursive(child)
+            node.children[i].parent = node
+
+        # 2. If node is operator and all children are constants, eval and replace
+        if not node.is_terminal and all(c.node_type == NodeType.CONSTANT for c in node.children):
+            try:
+                # Create dummy var dict (constants don't need vars)
+                val = node.evaluate({})
+                # Return new constant node
+                return ExpressionNode(NodeType.CONSTANT, val)
+            except Exception:
+                # If eval fails (e.g. div by zero), keep original structure
+                return node
+        
+        return node
+
     @staticmethod
     def random_tree(
         variables: list[str],
