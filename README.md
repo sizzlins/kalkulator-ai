@@ -185,9 +185,9 @@ Deeply nested composite functions are beyond algorithm scope:
 | Pattern               | Example        | Why                            |
 | --------------------- | -------------- | ------------------------------ |
 | Trig of rational      | `sin(1/(x-3))` | Infinite nesting possibilities |
-| Nested transcendental | `exp(sin(x))`  | Combinatorial search space     |
+| Nested transcendental | `sin(cos(x))`  | Combinatorial search space     |
 
-**Workaround:** Define manually: `f(x)=sin(4/(x-3))`
+**Workaround:** Define manually: `f(x)=sin(cos(tan(x)))`
 
 ### Complex Rational Functions
 
