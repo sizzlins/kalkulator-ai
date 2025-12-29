@@ -25,6 +25,9 @@ Requires Python 3.8+.
 ```bash
 git clone https://github.com/sizzlins/kalkulator-ai
 pip install -r requirements.txt
+
+# Optional: For Excel/Parquet support
+pip install pandas openpyxl
 ```
 
 ## Usage
@@ -45,6 +48,9 @@ https://github.com/sizzlins/kalkulator-ai/blob/main/kalkulator.exe
 - `f(x)=...`: Define function.
 - `find f(x)`: Discover function from data.
 - `evolve ...`: Genetic programming search.
+  - `--boost`: Enable 5-round boosting for complex models.
+  - `--file <path>`: Load data from CSV/Excel/Parquet.
+  - `--verbose`: Show progress.
 - `diff(...)`: Differentiate.
 - `integrate(...)`: Integrate.
 - `save/load`: Persist state.
@@ -70,6 +76,29 @@ Discovered: f(x) = exp(LambertW(log(x)))
 ```
 >>> g(0)=1, g(1)=0.3679, find g(x)
 g(x) = exp(-x^2)
+```
+
+### Advanced Data Input
+
+**File Import (CSV/Excel)**
+
+```bash
+>>> evolve --file data.xlsx y = f(x)
+Loaded 2 variables from 'data.xlsx': ['x', 'y']
+```
+
+**Explicit Target Syntax**
+
+```bash
+>>> evolve y = f(x) from x=[1,2,3], y=[3,5,7]
+Discovered: 2*x + 1
+```
+
+**Boosting Mode (Hard Problems)**
+
+```bash
+>>> evolve --boost f(x) ...
+Boost mode: 5x resources
 ```
 
 ### Calculus

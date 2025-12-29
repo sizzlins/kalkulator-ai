@@ -1,9 +1,8 @@
-answer every question that is asked for you here
-5. **Root Cause First (The Wall Rule)**: Never patch a bug with a quick fix. When we have a wall, and the wall has a hole in it, we replace the entire wall with a new better wall, and we do not fix by applying a weak band-aid to it (ONLY WHEN APPROPRIATE AND NECESSARY AND DOES NOT CAUSE HARM TO THE SYSTEM). Always identify the fundamental flaw and refactor the architecture.
-
+answer every question that is asked for you here 5. **Root Cause First (The Wall Rule)**: Never patch a bug with a quick fix. When we have a wall, and the wall has a hole in it, we replace the entire wall with a new better wall, and we do not fix by applying a weak band-aid to it (ONLY WHEN APPROPRIATE AND NECESSARY AND DOES NOT CAUSE HARM TO THE SYSTEM). Always identify the fundamental flaw and refactor the architecture.
 
 Engineering Standards (The Kalkulator Constitution)
 rules for safety-critical systems:
+
 1.  **Simple Control Flow**: Avoid complex "magic" (metaclasses, dynamic attribute injection, `exec`). Keep logic linear.
 2.  **Bounded Loops**: All loops (especially in genetic programming and numerical solvers) must have a fixed `max_iterations` failsafe.
 3.  **Object Stability**: Avoid runtime structure modification ("monkey patching"). Treat initialized objects as immutable where possible.
@@ -21,6 +20,7 @@ rules for safety-critical systems:
 12. **Future-Proofing (The "Anti-Dev-Hell" Rule)**: Always design for the future. Ask: "Will this change make life miserable for the next developer?" If yes, don't do it. Avoid shortcuts that lead to technical debt or "development hell." Decouple concerns (e.g., calculation vs. presentation) to ensure long-term maintainability.
 13. **The Final REPL Check**: After all edits are complete, you MUST manually test the REPL using `kalkulator.py` (not just unit tests). This is the user's entry point. Run varied inputs to verify you haven't broken the interactive experience. 'Does it actually work for the user?' is the final exam.
 14. **Rule Recitation Protocol**: Before beginning any significant task, you MUST recite all these rules if you do not remember them. This ensures they remain top-of-mind and active during development.
+15. **Optional Dependencies (The "Bloat" Rule)**: Heavy libraries (e.g., pandas, matplotlib) MUST be optional. Wrap imports in `try/except` and ensure the core system functions perfectly without them. Do not force users to download 100MB+ for simple features.
 
 answer this
 have you read the engineering standard, if so
@@ -36,11 +36,9 @@ answer every single question that this text below this line ask you
 
 is this fix or feature that we will add be good for the future and present of the programs development and stability?
 
-
 how would we implement it into the program
 
 Is this idea that we have thought of to add to the program a good idea or a bad idea?
-
 
 if WE ARE GOING TO REMOVE OR ADD ANY FEATURES OR CODE
 answer this
