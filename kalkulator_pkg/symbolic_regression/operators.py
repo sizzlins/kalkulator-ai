@@ -273,7 +273,8 @@ def constant_optimization(
             nearest_int = round(current_val)
             
             # Only test if we are reasonably close (avoid snapping 15.5 to 16)
-            if abs(current_val - nearest_int) < 1e-2:
+            # Widen tolerance to 0.05 to catch "flat landscape" drift (e.g., 16.011)
+            if abs(current_val - nearest_int) < 0.05:
                 try:
                     const_node.value = nearest_int
                     pred = new_tree.evaluate(X)
@@ -282,10 +283,10 @@ def constant_optimization(
                     np.clip(diff, -1e100, 1e100, out=diff)
                     mse_int = np.mean(diff**2)
                     
-                    # Accept integer if it's better, equal, or extremely close (within 1% tolerance for parsimony)
+                    # Accept integer if it's better, equal, or extremely close (within 5% tolerance for parsimony)
                     # Note: On perfect data, mse_int should be lower. 
                     # On noisy data, we allow a slight penalty for the sake of interpretability.
-                    if mse_int <= current_mse * 1.01: 
+                    if mse_int <= current_mse * 1.05: 
                         current_mse = mse_int
                         # Keep the integer value
                     else:
