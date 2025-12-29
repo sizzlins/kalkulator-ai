@@ -44,6 +44,15 @@ from .config import ALLOWED_SYMPY_NAMES
 from .config import TRANSFORMATIONS
 from .types import ValidationError
 
+# Handle NumPy 2.0 ComplexWarning location
+try:
+    from numpy.exceptions import ComplexWarning as NpComplexWarning
+except ImportError:
+    try:
+        from numpy import ComplexWarning as NpComplexWarning
+    except ImportError:
+        class NpComplexWarning(UserWarning): pass
+
 # Built-in function names that should not be used as user-defined function names
 BUILTIN_FUNCTION_NAMES = set(ALLOWED_SYMPY_NAMES.keys())
 
@@ -1533,7 +1542,7 @@ def find_function_from_data(
             try:
                 # Suppress ComplexWarning for types like np.complex128(10+0j) which are real but warn
                 with warnings.catch_warnings():
-                    warnings.filterwarnings("ignore", category=np.ComplexWarning)
+                    warnings.filterwarnings("ignore", category=NpComplexWarning)
                     val_float = float(x_arg)
                 parsed_x_tuple.append(val_float)
             except (ValueError, TypeError):
