@@ -274,16 +274,16 @@ def constant_optimization(
                     mse_int = np.mean(diff**2)
                     
                     # Accept integer if it's better, equal, or extremely close (within 1% tolerance for parsimony)
-                # Note: On perfect data, mse_int should be lower. 
-                # On noisy data, we allow a slight penalty for the sake of interpretability.
-                if mse_int <= current_mse * 1.01: 
-                    current_mse = mse_int
-                    # Keep the integer value
-                else:
-                    # Revert if integer is significantly worse
+                    # Note: On perfect data, mse_int should be lower. 
+                    # On noisy data, we allow a slight penalty for the sake of interpretability.
+                    if mse_int <= current_mse * 1.01: 
+                        current_mse = mse_int
+                        # Keep the integer value
+                    else:
+                        # Revert if integer is significantly worse
+                        const_node.value = current_val
+                except Exception:
                     const_node.value = current_val
-            except Exception:
-                const_node.value = current_val
 
     return new_tree
 
