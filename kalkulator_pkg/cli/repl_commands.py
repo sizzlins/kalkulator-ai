@@ -469,10 +469,36 @@ def _handle_evolve(text, variables=None):
         if verbose_mode:
             text = re.sub(r"--verbose", "", text, flags=re.IGNORECASE)
 
+        # Strategy 10: File Input
+        # Parse "--file 'path'" to load data into variables
+        file_match = re.search(r"--file\s+[\"']?([^\"'\s]+)[\"']?", text)
+        if file_match:
+            file_path = file_match.group(1)
+            try:
+                # Load file into variables
+                loaded_vars = _load_data_file(file_path)
+                if variables is None:
+                    variables = {}
+                variables.update(loaded_vars)
+                print(f"Loaded {len(loaded_vars)} variables from '{file_path}': {list(loaded_vars.keys())}")
+            except Exception as e:
+                print(f"Error loading file '{file_path}': {e}")
+                return
+            text = re.sub(r"--file\s+[\"']?[^\"'\s]+[\"']?", "", text)
+
         # Parse: evolve f(x) from x=[...], y=[...]
         # or: evolve f(x,y) from x=[...], y=[...], z=[...]
         # Parse: evolve f(x) from x=[...], y=[...]
         # or: evolve f(x,y) from x=[...], y=[...], z=[...]
+        # Parse: evolve y = f(x) (Explicit target syntax)
+        # Parse: evolve f(x) from x=[...], y=[...]
+        # or: evolve f(x,y) from x=[...], y=[...], z=[...]
+        
+        explicit_target_var = None
+        
+        # Check for explicit target syntax: evolve y = f(x)
+        match_explicit = re.match(r"evolve\s+(\w+)\s*=\s*(\w+)\s*\(([^)]+)\)\s*$", text, re.IGNORECASE)
+
         match = re.match(
             r"evolve\s+(\w+)\s*\(([^)]+)\)\s+from\s+(.+)", text, re.IGNORECASE
         )
@@ -480,7 +506,12 @@ def _handle_evolve(text, variables=None):
         is_implicit = False
         data_part = None
 
-        if match:
+        if match_explicit:
+            explicit_target_var = match_explicit.group(1)
+            func_name = match_explicit.group(2)
+            input_var_names = [v.strip() for v in match_explicit.group(3).split(",")]
+            is_implicit = True # Use implicit loading to find vars
+        elif match:
             func_name = match.group(1)
             # These are the INPUT variable names from f(x) or f(a,b)
             input_var_names = [v.strip() for v in match.group(2).split(",")]
@@ -569,11 +600,30 @@ def _handle_evolve(text, variables=None):
                             pass
 
         else:
-            array_pattern = re.compile(r"(\w+)\s*=\s*\[([^\]]+)\]")
+            # Modified pattern to support BOTH literal arrays [1,2] AND variable references x=my_var
+            # Group 2 is literal array content
+            # Group 3 is variable name reference
+            array_pattern = re.compile(r"(\w+)\s*=\s*(?:\[([^\]]+)\]|(\w+))")
+            
             for m in array_pattern.finditer(data_part):
                 var = m.group(1)
-                values = [float(v.strip()) for v in m.group(2).split(",")]
-                data_dict[var] = np.array(values)
+                
+                if m.group(2): # Literal array [1,2,3]
+                    try:
+                        values = [float(v.strip()) for v in m.group(2).split(",")]
+                        data_dict[var] = np.array(values)
+                    except ValueError:
+                         pass
+                elif m.group(3): # Variable reference x=my_var
+                     ref_name = m.group(3)
+                     if variables and ref_name in variables:
+                         val = variables[ref_name]
+                         if isinstance(val, (list, tuple, np.ndarray)):
+                             data_dict[var] = np.array(val)
+                         else:
+                             print(f"Warning: Referenced variable '{ref_name}' is not an array.")
+                     else:
+                         print(f"Warning: Referenced variable '{ref_name}' not found.")
 
             # Parse individual function points "f(1)=2, f(2)=3"
             # This allows "evolve f(x) from f(1)=2, f(2)=3"
@@ -790,11 +840,19 @@ def _handle_evolve(text, variables=None):
             return
 
         # Explicitly prefer 'y' or 'z' if available
-        output_var = output_candidates[0]
-        if "y" in output_candidates:
-            output_var = "y"
-        elif "z" in output_candidates:
-            output_var = "z"
+        # Explicitly prefer explicit target, then 'y', 'z'
+        if explicit_target_var:
+             if explicit_target_var in data_dict:
+                 output_var = explicit_target_var
+             else:
+                 print(f"Error: Target variable '{explicit_target_var}' not found in data.")
+                 return
+        else:
+            output_var = output_candidates[0]
+            if "y" in output_candidates:
+                output_var = "y"
+            elif "z" in output_candidates:
+                output_var = "z"
 
         # Validate all input vars have data
         missing = [v for v in input_vars if v not in data_dict]
@@ -1427,6 +1485,89 @@ def handle_find_command_raw(text: str, ctx: Any) -> bool:
 
     return False
 
-    print(
-        "Function finding logic detected. (Data point collection not fully active in this patching phase)."
-    )
+def _load_data_file(path):
+    """Load data from a CSV file into a dictionary of numpy arrays.
+    
+    Supports:
+    - CSV with headers (x,y -> variables x, y)
+    - CSV without headers (col0, col1...)
+    - Uses standard 'csv' module to avoid pandas dependency
+    """
+    import csv
+    import os
+    import numpy as np
+    
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"File not found: {path}")
+
+    data = {}
+    
+    # Robust reading logic
+    with open(path, 'r', newline='') as f:
+        # Read all lines to avoid seek issues
+        lines = f.readlines()
+        
+    if not lines:
+        return {}
+
+    # Detect header presence
+    # Heuristic: If first row has non-numeric value and second row is numeric -> Header
+    # If first row is numeric -> No Header
+    # If all strings -> Header (maybe non-numeric columns)
+    
+    csv_reader = csv.reader(lines)
+    all_rows = list(csv_reader)
+    
+    if not all_rows:
+        return {}
+        
+    first_row = all_rows[0]
+    
+    # Try to float conversion on first row
+    is_header = False
+    try:
+        [float(x) for x in first_row]
+    except ValueError:
+        is_header = True
+        
+    if is_header:
+        headers = [h.strip() for h in first_row]
+        data_rows = all_rows[1:]
+    else:
+        headers = [f"col{i}" for i in range(len(first_row))]
+        data_rows = all_rows
+        
+    if not data_rows:
+        return {}
+
+    # Transpose rows to columns
+    # Handle potentially ragged rows? Assume rectangular for now.
+    
+    # Convert to columns
+    num_cols = len(headers)
+    columns = [[] for _ in range(num_cols)]
+    
+    for r_idx, row in enumerate(data_rows):
+        if not row: continue
+        for c_idx, val in enumerate(row):
+            if c_idx < num_cols:
+                columns[c_idx].append(val)
+                
+    # Convert to numpy arrays
+    for i, h in enumerate(headers):
+        try:
+            # Try converting to float array
+            vals = []
+            for v in columns[i]:
+                try:
+                    vals.append(float(v))
+                except ValueError:
+                    vals.append(float('nan')) # Or 0? NaN is safer
+            
+            arr = np.array(vals)
+            # Remove NaNs if needed? No, let user handle.
+            data[h] = arr
+        except Exception:
+            print(f"Warning: Failed to process column '{h}'")
+            
+    return data
