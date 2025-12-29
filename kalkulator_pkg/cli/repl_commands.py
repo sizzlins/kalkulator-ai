@@ -449,13 +449,17 @@ def _handle_evolve(text, variables=None):
             text = seed_pattern.sub("", text)
 
         # Strategy 7: Boosting
-        # Parse "--boost <N>"
+        # Parse "--boost <N>", "--boost=N", or just "--boost" (default 5)
         boosting_rounds = 1
-        boost_match = re.search(r"--boost\s+(\d+)", text)
+        boost_match = re.search(r"--boost(?:[=\s]+(\d+))?", text)
         if boost_match:
-            boosting_rounds = int(boost_match.group(1))
+            if boost_match.group(1):
+                boosting_rounds = int(boost_match.group(1))
+            else:
+                boosting_rounds = 5 # Default to 5 rounds if flag present but no number
+            
             # Remove flag from text
-            text = re.sub(r"--boost\s+\d+", "", text)
+            text = re.sub(r"--boost(?:[=\s]+\d+)?", "", text)
 
         # Strategy 8: Hybrid (find → evolve)
         # Parse "--hybrid" flag
@@ -496,8 +500,8 @@ def _handle_evolve(text, variables=None):
         
         explicit_target_var = None
         
-        # Check for explicit target syntax: evolve y = f(x)
-        match_explicit = re.match(r"evolve\s+(\w+)\s*=\s*(\w+)\s*\(([^)]+)\)\s*$", text, re.IGNORECASE)
+        # Check for explicit target syntax: evolve y = f(x) [from ...]
+        match_explicit = re.match(r"evolve\s+(\w+)\s*=\s*(\w+)\s*\(([^)]+)\)(?:\s+from\s+(.+))?$", text, re.IGNORECASE)
 
         match = re.match(
             r"evolve\s+(\w+)\s*\(([^)]+)\)\s+from\s+(.+)", text, re.IGNORECASE
@@ -510,7 +514,12 @@ def _handle_evolve(text, variables=None):
             explicit_target_var = match_explicit.group(1)
             func_name = match_explicit.group(2)
             input_var_names = [v.strip() for v in match_explicit.group(3).split(",")]
-            is_implicit = True # Use implicit loading to find vars
+            
+            if match_explicit.group(4):
+                data_part = match_explicit.group(4)
+                is_implicit = False
+            else:
+                is_implicit = True # Use implicit loading to find vars
         elif match:
             func_name = match.group(1)
             # These are the INPUT variable names from f(x) or f(a,b)
