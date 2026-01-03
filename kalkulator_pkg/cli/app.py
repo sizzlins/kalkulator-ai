@@ -226,6 +226,12 @@ DISCOVERY
   find ode                Find ODE (SINDy)
   benchmark               Run benchmarks
 
+SHORTCUTS (for evolve)
+  all f(...)    Full power: --hybrid --verbose --boost 3
+  b f(...)      Fast mode:  --verbose --boost 3
+  h f(...)      Smart mode: --hybrid --verbose
+  v f(...)      Verbose:    --verbose
+
 DATA
   clearcache     Clear cache
   showcache      List cache
