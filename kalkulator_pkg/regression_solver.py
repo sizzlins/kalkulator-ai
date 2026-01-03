@@ -99,6 +99,36 @@ def solve_regression_stage(
     except Exception:
         pass  # Fallback to original if array conversion fails (shouldn't happen)
 
+    # --- SCALE-INVARIANT NORMALIZATION ---
+    # Detect data skew similar to genetic_engine.py
+    # If data spans many orders of magnitude, normalize using relative values
+    # This prevents bad seeds for hybrid mode
+    use_relative_normalization = False
+    y_scale_factor = 1.0
+    
+    try:
+        y_arr = np.array(y_data, dtype=float)
+        if len(y_arr) > 0:
+            y_abs = np.abs(y_arr)
+            y_median = np.median(y_abs)
+            y_max = np.max(y_abs)
+            
+            if y_median > 0:
+                skew_ratio = y_max / y_median
+                
+                # Same threshold as genetic_engine.py
+                if skew_ratio > 1000:
+                    use_relative_normalization = True
+                    # Normalize by median (keeps relative proportions)
+                    y_scale_factor = y_median
+                    if y_scale_factor < 1e-100:
+                        y_scale_factor = 1.0
+                    
+                    # Scale y_data to reduce range
+                    y_data = y_arr / y_scale_factor
+    except Exception:
+        pass
+    
     # Generate feature matrix
     # Pass ORIGINAL (unfiltered) data for pole detection, but filtered for regression
     X_matrix, feature_names = generate_candidate_features(
@@ -776,6 +806,25 @@ def solve_regression_stage(
             confidence_note = f" [LOW CONFIDENCE: R²={r_squared:.2f}]" + residual_hint
         elif r_squared < 0.9:
             confidence_note = f" [R²={r_squared:.2f}]"
+
+        # De-scale if we used relative normalization
+        if use_relative_normalization and y_scale_factor != 1.0:
+            # Multiply the entire expression by the scale factor
+            try:
+                func_str = f"{y_scale_factor}*({func_str})"
+                # Simplify if possible
+                local_dict_simple = {name: sp.Symbol(name) for name in param_names}
+                local_dict_simple.update({
+                    "sin": sp.sin, "cos": sp.cos, "exp": sp.exp,
+                    "log": sp.log, "sinh": sp.sinh, "cosh": sp.cosh,
+                    "LambertW": sp.LambertW,
+                })
+                func_expr_scaled = sp.sympify(func_str, locals=local_dict_simple)
+                func_expr_scaled = sp.simplify(func_expr_scaled)
+                func_str = str(func_expr_scaled)
+            except Exception:
+                # If simplification fails, keep the scaled version
+                pass
 
         return (True, func_str, confidence_note, mse)
     except Exception:
