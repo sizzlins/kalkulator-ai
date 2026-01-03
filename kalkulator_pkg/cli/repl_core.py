@@ -100,6 +100,13 @@ class REPL:
         if not text or text.startswith("#"):
             return
 
+        # SHORTCUT COMMANDS: Route to evolve handler (all, b, h, v)
+        text_lower = text.lower().strip()
+        if text_lower.startswith(('all ', 'b ', 'h ', 'v ')):
+            from .repl_commands import _handle_evolve
+            _handle_evolve(text, self.variables)
+            return
+
         # 0. Check for "evolve f(1)=1, f(2)=4" pattern (evolve at START, no 'from')
         # Must run BEFORE command handler to intercept this special pattern
         if (
