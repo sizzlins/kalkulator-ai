@@ -51,6 +51,12 @@ https://github.com/sizzlins/kalkulator-ai/blob/main/kalkulator.exe
   - `--boost`: Enable 5-round boosting for complex models.
   - `--file <path>`: Load data from CSV/Excel/Parquet.
   - `--verbose`: Show progress.
+  - `--hybrid`: Seed with find() result.
+- **Shortcuts** (common evolve combinations):
+  - `all f(...)`: Full power (`--hybrid --verbose --boost 3`)
+  - `b f(...)`: Fast mode (`--verbose --boost 3`)
+  - `h f(...)`: Smart mode (`--hybrid --verbose`)
+  - `v f(...)`: Verbose (`--verbose`)
 - `diff(...)`: Differentiate.
 - `integrate(...)`: Integrate.
 - `save/load`: Persist state.
