@@ -3185,7 +3185,9 @@ def find_function_from_data(
                                     print(
                                         f"Polyfit found degree-{degree}: {func_str} (R²={poly_r_squared:.6f})"
                                     )
-                                    return (True, func_str, None, None)
+                                    # Include R² in confidence note for hybrid mode quality check
+                                    confidence_note = f" [R²={poly_r_squared:.6f}]"
+                                    return (True, func_str, None, confidence_note)
                             except Exception:
                                 pass  # Try next degree
 
@@ -3234,7 +3236,9 @@ def find_function_from_data(
                                     f"DEBUG: Polyfit found degree-{degree}: {func_str} (R²={r_squared:.6f})",
                                     file=sys.stderr,
                                 )
-                                return (True, func_str, None, None)
+                                # Include R² in confidence note for hybrid mode quality check
+                                confidence_note = f" [R²={r_squared:.6f}]"
+                                return (True, func_str, None, confidence_note)
                         except Exception:
                             pass  # Try next degree
 
