@@ -37,7 +37,17 @@ def huber_loss(y_true, y_pred, delta=1.0):
     is_small_error = abs_error <= delta
     squared_loss = 0.5 * abs_error**2
     linear_loss = delta * (abs_error - 0.5 * delta)
-    return np.where(is_small_error, squared_loss, linear_loss).mean()
+    return np.where(is_small_error, squared_loss, linear_loss)
+
+
+def weighted_mse(y_true, y_pred, weights=None):
+    """Calculate Weighted Mean Squared Error."""
+    error = y_true - y_pred
+    squared_error = np.abs(error)**2
+    
+    if weights is not None:
+        return np.average(squared_error, weights=weights)
+    return np.mean(squared_error)
 
 
 @dataclass
@@ -62,15 +72,44 @@ class GeneticConfig:
             "sin",
             "cos",
             "exp",
-            "plog",  # Safe (Protected) log
+            "log",  # Complex-capable log
             "square",
-            "psqrt",  # Safe (Protected) sqrt
+            "sqrt",  # Complex-capable sqrt
             "neg",
             "abs",
-            "max",
-            "min",
         ]
     )
+    # Weighted Complexity Config
+    # Default weight is 1.0. Higher weights penalize "cheating" operators.
+    operator_weights: dict[str, float] = field(
+                default_factory=lambda: {
+            "max": 5.0,  # Tier 3: Penalize Piecewise Cheating
+            "min": 5.0,  # Tier 3
+            "abs": 4.0,  # Tier 3: The "Gateway Drug" to max() - heavily penalized
+            
+            # Tier 2: Physics (Subsidized to match fundamental cost)
+            "sin": 1.0,
+            "cos": 1.0,
+            "tan": 1.0,
+            "asin": 1.0,
+            "acos": 1.0,
+            "atan": 1.0,
+            "exp": 1.0,
+            "log": 1.0,
+            "plog": 1.0,
+            "sqrt": 1.0,
+            "psqrt": 1.0,
+            "pow": 1.0,  # Make 2^x as cheap as 2*x
+            
+            # Tier 1: Fundamental
+            "add": 1.0,
+            "sub": 1.0,
+            "mul": 1.0,
+            "div": 1.0,
+        }
+    )
+    default_complexity_weight: float = 1.0
+    
     timeout: float | None = 60.0
     seeds: list[str] = field(default_factory=list)  # Strategy 1: Seeding
     early_stop_mse: float = 1e-10
@@ -115,8 +154,79 @@ class GeneticSymbolicRegressor:
         self.unary_ops = [op for op in self.config.operators if op in UNARY_OPERATORS]
         self.binary_ops = [op for op in self.config.operators if op in BINARY_OPERATORS]
 
+    def _calculate_smart_weights(self, X: np.ndarray, y: np.ndarray) -> np.ndarray:
+        """Calculate heuristic importance weights for data points.
+        
+        Implements the "Vise Strategy" to solve the Parsimony Trap:
+        1. Prioritize vertex/origin (x=0) to prevent "lazy" Abs(x) fits.
+        2. Prioritize integer anchors (clean numbers) as they are likely ground truth.
+        """
+        if len(y) == 0:
+            return np.ones(0)
+
+        weights = np.ones(len(y), dtype=float)
+        
+        try:
+            # Handle multi-dimensional X
+            # Distance from zero (Euclidean norm)
+            if X.ndim == 1:
+                dist_zero = np.abs(X)
+            else:
+                dist_zero = np.linalg.norm(X, axis=1) # type: ignore
+                
+            # 1. VERTEX BONUS (The "Gravity Well")
+            # Points closest to 0 get massive boost
+            # Find points within reasonable epsilon of 0
+            # or just weight by 1/(1+dist)
+            
+            # Simple approach: Find the single closest point to 0 and boost it 5x
+            idx_min = np.argmin(dist_zero)
+            # Only if it's actually close (e.g. < 0.1 or normalized?)
+            # Let's say if it's the "vertex" representative.
+            weights[idx_min] = 5.0
+            
+            # 2. INTEGER ANCHOR BONUS
+            # If x is integer AND y is integer, they are "clean" points.
+            # Boost 3x.
+            
+            # Check X integers (all dims must be integer-ish)
+            is_x_int = np.all(np.abs(X - np.round(X)) < 1e-5, axis=1) if X.ndim > 1 else (np.abs(X - np.round(X)) < 1e-5)
+            
+            # Check Y integers
+            is_y_int = (np.abs(y - np.round(y)) < 1e-5)
+            
+            # Combined mask
+            is_anchor = is_x_int & is_y_int
+            
+            # Apply boost (additive or multiplicative? Multiplicative with base)
+            # We set these to 3.0, but if it was already vertex (5.0), keep 5.0?
+            # Max rule:
+            weights[is_anchor] = np.maximum(weights[is_anchor], 3.0)
+            
+            # Normalize? No, magnitude matters for "Stiffness" of the loss landscape
+            # but for weighted average it cancels out.
+            # Wait, np.average(..., weights) normalizes by sum(weights).
+            # So relative weights matter.
+            
+            if self.config.verbose:
+                n_anchors = np.sum(is_anchor)
+                max_w = np.max(weights)
+                if max_w > 1.0:
+                    print(f"Smart Weighting: Boosted {n_anchors} anchors (3x) and vertex (5x).")
+            
+        except Exception as e:
+            if self.config.verbose:
+                print(f"Smart Weighting failed: {e}. Using uniform weights.")
+            return np.ones(len(y))
+            
+        return weights
+
     def _calculate_fitness(
-        self, tree: ExpressionTree, X: np.ndarray, y: np.ndarray
+        self, 
+        tree: ExpressionTree, 
+        X: np.ndarray, 
+        y: np.ndarray, 
+        sample_weight: np.ndarray | None = None
     ) -> float:
         """Calculate fitness (MSE + parsimony penalty).
 
@@ -131,8 +241,12 @@ class GeneticSymbolicRegressor:
         try:
             # PREVENTION: Skip overly complex expressions that cause SymPy hangs
             # This is more reliable than timeout because Python threads can't be killed
-            complexity = tree.complexity()
-            if complexity > 50:  # Very complex expressions often cause hangs
+            complexity = tree.complexity(
+                weights=self.config.operator_weights, 
+                default_weight=self.config.default_complexity_weight
+            )
+            # Adjust limit for weighted complexity (approx 50 * 1.5 avg weight = 75)
+            if complexity > 100:  # Increased limit for weighted schema
                 return float("inf")
 
             # Check expression for patterns that cause SymPy to hang
@@ -165,9 +279,21 @@ class GeneticSymbolicRegressor:
 
             # Use Huber loss for robustness against outliers
             # This prevents a single outlier from dominating the fitness
-            loss = huber_loss(y, predictions, delta=1.35)
+            # Use Huber loss for robustness against outliers
+            # This prevents a single outlier from dominating the fitness
+            # Calculate raw element-wise losss
+            raw_loss = huber_loss(y, predictions, delta=1.35)
+            
+            # Apply weights if provided
+            if sample_weight is not None:
+                loss = np.average(raw_loss, weights=sample_weight)
+            else:
+                loss = np.mean(raw_loss)
 
             # Parsimony pressure: penalize complexity
+            # Use Weighted Complexity
+            # Coeff might need adjustment if complexity scale changes?
+            # 0.01 * 50 = 0.5. 0.01 * 75 = 0.75. Slightly higher penalty is good.
             penalty = self.config.parsimony_coefficient * complexity
 
             return loss + penalty
@@ -176,7 +302,11 @@ class GeneticSymbolicRegressor:
             return float("inf")
 
     def _calculate_mse(
-        self, tree: ExpressionTree, X: np.ndarray, y: np.ndarray
+        self, 
+        tree: ExpressionTree, 
+        X: np.ndarray, 
+        y: np.ndarray,
+        sample_weight: np.ndarray | None = None
     ) -> float:
         """Calculate pure MSE without parsimony penalty.
 
@@ -229,6 +359,13 @@ class GeneticSymbolicRegressor:
             abs_diff = np.abs(diff)
             np.clip(abs_diff, 0, 1e100, out=abs_diff)
             
+            # Magnitude squared error
+            abs_diff = np.abs(diff)
+            np.clip(abs_diff, 0, 1e100, out=abs_diff)
+            
+            # Weighted average
+            if sample_weight is not None:
+                return float(np.average(abs_diff**2, weights=sample_weight))
             return float(np.mean(abs_diff**2))
         except (OverflowError, ValueError, RuntimeWarning):
             return float("inf")
@@ -347,6 +484,7 @@ class GeneticSymbolicRegressor:
         X: np.ndarray,
         y: np.ndarray,
         generation: int,
+        sample_weight: np.ndarray | None = None,
     ) -> list[ExpressionTree]:
         """Evolve one generation.
 
@@ -362,7 +500,7 @@ class GeneticSymbolicRegressor:
         # Evaluate fitness
         for tree in population:
             if tree.fitness is None or tree.age == 0:
-                tree.fitness = self._calculate_fitness(tree, X, y)
+                tree.fitness = self._calculate_fitness(tree, X, y, sample_weight=sample_weight)
             tree.age += 1
 
         # Sort by fitness (elitism)
@@ -458,7 +596,11 @@ class GeneticSymbolicRegressor:
                         target[-1] = migrant
 
     def _update_pareto_front(
-        self, population: list[ExpressionTree], X: np.ndarray, y: np.ndarray
+        self, 
+        population: list[ExpressionTree], 
+        X: np.ndarray, 
+        y: np.ndarray,
+        sample_weight: np.ndarray | None = None
     ):
         """Update Pareto front with best solutions from population.
 
@@ -471,7 +613,7 @@ class GeneticSymbolicRegressor:
         sorted_pop = sorted(population, key=lambda t: t.fitness)[:20]
 
         for tree in sorted_pop:
-            mse = self._calculate_mse(tree, X, y)
+            mse = self._calculate_mse(tree, X, y, sample_weight=sample_weight)
             if mse < 1e6 and np.isfinite(mse):
                 try:
                     # Use simple string for complex trees
@@ -490,7 +632,10 @@ class GeneticSymbolicRegressor:
                         expression=expr_str,
                         sympy_expr=sympy_expr,
                         mse=mse,
-                        complexity=tree.complexity(),
+                        complexity=tree.complexity(
+                            weights=self.config.operator_weights, 
+                            default_weight=self.config.default_complexity_weight
+                        ),
                         tree=tree.copy(),
                     )
                     self.pareto_front.add(solution)
@@ -560,7 +705,10 @@ class GeneticSymbolicRegressor:
                     expression=new_tree.to_pretty_string(),
                     sympy_expr=raw_expr,
                     mse=new_mse,
-                    complexity=new_tree.complexity(),
+                    complexity=new_tree.complexity(
+                        weights=self.config.operator_weights, 
+                        default_weight=self.config.default_complexity_weight
+                    ),
                     tree=new_tree,
                 )
                 new_front.add(new_sol)
@@ -572,7 +720,11 @@ class GeneticSymbolicRegressor:
         return new_front
 
     def fit(
-        self, X: np.ndarray, y: np.ndarray, variable_names: list[str] | None = None
+        self, 
+        X: np.ndarray, 
+        y: np.ndarray, 
+        variable_names: list[str] | None = None,
+        sample_weight: np.ndarray | None = None
     ) -> ParetoFront:
         """Fit the symbolic regressor to data (supports Boosting).
 
@@ -582,8 +734,14 @@ class GeneticSymbolicRegressor:
             variable_names: Names of input variables (default: ['x0', 'x1', ...])
 
         Returns:
-            Pareto front of solutions
         """
+        self._sample_weight = sample_weight  # Store for use in internal methods if needed? 
+                                             # Actually we pass it down.
+        
+        # --- SMART WEIGHTING (The "Vise Strategy" Automation) ---
+        # If no weights, calculate them heuristically to solve Parsimony Trap
+        if sample_weight is None:
+            sample_weight = self._calculate_smart_weights(X, y)
         if variable_names is None:
             variable_names = [f"x{i}" for i in range(X.shape[1])]
 
@@ -615,8 +773,8 @@ class GeneticSymbolicRegressor:
                     X, y, test_size=0.2, random_state=42
                 )
             except ImportError:
-                _X_train, y_train = X, y
-                _X_val, y_val = X, y
+                X_train, y_train = X, y
+                X_val, y_val = X, y
 
         # Normalize y if value range is very large (>1000)
         # This prevents MSE from becoming astronomically large for high-degree polynomials
@@ -815,16 +973,25 @@ class GeneticSymbolicRegressor:
                             break
 
                         islands[i] = self._evolve_population(
-                            island, X, y_residual, gen
-                        )  # Train on Residual
+                            island, 
+                            X_train, 
+                            y_train, 
+                            gen, 
+                            sample_weight=sample_weight if len(y_train)==len(y) else None # Simple split handling
+                        ) # Train on Residual
 
                     # Migration
                     if gen > 0 and gen % self.config.migration_interval == 0:
                         self._migrate(islands)
 
                     # Update Pareto front
-                    for island in islands:
-                        self._update_pareto_front(island, X, y_residual)
+                    for i, island in enumerate(islands):
+                        self._update_pareto_front(
+                            island, 
+                            X_val, 
+                            y_val, 
+                            sample_weight=sample_weight if len(y_val)==len(y) else None
+                        )
 
                     # Verbose progress output (every 5 generations)
                     if self.config.verbose and gen % 5 == 0:

@@ -1346,6 +1346,26 @@ def generate_candidate_features(
                     f"{variable_names[i]}*sqrt({variable_names[i]}^2+{variable_names[j]}^2)"
                 )
 
+    # --- NEW: PYTHAGOREAN KERNELS (Hyperbolic/Circular) ---
+    # Essential for sqrt(x^2+1) (Hyperbola) and sqrt(1-x^2) (Circle)
+    if include_transcendentals:
+         for i in range(n_vars):
+            col = X_data[:, i]
+            name = variable_names[i]
+            
+            # sqrt(x^2 + 1) - Hyperbolic
+            # Always valid
+            hyp_sq = col**2 + 1.0
+            features.append(np.sqrt(hyp_sq))
+            feature_names.append(f"sqrt({name}^2+1)")
+            
+            # sqrt(1 - x^2) - Circular (Semicircle)
+            # Only valid for |x| <= 1
+            circ_sq = 1.0 - col**2
+            if np.all(circ_sq >= 0):
+                features.append(np.sqrt(circ_sq))
+                feature_names.append(f"sqrt(1-{name}^2)")
+
     # --- NEW: QUANTUM PHYSICS INTERACTIONS (Planck's Law) ---
     if include_transcendentals:
         for i in range(n_vars):

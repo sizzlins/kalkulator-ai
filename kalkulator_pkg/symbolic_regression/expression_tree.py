@@ -339,6 +339,23 @@ class ExpressionNode:
     def count_nodes(self) -> int:
         """Count total nodes in this subtree."""
         return 1 + sum(child.count_nodes() for child in self.children)
+    
+    def calculate_weighted_complexity(self, weights: dict[str, float] | None = None, default_weight: float = 1.0) -> float:
+        """Calculate weighted complexity of this subtree."""
+        cost = default_weight
+        
+        # Determine cost of this node
+        if self.node_type in (NodeType.UNARY_OP, NodeType.BINARY_OP):
+            if weights:
+                cost = weights.get(str(self.value), default_weight)
+        elif self.node_type == NodeType.CONSTANT:
+            cost = 1.0
+        elif self.node_type == NodeType.VARIABLE:
+            cost = 1.0
+            
+        # Recursive sum
+        child_cost = sum(child.calculate_weighted_complexity(weights, default_weight) for child in self.children)
+        return cost + child_cost
 
     def depth(self) -> int:
         """Calculate depth of this subtree."""
@@ -453,9 +470,17 @@ class ExpressionTree:
             age=self.age,
         )
 
-    def complexity(self) -> int:
-        """Return the complexity (number of nodes) of this tree."""
-        return self.root.count_nodes()
+    def complexity(self, weights: dict[str, float] | None = None, default_weight: float = 1.0) -> float:
+        """Return the complexity of this tree.
+        
+        Args:
+            weights: Optional dictionary of operator weights.
+                     If None, returns simple node count (unweighted).
+            default_weight: Weight for unknown operators/nodes (default 1.0)
+        """
+        if weights is None:
+             return float(self.root.count_nodes())
+        return self.root.calculate_weighted_complexity(weights, default_weight)
 
     def depth(self) -> int:
         """Return the depth of this tree."""

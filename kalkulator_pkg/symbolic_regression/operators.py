@@ -245,11 +245,13 @@ def constant_optimization(
 
                 try:
                     pred = new_tree.evaluate(X)
-                    np.clip(pred, -1e100, 1e100, out=pred)  # Guard overflow
+                    # Use Magnitude Squared Error for complex support
                     diff = pred - y
-                    np.clip(diff, -1e100, 1e100, out=diff)  # Guard square
-
-                    new_mse = np.mean(diff**2)
+                    # np.abs handles complex magnitude correctly
+                    squared_error = np.abs(diff) ** 2
+                    # Clip to avoid overflow
+                    np.clip(squared_error, 0, 1e100, out=squared_error)
+                    new_mse = np.mean(squared_error)
 
                     if new_mse < current_mse:
                         current_mse = new_mse
@@ -278,10 +280,11 @@ def constant_optimization(
                 try:
                     const_node.value = nearest_int
                     pred = new_tree.evaluate(X)
-                    np.clip(pred, -1e100, 1e100, out=pred)
                     diff = pred - y
-                    np.clip(diff, -1e100, 1e100, out=diff)
-                    mse_int = np.mean(diff**2)
+                    # Use magnitude squared error
+                    squared_error = np.abs(diff) ** 2
+                    np.clip(squared_error, 0, 1e100, out=squared_error)
+                    mse_int = np.mean(squared_error)
                     
                     # Accept integer if it's better, equal, or extremely close (within 5% tolerance for parsimony)
                     # Note: On perfect data, mse_int should be lower. 

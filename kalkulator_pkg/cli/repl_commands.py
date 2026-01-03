@@ -922,7 +922,7 @@ def _handle_evolve(text, variables=None):
                     if val.imag == 0:
                         val = val.real  # Extract real part
                     else:
-                        return np.nan  # True complex value (has imaginary component)
+                        return val  # Allow complex values!
                 
                 s = str(val).lower()
                 if "zoo" in s or "inf" in s:
@@ -930,24 +930,52 @@ def _handle_evolve(text, variables=None):
                 try:
                     return float(val)
                 except (ValueError, TypeError):
-                    return np.nan
+                    try:
+                        return complex(val)
+                    except (ValueError, TypeError):
+                        return np.nan
 
-            vector_float = np.vectorize(safe_float)
+            vector_float = np.vectorize(safe_float, otypes=[object])
             y = vector_float(y)
             X = vector_float(X)
+
+            # Attempt to convert object arrays to numeric (float or complex)
+            try:
+                y = y.astype(np.float64)
+            except (ValueError, TypeError):
+                try:
+                    y = y.astype(np.complex128)
+                except Exception:
+                    pass  # Keep as object if fails (unlikely given safe_float)
+
+            try:
+                X = X.astype(np.float64)
+            except (ValueError, TypeError):
+                try:
+                    X = X.astype(np.complex128)
+                except Exception:
+                    pass
+
         except Exception:
             # Fallback if vectorization fails
             pass
             
         # Now filter non-finite values (inf, nan) from both inputs (X) and outputs (y)
-        # Note: Complex values become nan during float conversion, so they're filtered here
         original_len = len(y)
-        y_finite = np.isfinite(y)
+        
+        # Check finiteness (works for float and complex128, but needs helper for object)
+        def is_finite_safe(arr):
+            if arr.dtype.kind in 'fc': # float or complex
+                return np.isfinite(arr)
+            # Fallback for object array
+            return np.array([np.isfinite(x) if isinstance(x, (float, int, complex, np.number)) else False for x in arr.flatten()]).reshape(arr.shape)
+
+        y_finite = is_finite_safe(y)
         # For X (2D array), check all columns - row is valid only if ALL inputs are finite
         if X.ndim > 1:
-            x_finite = np.all(np.isfinite(X), axis=1)
+            x_finite = np.all(is_finite_safe(X), axis=1)
         else:
-            x_finite = np.isfinite(X)
+            x_finite = is_finite_safe(X)
         finite_mask = y_finite & x_finite
         
         num_filtered = original_len - np.sum(finite_mask)
