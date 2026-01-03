@@ -334,6 +334,22 @@ class GeneticSymbolicRegressor:
                  scale[mask] = 1e100 / mag[mask]
                  predictions = predictions * scale
 
+            # SCALE-INVARIANT FITNESS MODE
+            # When data spans many orders of magnitude (e.g., 1e-25 to 1e23),
+            # use relative error instead of absolute error. This makes all points
+            # contribute equally regardless of their scale.
+            if hasattr(self, '_use_relative_fitness') and self._use_relative_fitness:
+                # Adaptive epsilon based on median to avoid div-by-zero
+                epsilon = np.median(np.abs(y)) * 1e-10 if len(y) > 0 else 1e-10
+                epsilon = max(epsilon, 1e-100)  # Minimum epsilon
+                
+                # Relative error: (y_true - y_pred) / |y_true|
+                relative_error = (y - predictions) / (np.abs(y) + epsilon)
+                
+                # Use weighted MSE on relative errors
+                return weighted_mse(np.zeros_like(relative_error), relative_error, sample_weight)
+            
+            # STANDARD MSE MODE (for normal-range data)
             diff = predictions - y
             
             # Phase-Aware Loss for Complex Log Scaling
@@ -801,103 +817,25 @@ class GeneticSymbolicRegressor:
         if y_median == 0: y_median = 1e-10 # Prevent div by zero
         skew_ratio = y_max / y_median if y_max > 0 else 0
         
+        
         if skew_ratio > 1000 or (y_range > 1e6):
-            # Check for complex data first
-            is_complex_y = np.iscomplexobj(y)
-            if is_complex_y:
-                 # Complex data: TRY LOG FIRST (scimath.log) with PHASE-AWARE LOSS
-                 # Linear scaling failed (vanishing gradients).
-                 # Log scaling works for range, but needs phase-aware loss to handle branch cuts.
-                 self._log_strategy = "log"
-                 
-                 # Avoid log(0)
-                 y_residual_safe = y_residual.copy()
-                 y_residual_safe[y_residual == 0] = 1e-10+0j
-                 
-                 y_residual = np.lib.scimath.log(y_residual_safe)
-                 if self.config.verbose:
-                    print(f"Data skew detected (ratio {skew_ratio:.1f}). Complex data -> Applying COMPLEX LOG transform.")
-            else:
-                is_positive = (y_min > 1e-12)
-                
-                if is_positive:
-                    self._log_strategy = "log"
-                    y_residual = np.log(y_residual)
-                    if self.config.verbose:
-                        print(f"Data skew detected (ratio {skew_ratio:.1f}). Inputs positive -> Applying LOG transform.")
-                else: 
-                     # For mixed real data, log is risky (generates complex from real).
-                     # But for x^y with negative base, we WANT complex log.
-                     # So let's check if we CAN use complex log?
-                     # Actually, let's just use complex log if skew is huge.
-                     # If the user gives real data but huge skew involving negatives, 
-                     # likely it's a power law with even/odd integers or exp.
-                     
-                     # FORCE LOG (Complex) for high skew
-                     self._log_strategy = "log"
-                     
-                     # Avoid log(0)
-                     y_residual_safe = y_residual.copy()
-                     if np.iscomplexobj(y_residual):
-                          y_residual_safe[y_residual == 0] = 1e-10+0j
-                     else:
-                          y_residual_safe[y_residual == 0] = 1e-10
-                          
-                     y_residual = np.lib.scimath.log(y_residual_safe)
-                     if self.config.verbose:
-                         print(f"Data skew detected (ratio {skew_ratio:.1f}). Inputs mixed/neg -> Applying COMPLEX LOG transform.")
-                    
-                     # Fallback to arcsinh if log failed? No scimath.log works.
-                     # self._log_strategy = "arcsinh"
-                     # y_residual = np.arcsinh(y_residual)
-
-            if self._log_strategy == "log":
-                 # Use scimath to handle complex or negative inputs safely
-                 
-                 # Apply safety to train/val as well
-                 y_train_safe = y_train.copy()
-                 y_val_safe = y_val.copy()
-                 
-                 if np.iscomplexobj(y_train):
-                     y_train_safe[y_train == 0] = 1e-10+0j
-                 else:
-                     y_train_safe[y_train == 0] = 1e-10
-
-                 if np.iscomplexobj(y_val):
-                     y_val_safe[y_val == 0] = 1e-10+0j
-                 else:
-                     y_val_safe[y_val == 0] = 1e-10
-                     
-                 y_train = np.lib.scimath.log(y_train_safe)
-                 y_val = np.lib.scimath.log(y_val_safe)
-                 
-                 y_min_log = 0 
-                 y_max_log = np.max(np.abs(y_residual))
-                 
-                 y_range = y_max_log # Radius
-                 y_min = 0 # Scale by max magnitude.
-                 
-            elif self._log_strategy == "linear":
-                 # Fallback if needed, but we prefer log now.
-                 pass
-                 
-            else:
-                 y_train = np.arcsinh(y_train)
-                 y_val = np.arcsinh(y_val)
-                 # Recalculate range
-                 # Handle complex min/max for range scaling
-                 if is_complex_y:
-                      # range is radius
-                      y_min_log = 0
-                      y_max_log = np.max(np.abs(y_residual))
-                 else:
-                      y_min_log, y_max_log = np.arcsinh(y_min), np.arcsinh(y_max)
-                 
-                 y_range = y_max_log - y_min_log
-                 y_min = y_min_log
-
-        if y_range > 1000 or self._log_strategy: 
-            # Normalize to [0,1] range
+            # SCALE-INVARIANT FITNESS MODE
+            # Instead of transforming data (which changes the problem from x^y to y*log(x)),
+            # we use relative error fitness. This allows the algorithm to search in the
+            # original space while handling wide value ranges gracefully.
+            self._use_relative_fitness = True
+            
+            if self.config.verbose:
+                print(f"Data skew detected (ratio {skew_ratio:.1f}). Using scale-invariant fitness.")
+                print(f"  → Algorithm will discover functions in original form (e.g., x^y not y*log(x))")
+            
+            # No data transform needed - fitness function handles scale
+            self._normalization = None
+            self._log_strategy = None
+        
+        # Apply minimal normalization only if still needed (for moderate ranges)
+        if y_range > 1000 and not hasattr(self, '_use_relative_fitness'):
+            # Normalize to [0,1] range for moderate data (not extreme)
             y_scale = y_range + 1e-10
             y_train = (y_train - y_min) / y_scale
             y_val = (y_val - y_min) / y_scale
