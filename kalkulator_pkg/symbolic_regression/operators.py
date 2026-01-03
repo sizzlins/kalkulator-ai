@@ -78,9 +78,35 @@ def point_mutation(
                 node.value = random.choice(unary_ops)
 
         elif node.node_type == NodeType.BINARY_OP:
-            # Replace with different binary operator
-            if binary_ops:
-                node.value = random.choice(binary_ops)
+            # INVERSE-AWARE MUTATIONS for pow operator
+            # This enables discovery of complex functions like (1+x)^(1/x)
+            if node.value == "pow" and len(node.children) == 2 and random.random() < 0.3:
+                # 30% chance to try inverse exponent mutation
+                base_node, exp_node = node.children
+                
+                # Strategy 1: If exponent is a constant, try reciprocal
+                if exp_node.node_type == NodeType.CONSTANT:
+                    # x^a → x^(1/a), but guard against zero
+                    if abs(exp_node.value) > 0.01:  # Defensive: avoid division by zero
+                        exp_node.value = 1.0 / exp_node.value
+                
+                # Strategy 2: If exponent is a variable, wrap in reciprocal
+                elif exp_node.node_type == NodeType.VARIABLE:
+                    # x^y → x^(1/y): create division node
+                    inv_node = ExpressionNode(
+                        node_type=NodeType.BINARY_OP,
+                        value="div",
+                        children=[
+                            ExpressionNode(NodeType.CONSTANT, 1.0),
+                            exp_node.copy_subtree()
+                        ]
+                    )
+                    node.children[1] = inv_node
+            else:
+                # Original behavior: replace with different binary operator
+                if binary_ops:
+                    node.value = random.choice(binary_ops)
+
 
     return new_tree
 
