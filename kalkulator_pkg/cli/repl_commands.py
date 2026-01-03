@@ -900,13 +900,30 @@ def _handle_evolve(text, variables=None):
                     find_data_points, input_vars
                 )
 
-                # If find() succeeded, add its expression as a seed
+                # QUALITY CHECK: Only use seed if it's actually good
+                # Parse R² from confidence note (e.g., "[R²=0.95]" or "[LOW CONFIDENCE: R²=0.17]")
+                use_seed = False
                 if success and func_str:
-                    seeds.append(func_str)
-                    display = func_str[:50] + "..." if len(func_str) > 50 else func_str
-                    print(
-                        f"Hybrid seeding: using find() result '{display}' as starting point"
-                    )
+                    # Extract R² from factored (confidence note)
+                    r_squared = 0.0  # Default: assume bad if no R² reported (pessimistic but safe)
+                    if factored and "R²=" in str(factored):
+                        r2_match = re.search(r"R²=([\d.]+)", str(factored))
+                        if r2_match:
+                            r_squared = float(r2_match.group(1))
+                    
+                    # Threshold: Only use seed if R² > 0.7 (good fit)
+                    if r_squared > 0.7:
+                        use_seed = True
+                        seeds.append(func_str)
+                        display = func_str[:50] + "..." if len(func_str) > 50 else func_str
+                        print(
+                            f"Hybrid seeding: using find() result '{display}' as starting point"
+                        )
+                    else:
+                        print(
+                            f"Hybrid seeding: find() result has low R²={r_squared:.2f}, skipping seed"
+                        )
+                        print("  → Using pure evolve instead (no bad seed)")
             except Exception as e:
                 print(f"Hybrid mode: find() failed ({e}), continuing with other seeds")
 
