@@ -49,7 +49,7 @@ WORKER_POOL_SIZE = int(
 NUMERIC_FALLBACK_ENABLED = (
     os.getenv("KALKULATOR_NUMERIC_FALLBACK_ENABLED", "true").lower() == "true"
 )
-OUTPUT_PRECISION = int(os.getenv("KALKULATOR_OUTPUT_PRECISION", "6"))
+OUTPUT_PRECISION = int(os.getenv("KALKULATOR_OUTPUT_PRECISION", "15"))
 SOLVER_METHOD = os.getenv(
     "KALKULATOR_SOLVER_METHOD", "auto"
 )  # "auto", "symbolic", "numeric"

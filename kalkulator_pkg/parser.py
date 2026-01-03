@@ -88,8 +88,13 @@ def format_number(val: Any, precision: int = OUTPUT_PRECISION) -> str:
         Formatted string representation of the number
     """
     try:
-        fmt = "{:." + str(int(precision)) + "g}"
-        return fmt.format(float(val))
+        num = float(val)
+        # Use fixed-point notation with high precision to preserve exact values
+        # Format with enough decimal places to capture precision
+        formatted = f"{num:.{precision}f}"
+        # Remove trailing zeros and decimal point if not needed
+        formatted = formatted.rstrip('0').rstrip('.')
+        return formatted
     except (ValueError, TypeError, OverflowError):
         # Fallback for non-numeric or invalid values
         return str(val)
@@ -436,6 +441,43 @@ def _restore_function_commas(expr: str, replacements: dict[str, str]) -> str:
     return expr
 
 
+
+def _strip_comments(text: str) -> str:
+    """Strip comments starting with #, respecting quotes.
+
+    Args:
+        text: Input string
+
+    Returns:
+        String with comments removed
+    """
+    out = []
+    in_quote = False
+    quote_char = None
+    i = 0
+    while i < len(text):
+        char = text[i]
+        if in_quote:
+            if char == quote_char:
+                # Check for escape
+                if i > 0 and text[i - 1] == "\\":
+                    pass
+                else:
+                    in_quote = False
+            out.append(char)
+        else:
+            if char == '"' or char == "'":
+                in_quote = True
+                quote_char = char
+                out.append(char)
+            elif char == "#":
+                break  # Comment start
+            else:
+                out.append(char)
+        i += 1
+    return "".join(out)
+
+
 def preprocess(
     input_str: str,
     skip_exponent_conversion: bool = False,
@@ -444,6 +486,7 @@ def preprocess(
     """Preprocess input string for parsing.
 
     Applies transformations:
+    - Strips comments (# ...)
     - Validates input length and forbidden tokens
     - Standardizes mathematical symbols (unicode variants to ASCII)
     - Converts exponents (^ to **, superscripts to **)
@@ -464,6 +507,12 @@ def preprocess(
         ValidationError: If input is too long, contains forbidden tokens,
                         or has unbalanced parentheses/brackets
     """
+    if not input_str:
+        raise ValidationError("Input cannot be empty", "EMPTY_INPUT")
+
+    # Strip comments first
+    input_str = _strip_comments(input_str)
+    
     # Input size check
     input_str = input_str.strip() if input_str else ""
 

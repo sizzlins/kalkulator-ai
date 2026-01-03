@@ -247,6 +247,38 @@ print(model)  # Shows discovered equations
 
 > **Note:** PySR is a separate project. First run downloads Julia and takes 1-2 minutes.
 
+## Floating-Point Precision Limitations
+
+⚠️ **Important:** Kalkulator uses standard IEEE 754 double-precision floating-point arithmetic, which has **~15-17 decimal digits of precision**.
+
+### What This Means
+
+Values beyond this precision are **automatically rounded**:
+
+```
+>>> 1.000000000000000000000000000000000000000001
+Result: 1
+
+>>> 1 = 0.9999999999999999999999999999999999999999999
+Result: Identity  # Both round to exactly 1.0
+```
+
+This is **not a bug** - it's a fundamental limitation of how computers represent real numbers. The extra digits beyond position 15-17 are lost during parsing.
+
+### When This Matters
+
+- **Cryptography**: Use arbitrary-precision libraries (`decimal.Decimal`, SymPy `Rational`)
+- **Financial calculations**: Consider using integer cents instead of fractional dollars
+- **Exact symbolic math**: Define expressions symbolically (e.g., `1/3` not `0.333333...`)
+
+### When It Doesn't Matter
+
+- **Scientific calculations**: 15 digits is sufficient for most physics/engineering
+- **Data analysis**: Machine learning models don't need beyond double precision
+- **Everyday math**: Calculator-style operations
+
+For true arbitrary precision, consider using SymPy's `Rational` or Python's `decimal.Decimal` module directly.
+
 ## Architecture
 
 - **Core**: `kalkulator_pkg`
