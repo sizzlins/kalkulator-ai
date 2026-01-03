@@ -78,6 +78,148 @@ Discovered: f(x) = exp(LambertW(log(x)))
 g(x) = exp(-x^2)
 ```
 
+### Best Practices for Data Input
+
+> [!WARNING] > **Common Misconception: "More Data = Better Discovery"**
+>
+> Unlike training an LLM (where more diverse data = broader knowledge), symbolic regression finds **ONE specific function** from its output. This is fundamentally different:
+>
+> | Task                                       | Data Strategy              |
+> | ------------------------------------------ | -------------------------- |
+> | **LLM Training:** Learn many topics        | More books = better ✅     |
+> | **Symbolic Regression:** Find one equation | Cleaner signal = better ✅ |
+>
+> **Think of it like:**
+>
+> - **LLM:** Building a library → need cookbooks, car manuals, history books, etc.
+> - **Symbolic Regression:** Solving a single puzzle → need clear, consistent pieces
+>
+> **Real Example:**
+>
+> - ⚠️ 148 points with extreme values (10^-25 to 10^23) → **Works, but slow** (Generation 5, MSE 4.6e-05)
+> - ✅ 6 clean points (1 to 100 range) → **Found `x^y` instantly** in Generation 0 (MSE 0.0)
+>
+> Adding more data doesn't teach the algorithm about "different functions"—it just adds more measurements of the **same function**. Clean, strategic data is faster and more accurate.
+
+> **Key Insight:** Quality > Quantity. Strategic, well-behaved data enables faster, more accurate discovery than large datasets with extreme values.
+
+#### General Principles
+
+| Characteristic   | ✅ Good                     | ❌ Bad                                              |
+| ---------------- | --------------------------- | --------------------------------------------------- |
+| **Sample Count** | 8-25 strategic points       | 100+ redundant points or <5 sparse points           |
+| **Output Range** | 2-4 orders of magnitude     | >10 orders of magnitude (e.g., 0.0001 to 1,000,000) |
+| **Distribution** | Evenly spaced in domain     | Clustered or completely random                      |
+| **Input Values** | Simple integers/fractions   | Only edge cases or special values                   |
+| **Noise**        | Clean or consistently noisy | Mixed infinities/NaN/complex values                 |
+
+#### Why Data Quality Still Matters
+
+**Example: Wide Range Data (148 points)**
+
+```
+>>> f(x,y)=x^y
+>>> f(-5,-5), f(-5,-4), ..., f(5,5), f(-20,-19), ..., f(20,e), f(pi,i), ...
+Data skew detected (ratio 708235345355338032349184.0). Using scale-invariant fitness.
+  → Algorithm will discover functions in original form
+Result: x**y  # ✅ Finds it correctly with scale-invariant fitness!
+MSE: 4.60e-05
+```
+
+**However**, cleaner data is still better:
+
+**Example: Clean Data (6 points)**
+
+```
+>>> evolve f(2,2)=4, f(2,3)=8, f(3,2)=9, f(4,2)=16, f(2,0)=1, f(10,2)=100
+Generation 0: Best MSE 0.00e+00 (x**y)  # ✅ Found INSTANTLY!
+Result: x^y
+MSE: 0.0
+```
+
+**Key Difference:**
+
+- **148 points** (wide range): Works, but takes longer (Generation 5, MSE 4.60e-05)
+- **6 points** (clean): Instant discovery (Generation 0, MSE 0.0)
+
+**Takeaway:** While Kalkulator can now handle extreme data ranges, providing clean, strategic data is still faster and more accurate.
+
+#### Function-Specific Guidelines
+
+**Power Functions:** `f(x,y) = x^y`
+
+```
+f(2,2)=4, f(2,3)=8, f(3,2)=9, f(4,2)=16, f(2,0)=1, f(10,2)=100
+```
+
+↳ _6-10 points, positive bases, small exponents_
+
+**Polynomials:** `f(x) = ax² + bx + c`
+
+```
+f(-2)=-3, f(-1)=0, f(0)=1, f(1)=0, f(2)=-3
+```
+
+↳ _5-7 points, symmetric around zero, include vertex_
+
+**Trigonometric:** `f(x) = A·sin(Bx + C)`
+
+```
+f(0)=0, f(π/4)=0.707, f(π/2)=1, f(3π/4)=0.707, f(π)=0, f(3π/2)=-1
+```
+
+↳ _Cover one full period, include zeros/peaks_
+
+**Exponential:** `f(x) = A·e^(Bx)`
+
+```
+f(0)=1, f(1)=2.718, f(2)=7.389, f(3)=20.085
+```
+
+↳ _Linear spacing in domain, watch for explosion_
+
+**Rational:** `f(x) = (ax+b)/(cx+d)`
+
+```
+f(-10)=1.2, f(-2)=4, f(-1)=∞, f(0)=-2, f(1)=-0.67, f(10)=0.82
+```
+
+↳ _Include points near asymptotes, but not exactly at them_
+
+#### The "Goldilocks Zone"
+
+| Points    | Effect               | Use Case                                                        |
+| --------- | -------------------- | --------------------------------------------------------------- |
+| **< 6**   | Underconstrained     | Multiple functions fit; ambiguous                               |
+| **8-25**  | ✅ Optimal           | Fast, stable, clear pattern                                     |
+| **30-50** | Acceptable           | Slightly slower, may introduce noise                            |
+| **> 100** | ❌ Counterproductive | Numerical instability, pattern dilution, computational overhead |
+
+#### Quick Checklist
+
+Before running `find` or `evolve`:
+
+1. ✅ Do output values stay within 3-4 orders of magnitude?
+2. ✅ Are inputs evenly distributed across the domain?
+3. ✅ Do you have 8-20 data points?
+4. ✅ Did you include critical points (zeros, peaks, inflections)?
+5. ✅ Are all values real numbers (no complex/infinite)?
+
+If you answered **yes** to all, you're ready for accurate discovery!
+
+> [!NOTE] > **Technical Detail: How Kalkulator Handles Wide-Range Data**
+>
+> When data spans many orders of magnitude (e.g., 1e-25 to 1e23), Kalkulator automatically uses **scale-invariant fitness** instead of transforming your data. This allows the genetic algorithm to discover functions in their original form (e.g., `x^y` not `y*log(x)`).
+>
+> You'll see this message:
+>
+> ```
+> Data skew detected (ratio 100000000000.0). Using scale-invariant fitness.
+>   → Algorithm will discover functions in original form
+> ```
+>
+> This is a **feature**, not a warning - it means the algorithm is being smart!
+
 ### Advanced Data Input
 
 **File Import (CSV/Excel)**
