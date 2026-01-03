@@ -440,6 +440,22 @@ def _handle_evolve(text, variables=None):
         from ..symbolic_regression import GeneticConfig
         from ..symbolic_regression import GeneticSymbolicRegressor
 
+        # SHORTCUT COMMANDS: Expand to full evolve syntax
+        text_lower = text.lower().strip()
+        
+        # all: Full power mode (hybrid + verbose + boost 3)
+        if text_lower.startswith('all '):
+            text = 'evolve --hybrid --verbose --boost 3 ' + text[4:]
+        # b: Fast mode (verbose + boost 3, no hybrid)
+        elif text_lower.startswith('b '):
+            text = 'evolve --verbose --boost 3 ' + text[2:]
+        # h: Smart mode (hybrid + verbose)
+        elif text_lower.startswith('h '):
+            text = 'evolve --hybrid --verbose ' + text[2:]
+        # v: Verbose mode
+        elif text_lower.startswith('v '):
+            text = 'evolve --verbose ' + text[2:]
+
         # Strategy 1: Seeding
         # Parse "--seed 'expr'" or "--seed "expr""
         seeds = []
@@ -904,10 +920,10 @@ def _handle_evolve(text, variables=None):
                 # Parse R² from confidence note (e.g., "[R²=0.95]" or "[LOW CONFIDENCE: R²=0.17]")
                 use_seed = False
                 if success and func_str:
-                    # Extract R² from factored (confidence note)
+                    # Extract R² from error (confidence note - 4th parameter)
                     r_squared = 0.0  # Default: assume bad if no R² reported (pessimistic but safe)
-                    if factored and "R²=" in str(factored):
-                        r2_match = re.search(r"R²=([\d.]+)", str(factored))
+                    if error and "R²=" in str(error):
+                        r2_match = re.search(r"R²=([\d.]+)", str(error))
                         if r2_match:
                             r_squared = float(r2_match.group(1))
                     
