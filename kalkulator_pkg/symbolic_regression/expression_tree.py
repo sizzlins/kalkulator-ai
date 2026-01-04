@@ -22,6 +22,7 @@ from typing import Callable
 
 import numpy as np
 import sympy as sp
+from scipy import special as scipy_special  # For Bessel functions
 
 
 class NodeType(Enum):
@@ -72,20 +73,63 @@ def safe_div(x, y):
 
 
 def safe_pow(x, y):
-    # Use scimath.power to handle negative bases -> complex results
-    # Still clip exponent to avoid overflow, but allow complex base
-    # Output clipping is tricky for complex, we clip magnitude?
-    res = np.lib.scimath.power(x, np.clip(y, -10, 10))
-    # Complex clipping (magnitude cap)
-    # If magnitude > 1e100, scale it down
-    mag = np.abs(res)
-    mask = mag > 1e100
-    if np.any(mask):
-        # Create scale factor: 1.0 where safe, 1e100/mag where unsafe
-        scale = np.ones_like(mag)
-        scale[mask] = 1e100 / mag[mask]
-        res = res * scale
-    return res
+    """Safe power operation with reasonable limits but supporting x^x features.
+    
+    Supersedes the old aggressive clipping version.
+    Now handles negative bases by returning complex numbers when needed.
+    """
+    # Clip exponent to reasonable range that supports x^x up to ~100
+    # 100^100 is 1e200, which fits in float64.
+    y_clipped = np.clip(y, -100, 100)
+    
+    # Clip base magnitude to prevent immediate overflow on large bases
+    # e.g. 1e150^2 -> 1e300.
+    x_clipped = np.clip(x, -1e150, 1e150)
+    
+    try:
+        # Determine if we need complex arithmetic
+        # Trigger if inputs are complex OR if base < 0 and exponent is fractional
+        is_complex = np.iscomplexobj(x) or np.iscomplexobj(y)
+        
+        if not is_complex:
+            # Check for negative bases combined with fractional exponents
+            # This would produce NaNs in real arithmetic
+            has_neg_base = np.any(x_clipped < 0)
+            if has_neg_base:
+                # Check if any corresponding exponents are non-integers
+                # We use a relaxed tolerance for "integer-ness"
+                is_integer_exp = np.abs(y_clipped - np.round(y_clipped)) < 1e-9
+                
+                # If we have negative base AND non-integer exponent -> need complex
+                # We can do this element-wise or just switch to complex mode globally
+                # Global switch is safer and simpler
+                if np.any((x_clipped < 0) & (~is_integer_exp)):
+                    is_complex = True
+
+        if is_complex:
+            # Cast to complex to allow negative base powers
+            # e.g. (-2.5)^(-2.5) -> complex
+            x_complex = x_clipped.astype(np.complex128)
+            y_complex = y_clipped.astype(np.complex128)
+            result = np.power(x_complex, y_complex)
+            
+            # Clip magnitude to prevent overflow
+            mag = np.abs(result)
+            mask = mag > 1e100
+            if np.any(mask):
+                 # Scale down to limit while preserving phase
+                 scale = 1e100 / (mag[mask] + 1e-300)
+                 result[mask] *= scale
+            return result
+        else:
+            # Pure real path
+            result = np.power(x_clipped, y_clipped)
+            return np.clip(result, -1e100, 1e100)
+            
+    except Exception as e:
+        # print(f"DEBUG: safe_pow crashed: {e}") 
+        return np.zeros_like(x) if isinstance(x, np.ndarray) else 0.0
+
 
 
 def safe_sinh(x):
@@ -134,6 +178,82 @@ def safe_cube(x):
     return np.clip(x * x * x, -1e100, 1e100)
 
 
+def safe_prime_pi(x):
+    """Count primes <= x. Vectorized for numpy arrays."""
+    from sympy import primepi
+    
+    def _count_primes(val):
+        # 1. Reject Complex / non-real
+        if np.iscomplexobj(val):
+            return 0.0
+        if isinstance(val, complex):
+            return 0.0
+            
+        # 2. Reject non-finite or negative
+        if not np.isfinite(val) or val < 0:
+            return 0.0
+            
+        # 3. Safeguard against large inputs (O(N!) prevention)
+        # primepi gets slow for N > 10^9. Genetic engine calls it frequently.
+        # Cap at 10^7 (10 million) to keep it responsive (approx 0.1ms)
+        if val > 1_000_000:
+             # Fast approximation for large x: x / ln(x)
+             return float(val / np.log(val))
+
+        try:
+            return float(primepi(int(val)))
+        except Exception:
+            return 0.0
+    
+    return np.vectorize(_count_primes, otypes=[float])(x)
+
+
+def safe_bitwise_xor(x, y):
+    """Bitwise XOR for floating point inputs (casts to int)."""
+    if not (np.isscalar(x) and np.isscalar(y)) or not (np.isreal(x) and np.isreal(y)):
+        return 0.0
+    # Reject complex/nan/inf
+    if not (np.isfinite(x) and np.isfinite(y)):
+        return 0.0
+    try:
+        return float(int(np.real(x)) ^ int(np.real(y)))
+    except:
+        return 0.0
+
+def safe_bitwise_and(x, y):
+    if not (np.isscalar(x) and np.isscalar(y)) or not (np.isreal(x) and np.isreal(y)): return 0.0
+    if not (np.isfinite(x) and np.isfinite(y)): return 0.0
+    try: return float(int(np.real(x)) & int(np.real(y)))
+    except: return 0.0
+
+def safe_bitwise_or(x, y):
+    if not (np.isscalar(x) and np.isscalar(y)) or not (np.isreal(x) and np.isreal(y)): return 0.0
+    if not (np.isfinite(x) and np.isfinite(y)): return 0.0
+    try: return float(int(np.real(x)) | int(np.real(y)))
+    except: return 0.0
+
+def safe_lshift(x, y):
+    if not (np.isscalar(x) and np.isscalar(y)) or not (np.isreal(x) and np.isreal(y)): return 0.0
+    if not (np.isfinite(x) and np.isfinite(y)): return 0.0
+    try:
+        iy = int(np.real(y))
+        if iy < 0 or iy > 64: return 0.0 # Cap shift
+        return float(int(np.real(x)) << iy)
+    except: return 0.0
+
+def safe_rshift(x, y):
+    if not (np.isscalar(x) and np.isscalar(y)) or not (np.isreal(x) and np.isreal(y)): return 0.0
+    if not (np.isfinite(x) and np.isfinite(y)): return 0.0
+    try:
+        iy = int(np.real(y))
+        if iy < 0 or iy > 64: return 0.0
+        return float(int(np.real(x)) >> iy)
+    except: return 0.0
+
+
+
+
+
 UNARY_OPERATORS: dict[str, Callable[[float], float]] = {
     "sin": np.sin,
     "cos": np.cos,
@@ -151,6 +271,10 @@ UNARY_OPERATORS: dict[str, Callable[[float], float]] = {
     "sinh": safe_sinh,
     "cosh": safe_cosh,
     "tanh": np.tanh,
+    "bessel_j0": scipy_special.j0,  # Bessel function of first kind, order 0
+    "bessel_j1": scipy_special.j1,  # Bessel function of first kind, order 1
+    "gamma": scipy_special.gamma,   # Gamma function (extends factorials)
+    "prime_pi": safe_prime_pi,      # Prime-counting function π(x)
 }
 
 BINARY_OPERATORS: dict[str, Callable[[float, float], float]] = {
@@ -161,26 +285,34 @@ BINARY_OPERATORS: dict[str, Callable[[float, float], float]] = {
     "pow": safe_pow,
     "max": np.maximum,
     "min": np.minimum,
+    "bitwise_xor": np.vectorize(safe_bitwise_xor),
+    "bitwise_and": np.vectorize(safe_bitwise_and),
+    "bitwise_or": np.vectorize(safe_bitwise_or),
+    "lshift": np.vectorize(safe_lshift),
+    "rshift": np.vectorize(safe_rshift),
 }
 
 # SymPy equivalents for symbolic conversion
-SYMPY_UNARY: dict[str, Callable] = {
+SYMPY_UNARY = {
     "sin": sp.sin,
     "cos": sp.cos,
     "tan": sp.tan,
     "exp": sp.exp,
     "log": sp.log,
-    "plog": lambda x: sp.log(sp.Abs(x)),  # Protected log
+    "plog": lambda x: sp.log(sp.Abs(x) + 1e-10),
     "sqrt": sp.sqrt,
-    "psqrt": lambda x: sp.sqrt(sp.Abs(x)),  # Protected sqrt
+    "psqrt": lambda x: sp.sqrt(sp.Abs(x)),
     "abs": sp.Abs,
     "neg": lambda x: -x,
-    "inv": lambda x: 1 / x,
+    "inv": lambda x: 1/x,
     "square": lambda x: x**2,
     "cube": lambda x: x**3,
     "sinh": sp.sinh,
     "cosh": sp.cosh,
     "tanh": sp.tanh,
+    "bessel_j0": lambda x: sp.besselj(0, x),
+    "bessel_j1": lambda x: sp.besselj(1, x),
+    "prime_pi": sp.primepi,
 }
 
 SYMPY_BINARY: dict[str, Callable] = {
@@ -191,6 +323,12 @@ SYMPY_BINARY: dict[str, Callable] = {
     "pow": lambda x, y: x**y,
     "max": sp.Max,
     "min": sp.Min,
+    # Use symbolic functions for bitwise ops to preserve semantics
+    "bitwise_xor": sp.Function("bitwise_xor"),
+    "bitwise_and": sp.Function("bitwise_and"),
+    "bitwise_or": sp.Function("bitwise_or"),
+    "lshift": sp.Function("lshift"),
+    "rshift": sp.Function("rshift"),
 }
 
 
@@ -558,6 +696,20 @@ class ExpressionTree:
                 # If eval fails (e.g. div by zero), keep original structure
                 return node
         
+        # 3. Special Case: Bitwise Operator Constant Snapping
+        # If we have bitwise_xor(x, 5.43), the 5.43 is effectively 5.
+        # We snap it to nearest integer to make the output cleaner (e.g. "bitwise_xor(x, 5)").
+        if node.node_type == NodeType.BINARY_OP and node.value in {
+            "bitwise_xor", "bitwise_and", "bitwise_or", "lshift", "rshift"
+        }:
+            for child in node.children:
+                if child.node_type == NodeType.CONSTANT:
+                    try:
+                        # Snap to nearest integer
+                        child.value = float(round(child.value))
+                    except:
+                        pass
+
         return node
 
     @staticmethod
@@ -650,6 +802,10 @@ class ExpressionTree:
         """
 
         def _convert_node(node) -> ExpressionNode:
+            # Handle Imaginary Unit I -> treat as 0.0 to strip complex parts from seeds
+            if node == sp.I:
+                 return ExpressionNode(NodeType.CONSTANT, 0.0)
+
             # 1. Constant
             if node.is_Number:
                 try:
@@ -740,6 +896,14 @@ class ExpressionTree:
                 child = _convert_node(node.args[0])
                 if fname == "abs":
                     fname = "abs"
+
+                if len(node.args) == 2:
+                    # Binary function (e.g. bitwise_xor, lshift, rshift, pow, atan2)
+                    child2 = _convert_node(node.args[1])
+                    parent = ExpressionNode(NodeType.BINARY_OP, fname, [child, child2])
+                    child.parent = parent
+                    child2.parent = parent
+                    return parent
 
                 parent = ExpressionNode(NodeType.UNARY_OP, fname, [child])
                 child.parent = parent
