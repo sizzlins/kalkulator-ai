@@ -223,10 +223,13 @@ DISCOVERY
   evolve f(x) from...     Genetic algorithm discovery
     --hybrid              Seed with find() result
     --boost N             N× resources (pop/gen/timeout)
+    --transform           Multi-space evolution (direct+log+inverse)
+  evolve f(x) from file.csv   Load data from CSV
   find ode                Find ODE (SINDy)
   benchmark               Run benchmarks
 
 SHORTCUTS (for evolve)
+  alt f(...)    ULTIMATE:   --hybrid --verbose --boost 3 --transform
   all f(...)    Full power: --hybrid --verbose --boost 3
   b f(...)      Fast mode:  --verbose --boost 3
   h f(...)      Smart mode: --hybrid --verbose
@@ -237,12 +240,17 @@ DATA
   showcache      List cache
   savecache      Save cache
   loadcache      Load cache
-  export         Export to file
+  export <f> <file> Export function to Python file
 
 SETTINGS
   debug [on|off]    Debug mode
   timing [on|off]   Timing stats
   cachehits [on|off] Show hits
+
+SUPPORTED:
+  Math: +, -, *, /, ^, sqrt, abs, exp, log, sin, cos, tan, asin, acos, atan, sinh, cosh, tanh
+  Special: prime_pi (primes), gamma, bessel_j/y/i/k
+  Bitwise: bitwise_xor, bitwise_and, bitwise_or, lshift, rshift (or ^, &, |, <<, >>)
 
 Full Docs: https://github.com/sizzlins/kalkulator-ai
 """
