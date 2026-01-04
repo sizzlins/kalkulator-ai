@@ -32,7 +32,7 @@ from .utils.custom_functions import log10
 #     VERSION = importlib.metadata.version("kalkulator")
 # except Exception:
 #     # Fallback if package not installed
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 
 # Resource limits (can be overridden via environment variables)
 WORKER_CPU_SECONDS = int(os.getenv("KALKULATOR_WORKER_CPU_SECONDS", "30"))
@@ -158,6 +158,39 @@ RANSAC_THRESHOLD = float(
     os.getenv("KALKULATOR_RANSAC_THRESHOLD", "3.0")
 )  # MAD multiplier for RANSAC
 
+# -----------------------------------------------------------------------------
+# SymPy Custom Functions (Bitwise Evaluation)
+# -----------------------------------------------------------------------------
+class lshift(sp.Function):
+    @classmethod
+    def eval(cls, x, y):
+        if x.is_number and y.is_number:
+            return sp.Integer(int(x) << int(y))
+
+class rshift(sp.Function):
+    @classmethod
+    def eval(cls, x, y):
+        if x.is_number and y.is_number:
+            return sp.Integer(int(x) >> int(y))
+
+class bitwise_xor(sp.Function):
+    @classmethod
+    def eval(cls, x, y):
+        if x.is_number and y.is_number:
+            return sp.Integer(int(x) ^ int(y))
+
+class bitwise_and(sp.Function):
+    @classmethod
+    def eval(cls, x, y):
+        if x.is_number and y.is_number:
+            return sp.Integer(int(x) & int(y))
+
+class bitwise_or(sp.Function):
+    @classmethod
+    def eval(cls, x, y):
+        if x.is_number and y.is_number:
+            return sp.Integer(int(x) | int(y))
+
 ALLOWED_SYMPY_NAMES = {
     "pi": sp.pi,
     "e": sp.E,
@@ -234,6 +267,15 @@ ALLOWED_SYMPY_NAMES = {
     # Roots
     "root": sp.root,
     "cbrt": sp.cbrt,
+    # Bessel functions
+    "besselj": sp.besselj,  # Bessel function of first kind
+    "primepi": sp.primepi,  # Prime-counting function
+    "prime_pi": sp.primepi, # Alias
+    "lshift": lshift,
+    "rshift": rshift,
+    "bitwise_xor": bitwise_xor,
+    "bitwise_and": bitwise_and,
+    "bitwise_or": bitwise_or,
 }
 
 TRANSFORMATIONS = standard_transformations + (
@@ -247,3 +289,23 @@ PERCENT_REGEX = re.compile(r"(\d+(?:\.\d+)?)%")
 SQRT_UNICODE_REGEX = re.compile(r"√\s*\(")
 DIGIT_LETTERS_REGEX = re.compile(r"(?<![a-zA-Z_])(\d)\s*([A-Za-z(])")
 AMBIG_FRACTION_REGEX = re.compile(r"\(([^(),]+?)/([^(),]+?)\)")
+
+# -----------------------------------------------------------------------------
+# SymPy Monkey-Patches for Bitwise Operators
+# -----------------------------------------------------------------------------
+# SymPy Symbols do not support << and >> by default. We patch Expr to map these
+# to our symbolic function representation, allowing the parser to handle 
+# "x << 2" without crashing.
+
+def _lshift_patch(self, other):
+    return sp.Function("lshift")(self, other)
+
+def _rshift_patch(self, other):
+    return sp.Function("rshift")(self, other)
+
+if not hasattr(sp.Expr, "__lshift__"):
+    sp.Expr.__lshift__ = _lshift_patch
+    sp.Expr.__rrshift__ = _lshift_patch # Handle (constants) >> Symbol ?? No.
+
+if not hasattr(sp.Expr, "__rshift__"):
+    sp.Expr.__rshift__ = _rshift_patch
