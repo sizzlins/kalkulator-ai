@@ -3,7 +3,7 @@
 # Kalkulator-ai
 
 ![Status](https://img.shields.io/badge/Status-Beta-yellow.svg)
-![Version](https://img.shields.io/badge/Version-1.3.0-blue.svg)
+![Version](https://img.shields.io/badge/Version-1.4.0-blue.svg)
 ![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)
 ![License](https://img.shields.io/badge/License-MIT-purple.svg)
 
@@ -49,10 +49,11 @@ https://github.com/sizzlins/kalkulator-ai/blob/main/kalkulator.exe
 - `find f(x)`: Discover function from data.
 - `evolve ...`: Genetic programming search.
   - `--boost`: Enable 5-round boosting for complex models.
-  - `--file <path>`: Load data from CSV/Excel/Parquet.
+  - `from file.csv`: Load data from CSV.
   - `--verbose`: Show progress.
   - `--hybrid`: Seed with find() result.
 - **Shortcuts** (common evolve combinations):
+  - `alt f(...)`: **ULTIMATE** (`--hybrid --verbose --boost 3 --transform`)
   - `all f(...)`: Full power (`--hybrid --verbose --boost 3`)
   - `b f(...)`: Fast mode (`--verbose --boost 3`)
   - `h f(...)`: Smart mode (`--hybrid --verbose`)
@@ -82,6 +83,27 @@ Discovered: f(x) = exp(LambertW(log(x)))
 ```
 >>> g(0)=1, g(1)=0.3679, find g(x)
 g(x) = exp(-x^2)
+```
+
+**Bitwise Logic**
+
+```
+>>> f(0)=5, f(1)=4, f(2)=7, f(3)=6
+Result: bitwise_xor(x, 5)
+```
+
+**Complex Transcendental** (with `alt` - intelligent discovery)
+
+```
+>>> alt f(1)=2, f(2)=1.732, f(3)=1.587, f(4)=1.495
+Detected 1 constant anchor(s):
+   f(2) = sqrt(3) ≈ 1.732051
+   Generated 3 hypothesis expression(s)
+     • (x+1)**(1/x)
+     ...
+Generation 0: Best MSE 7.71e-30 ((x + 1)**(1/x))
+Result: (x + 1)^(1/x)
+MSE: 8.08e-30  ← PERFECT!
 ```
 
 ### Best Practices for Data Input
@@ -228,11 +250,11 @@ If you answered **yes** to all, you're ready for accurate discovery!
 
 ### Advanced Data Input
 
-**File Import (CSV/Excel)**
+**File Import (CSV)**
 
 ```bash
->>> evolve --file data.xlsx y = f(x)
-Loaded 2 variables from 'data.xlsx': ['x', 'y']
+>>> evolve f(x) from data.csv
+Loaded 2 variables from 'data.csv': ['x', 'y']
 ```
 
 **Explicit Target Syntax**
