@@ -148,6 +148,12 @@ class ParetoFront:
         if len(self.solutions) < 3:
             return self.get_best()
 
+        # heuristic: If we have a perfect match, take it!
+        # Don't trade off 0.0 error for simpler incorrect answer.
+        best_acc = min(self.solutions, key=lambda s: s.mse)
+        if best_acc.mse < 1e-9:
+            return best_acc
+
         # Sort by complexity
         sorted_sols = sorted(self.solutions, key=lambda s: s.complexity)
 
