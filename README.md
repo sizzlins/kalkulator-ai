@@ -291,11 +291,12 @@ Result: diff(log(x), x) = 1/x
 
 Function finding discovers **continuous mathematical relationships**. The following are **not auto-discoverable**:
 
-| Type                   | Examples                        | Reason                       |
-| ---------------------- | ------------------------------- | ---------------------------- |
-| Discrete/Combinatorial | `factorial(x)`, `binomial(n,k)` | Integer-only, not in physics |
-| Piecewise              | `abs(x)`, step functions        | Discontinuous                |
-| Recursive              | Fibonacci, Ackermann            | No closed-form               |
+| Type          | Examples                        | Reason                    |
+| ------------- | ------------------------------- | ------------------------- |
+| Combinatorial | `factorial(x)`, `binomial(n,k)` | Integer-only, huge growth |
+| Recursive     | Fibonacci, Ackermann            | No closed-form            |
+
+**Note:** As of v1.4.0, **Bitwise Logic** (`^`, `&`, `|`, `<<`, `>>`) and **Prime Counting** (`prime_pi`) ARE supported! Also `abs(x)` is fully supported.
 
 **Workaround:** Define manually: `f(x)=x!`
 
@@ -383,14 +384,14 @@ Nested radical functions involving squares:
 
 ### High-Degree Polynomials
 
-Polynomials beyond degree 2:
+Polynomials beyond degree 5:
 
-| Pattern           | Example     | Why                                       |
-| ----------------- | ----------- | ----------------------------------------- |
-| Degree 3+         | `3x⁵ - 5x³` | No x³/x⁴/x⁵ templates; too complex for GP |
-| High coefficients | `100x³`     | Large search space                        |
+| Pattern           | Example     | Why                                     |
+| ----------------- | ----------- | --------------------------------------- |
+| Degree 6+         | `x^6 + x^5` | Too complex for GP; Polyfit handles 3-5 |
+| High coefficients | `100x⁶`     | Large search space                      |
 
-**Workaround:** Define manually: `f(x)=3x^5-5x^3`
+**Workaround:** Define manually: `f(x)=3x^6-5x^3`
 
 ## Advanced: External Tools
 
