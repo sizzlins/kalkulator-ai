@@ -598,6 +598,10 @@ def format_solution(val: Any) -> str:
     # letter followed by * followed by (
     s = re.sub(r"([a-zA-Z])\*\((?=.+)", r"\1(", s)
 
+    # 8. Remove confusing re() notation for real-valued expressions
+    # re(x) -> x (real part of x, which equals x for real inputs)
+    s = re.sub(r"re\(([^)]+)\)", r"\1", s)
+
     return s
 
 
