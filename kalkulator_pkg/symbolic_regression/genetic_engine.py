@@ -77,6 +77,14 @@ class GeneticConfig:
             "sqrt",  # Complex-capable sqrt
             "neg",
             "abs",
+            "bessel_j0",  # Bessel function J0(x)
+            "gamma",      # Gamma function
+            "prime_pi",   # Prime-Counting function
+            "bitwise_xor",
+            "bitwise_and",
+            "bitwise_or",
+            "lshift",
+            "rshift",
         ]
     )
     # Weighted Complexity Config
@@ -86,6 +94,13 @@ class GeneticConfig:
             "max": 5.0,  # Tier 3: Penalize Piecewise Cheating
             "min": 5.0,  # Tier 3
             "abs": 4.0,  # Tier 3: The "Gateway Drug" to max() - heavily penalized
+            
+            # Tier 5: Digital Logic (High penalty to prevent noise in continuous problems)
+            "bitwise_xor": 5.0,
+            "bitwise_and": 5.0,
+            "bitwise_or": 5.0,
+            "lshift": 5.0,
+            "rshift": 5.0,
             
             # Tier 2: Physics (Subsidized to match fundamental cost)
             "sin": 1.0,
@@ -106,6 +121,12 @@ class GeneticConfig:
             "sub": 1.0,
             "mul": 1.0,
             "div": 1.0,
+            
+            # Tier 4: Special Functions (Slightly penalized to prevent overuse)
+            "bessel_j0": 2.0,
+            "bessel_j1": 2.0,
+            "gamma": 2.0,
+            "prime_pi": 2.0,
         }
     )
     default_complexity_weight: float = 1.0
@@ -393,6 +414,8 @@ class GeneticSymbolicRegressor:
         variables: list[str],
         n_individuals: int,
         seeds: list[str] | None = None,
+        X: np.ndarray | None = None,
+        y: np.ndarray | None = None,
     ) -> list[ExpressionTree]:
         """Initialize a population of random trees.
 
@@ -402,18 +425,53 @@ class GeneticSymbolicRegressor:
             variables: Variable names
             n_individuals: Number of trees to create
             seeds: Optional list of seed strings (overrides config seeds)
+            X: Input data for anchor detection (optional)
+            y: Target data for anchor detection (optional)
 
         Returns:
             List of random ExpressionTrees
         """
         population = []
 
+        # PHASE 3: CONSTANT ANCHOR DETECTION
+        # Detect mathematical constants at integer inputs, generate hypothesis seeds
+        # Implements Gemini's strategy: recognize √3, reverse-engineer (x+1)^(1/x)
+        anchor_seeds = []
+        try:
+            from .constant_anchors import detect_anchors, generate_hypotheses
+            
+            if X is not None and y is not None:
+                anchors = detect_anchors(X, y, tolerance=1e-3)
+                
+                if anchors and self.config.verbose:
+                    print(f"\nDetected {len(anchors)} constant anchor(s):")
+                    for x_int, const_name, const_val in anchors:
+                        print(f"   f({x_int}) = {const_name} ≈ {const_val:.6f}")
+                
+                if anchors:
+                    anchor_seeds = generate_hypotheses(anchors, variables[0] if variables else 'x')
+                    if self.config.verbose and anchor_seeds:
+                        print(f"   Generated {len(anchor_seeds)} hypothesis expression(s)")
+                        for h in anchor_seeds[:5]:
+                            print(f"     • {h}")
+                        if len(anchor_seeds) > 5:
+                            print(f"     ... +{len(anchor_seeds) - 5} more")
+                        print()
+        except ImportError:
+            pass
+        except Exception as e:
+            if self.config.verbose:
+                print(f"Warning: Anchor detection failed: {e}")
+
         # Strategy 1: Inject seeds but preserve diversity
         # Limit seeds to at most 50% of population to ensure random diversity
         max_seed_slots = n_individuals // 2
         injected_count = 0
 
+        # Combine anchor-generated seeds with user-provided seeds
         seeds_to_use = seeds if seeds is not None else self.config.seeds
+        if anchor_seeds:
+            seeds_to_use = anchor_seeds + (seeds_to_use if seeds_to_use else [])
         
         if seeds_to_use:
             # 1. Parse all valid seeds first
@@ -765,6 +823,17 @@ class GeneticSymbolicRegressor:
         if len(y.shape) == 1:
             y = y.flatten()
 
+        if self.config.verbose:
+            try:
+                with open("debug_genetic_fit.log", "w") as f_log:
+                    f_log.write(f"DEBUG FIT: X shape={X.shape} range=[{np.min(X):.3g}, {np.max(X):.3g}]\n")
+                    f_log.write(f"DEBUG FIT: y shape={y.shape} range=[{np.min(y):.3g}, {np.max(y):.3g}]\n")
+                    if len(y) < 20:
+                        f_log.write(f"DEBUG FIT: X={X.flatten()}\n")
+                        f_log.write(f"DEBUG FIT: y={y}\n")
+            except:
+                pass
+
         # Strategy 7: Symbolic Gradient Boosting Loop
         current_model_tree = None
         y_residual = y.copy()
@@ -807,6 +876,7 @@ class GeneticSymbolicRegressor:
              y_range = y_max - y_min
         self._normalization = None
         self._log_strategy = None  # "log" or "arcsinh"
+        y_max_log = y_max  # Initialize to avoid Unresolved reference
         
         # Robust Scaling Strategy (Rule 5: No partial fixes)
         # If data spans many orders of magnitude, linear normalization sucks. 
@@ -842,7 +912,8 @@ class GeneticSymbolicRegressor:
             y_residual = (y_residual - y_min) / y_scale
             self._normalization = (y_min, y_scale)
             if self.config.verbose:
-                print(f"Data normalized ({self._log_strategy or 'linear'}): y range {y_min:.2f} to {y_max_log if self._log_strategy else y_max:.2f} → [0,1]")
+                y_top = y_max_log if self._log_strategy else y_max
+                print(f"Data normalized ({self._log_strategy or 'linear'}): y range {y_min:.2f} to {y_top:.2f} → [0,1]")
         
         # Prepare seeds (Normalize if needed)
         eff_seeds = self.config.seeds
@@ -862,6 +933,10 @@ class GeneticSymbolicRegressor:
                 new_seeds.append(s_trans)
             eff_seeds = new_seeds
 
+        # Track the absolute best solution across ALL boosting rounds
+        global_best_solution = None
+        global_best_mse = float('inf')
+
         for round_idx in range(rounds):
             if self.config.verbose and rounds > 1:
                 print(f"--- Boosting Round {round_idx + 1}/{rounds} ---")
@@ -876,7 +951,7 @@ class GeneticSymbolicRegressor:
             islands = []
             for _ in range(self.config.n_islands):
                 island = self._initialize_population(
-                    variable_names, self.config.population_size, seeds=eff_seeds
+                    variable_names, self.config.population_size, seeds=eff_seeds, X=X_train, y=y_train
                 )
                 islands.append(island)
 
@@ -959,6 +1034,11 @@ class GeneticSymbolicRegressor:
                 if self.config.verbose:
                     print("Warning: No solution found in this round.")
                 break
+            
+            # Track global best across all rounds
+            if best_round.mse < global_best_mse:
+                global_best_mse = best_round.mse
+                global_best_solution = best_round
 
             # 2. Merge into composite model
             if current_model_tree is None:
@@ -999,30 +1079,16 @@ class GeneticSymbolicRegressor:
 
         # Return final result
         if rounds > 1:
-            final_front = ParetoFront()
-            if current_model_tree:
-                current_model_tree.fitness = self._calculate_fitness(
-                    current_model_tree, X, y
-                )
-                # Create proper solution object
-                try:
-                    expr_str = current_model_tree.to_pretty_string()
-                    try:
-                        sympy_expr = current_model_tree.to_sympy()
-                    except Exception:
-                        sympy_expr = sp.sympify(0)
-
-                    sol = ParetoSolution(
-                        expression=expr_str,
-                        sympy_expr=sympy_expr,
-                        mse=current_model_tree.fitness,  # APPROX
-                        complexity=current_model_tree.complexity(),
-                        tree=current_model_tree,
-                    )
-                    final_front.add(sol)
-                except Exception:
-                    pass
-            result_front = self._denormalize_result(final_front)
+            # Boosting was used - use the GLOBAL best solution from all rounds
+            # NOT the final boosted model which might be degraded
+            if global_best_solution:
+                # Restore the global best to pareto front
+                self.pareto_front = ParetoFront()
+                self.pareto_front.add(global_best_solution)
+                result_front = self._denormalize_result(self.pareto_front)
+            else:
+                # Fallback: use current pareto front
+                result_front = self._denormalize_result(self.pareto_front)
         else:
             result_front = self._denormalize_result(self.pareto_front)
             
@@ -1074,6 +1140,250 @@ class GeneticSymbolicRegressor:
         if solution:
             return solution.sympy_expr
         return sp.Integer(0)
+
+    def fit_with_transformations(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        variable_names: list[str] | None = None,
+    ) -> tuple[str, float, str]:
+        """Run evolution in multiple transformed spaces simultaneously.
+        
+        Makes complex functions discoverable by transforming into simpler spaces.
+        For example, (1+x)^(1/x) becomes (1/x)*log(1+x) in log-space.
+        
+        Transformations:
+        1. Direct: y = f(x)
+        2. Log: log(y) = g(x), then y = exp(g(x))
+        3. Inverse: 1/y = h(x), then y = 1/h(x)
+        
+        Returns:
+            Tuple of (best_expression, best_mse, best_space_name)
+        """
+        if variable_names is None:
+            variable_names = [f"x{i}" for i in range(X.shape[1])]
+        
+        spaces = []
+        
+        # Space 1: Direct (always valid)
+        spaces.append({
+            'name': 'direct',
+            'X': X,
+            'y': y,
+            'mask': np.ones(len(y), dtype=bool),
+            'transform_back': lambda expr: expr
+        })
+        
+        # Space 2: Log (only if y > 0)
+        y_positive_mask = y > 1e-10
+        if np.sum(y_positive_mask) > len(y) * 0.5:
+            spaces.append({
+                'name': 'log',
+                'X': X[y_positive_mask],
+                'y': np.log(np.maximum(y[y_positive_mask], 1e-10)),
+                'mask': y_positive_mask,
+                'transform_back': lambda expr: f"exp({expr})"
+            })
+        
+        # Space 3: Inverse (only if y != 0)
+        y_nonzero_mask = np.abs(y) > 1e-10
+        if np.sum(y_nonzero_mask) > len(y) * 0.5:
+            spaces.append({
+                'name': 'inverse',
+                'X': X[y_nonzero_mask],
+                'y': 1.0 / y[y_nonzero_mask],
+                'mask': y_nonzero_mask,
+                'transform_back': lambda expr: f"1/({expr})"
+            })
+        
+        if self.config.verbose:
+            print(f"Running in {len(spaces)} spaces: {[s['name'] for s in spaces]}")
+        
+        # Run evolution in each space
+        results = []
+        for space in spaces:
+            if self.config.verbose:
+                print(f"\n{'='*70}")
+                print(f"Evolving in {space['name'].upper()} space...")
+                print(f"{'='*70}")
+            
+            # PERFORMANCE FIX: Reduce generations for transformed spaces
+            # Direct space gets full search, others get quick exploration
+            if space['name'] != 'direct':
+                # Create config with 1/3 generations for transformed spaces
+                reduced_config = GeneticConfig(
+                    population_size=self.config.population_size,
+                    generations=max(30, self.config.generations // 3),  # At least 30, max 1/3
+                    n_islands=self.config.n_islands,
+                    verbose=self.config.verbose,
+                    parsimony_coefficient=self.config.parsimony_coefficient,
+                    operators=self.config.operators,
+                    timeout=self.config.timeout // 3 if self.config.timeout else None
+                )
+                temp_regressor = GeneticSymbolicRegressor(reduced_config)
+            else:
+                # Direct space uses full config
+                temp_regressor = GeneticSymbolicRegressor(self.config)
+            
+            temp_regressor.fit(space['X'], space['y'], variable_names)
+            
+            # Get best and transform back
+            best_expr = temp_regressor.get_expression()
+            if not best_expr:
+                mse = float('inf')
+                results.append({'space': space['name'], 'expression': "", 'mse': mse})
+                if self.config.verbose:
+                    print(f"MSE in original space: {mse:.6e} (no solution found in {space['name']} space)")
+                continue
+
+            transformed = space['transform_back'](best_expr)
+            
+            # SIMPLIFICATION: Clean up artifacts like exp(log(f(x))) -> f(x)
+            try:
+                # Use project's existing sympy import (assumed 'sp') or import locally
+                import sympy as sp
+                
+                # 1. Parse string expression
+                sym_expr = sp.sympify(transformed)
+                
+                # 2. Simplify
+                # Use 'rational=True' to help with float artifacts if needed, 
+                # but standard simplify is best for structural cleanups (log/exp)
+                simplified_sym = sp.simplify(sym_expr)
+                
+                # 3. Convert back to string
+                # Remove spaces for consistency
+                transformed = str(simplified_sym).replace(' ', '')
+                if self.config.verbose:
+                    # Print without using f-string in case it's huge
+                    pass
+            except Exception as e:
+                # If simplification fails (parsing, timeout), use original
+                if self.config.verbose:
+                    print(f"Simplification failed: {e}")
+                pass            
+            # Evaluate MSE in original space
+            # Use Pareto front's best solution tree, not temp_regressor.best_tree
+            # (best_tree might be overwritten by boosting)
+            best_solution = temp_regressor.pareto_front.get_best()
+            if not best_solution or not best_solution.tree:
+                mse = float('inf')
+                results.append({'space': space['name'], 'expression': transformed, 'mse': mse})
+                if self.config.verbose:
+                    print(f"MSE in original space: {mse:.6e} (no valid tree)")
+                continue
+                
+            try:
+                # Decide on validity threshold (90% requirement to prevent "Survival Bias")
+                # Models that fail on >10% of data (e.g. large numbers) should be disqualified
+                min_valid_ratio = 0.9
+                
+                if space['name'] == 'direct':
+                    # Direct space: use tree directly
+                    pred = best_solution.tree.evaluate(X)
+                    valid = ~np.isnan(pred) & ~np.isinf(pred)
+                    valid_ratio = np.sum(valid) / len(y)
+                    
+                    if valid_ratio < min_valid_ratio:
+                        mse = float('inf')
+                    if valid_ratio < min_valid_ratio:
+                        mse = float('inf')
+                    elif hasattr(self, '_use_relative_fitness') and self._use_relative_fitness:
+                        # Use Relative Square Error for high-variance data
+                        # Add epsilon to denominator to avoid division by zero
+                        denom = np.abs(y[valid])
+                        denom[denom < 1e-10] = 1.0 # avoid div/0
+                        diff_rel = (pred[valid] - y[valid]) / denom
+                        mse = np.mean(diff_rel**2)
+                        
+                        # DEBUG PRINT
+                        if self.config.verbose and np.random.rand() < 0.01: # Sample occasionally
+                             print(f"DEBUG MSE REL: Pred={pred[valid][:3]} Y={y[valid][:3]} DiffRel={diff_rel[:3]} MSE={mse}")
+                    else:
+                        mse = np.mean((pred[valid] - y[valid])**2)
+                        
+                else:
+                    # Transformed spaces: evaluate original tree, then transform
+                    with np.errstate(divide='ignore', invalid='ignore'):
+                        # Evaluate on FULL X to test generalization to filtered points (e.g. negative values)
+                        pred_transformed = best_solution.tree.evaluate(X)
+                        valid_transformed = ~np.isnan(pred_transformed) & ~np.isinf(pred_transformed)
+                        
+                        # Apply inverse transform safely to all valid predictions
+                        pred = np.zeros_like(y) * np.nan
+                        # Only transform valid outputs
+                        if np.any(valid_transformed):
+                             # Catch warnings during transform (overflows etc)
+                             try:
+                                 pred[valid_transformed] = space['transform_back_func'](pred_transformed[valid_transformed])
+                             except:
+                                 pass # pred remains NaN
+                        
+                        valid = ~np.isnan(pred) & ~np.isinf(pred)
+                        valid_ratio = np.sum(valid) / len(y)
+                        
+                        if valid_ratio < min_valid_ratio:
+                            mse = float('inf')
+                        elif hasattr(self, '_use_relative_fitness') and self._use_relative_fitness:
+                            # Relative Error
+                            denom = np.abs(y[valid])
+                            denom[denom < 1e-10] = 1.0
+                            diff_rel = (pred[valid] - y[valid]) / denom
+                            mse = np.mean(diff_rel**2)
+                        else:
+                            mse = np.mean((pred[valid] - y[valid])**2)
+                        
+                        # Determine dtype to avoid ComplexWarning
+                        target_dtype = np.complex128 if np.iscomplexobj(pred_transformed) else np.float64
+                        
+                        # Apply inverse transformation
+                        if space['name'] == 'log':
+                            # Transform back: exp(log_pred)
+                            pred = np.exp(pred_transformed)
+                            full_pred = pred
+                        elif space['name'] == 'inverse':
+                            # Transform back: 1/inv_pred
+                            pred = 1.0 / pred_transformed
+                            full_pred = pred
+                    
+                    # Evaluate MSE
+                    valid = ~np.isnan(full_pred) & ~np.isinf(full_pred)
+                    if np.sum(valid) > len(y) * 0.5:
+                        # Use abs()**2 to handle complex errors correctly (magnitude squared)
+                        mse = np.mean(np.abs(full_pred[valid] - y[valid])**2)
+                    else:
+                        mse = 1e10
+            except Exception as e:
+                if self.config.verbose:
+                    print(f"Error evaluating in original space: {e}")
+                mse = 1e10
+
+            # Use the calculated REAL MSE, not the space-specific fitness
+            # mse = best_solution.mse  <-- This was the bug (using log-error as real-error)
+            fitness = best_solution.mse # Keep for debug/logging if needed
+            
+            results.append({'space': space['name'], 'expression': transformed, 'mse': mse})
+            
+            if self.config.verbose:
+                print(f"MSE in original space: {mse:.6e}")
+                
+            # EARLY EXIT: If we found a perfect solution in Direct space, 
+            # skip subsequent spaces (like inverse) which might be unstable or slow.
+            if space['name'] == 'direct' and mse < 1e-9:
+                if self.config.verbose:
+                    print(f"Perfect solution found (MSE < 1e-9). Skipping transformed spaces optimization.")
+                break
+        
+        # Return best
+        best = min(results, key=lambda r: r['mse'])
+        
+        if self.config.verbose:
+            print(f"\n{'='*70}")
+            print(f"BEST: {best['space']} space")
+            print(f"Expression: {best['expression']}")
+            print(f"{'='*70}")
+        
+        return best['expression'], best['mse'], best['space']
 
 
 def discover_equation(
