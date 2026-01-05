@@ -100,12 +100,39 @@ class REPL:
         if not text or text.startswith("#"):
             return
 
-        # SHORTCUT COMMANDS: Route to evolve handler (all, b, h, v)
+        # SHORTCUT COMMANDS: Route to evolve handler (all, b, h, v, alt)
         text_lower = text.lower().strip()
-        if text_lower.startswith(('all ', 'b ', 'h ', 'v ')):
-            from .repl_commands import _handle_evolve
-            _handle_evolve(text, self.variables)
-            return
+
+        # Reserved Keyword Check: Prevent commands from being parsed as math
+        # e.g., 'all' -> a*l^2 or 'b' -> b (if undefined)
+        reserved_keywords = {'all', 'alt', 'evolve', 'find', 'b', 'h', 'v'}
+        if text_lower in reserved_keywords:
+            # Exception: Allow single-letter shortcuts (b, h, v) if they are defined variables
+            # This allows users to inspect variable 'b' if they defined it
+            if len(text_lower) == 1 and text_lower in self.variables:
+                pass
+            else:
+                print(f"Command '{text}' requires arguments (e.g., '{text} f(x)=...').")
+                return
+
+        if text_lower.startswith(('all ', 'b ', 'h ', 'v ', 'alt ')):
+             # SAFETY CHECK: Ignore if it looks like assignment or math (e.g. "b = 10", "b - 5")
+             # Split by space. If first part is shortcut, check subsequent char.
+             parts = text.split(maxsplit=1)
+             if len(parts) > 1:
+                 rest = parts[1].strip()
+                 # If rest starts with an operator, it's math/assignment, NOT a command
+                 if rest.startswith(('=', '+', '-', '*', '/', '^', '%', ')', ']')):
+                     pass # Fall through to normal handler
+                 else:
+                     from .repl_commands import _handle_evolve
+                     _handle_evolve(text, self.variables)
+                     return
+             else:
+                 # Should be handled by reserved keyword check, but safe fallback
+                 from .repl_commands import _handle_evolve
+                 _handle_evolve(text, self.variables)
+                 return
 
         # 0. Check for "evolve f(1)=1, f(2)=4" pattern (evolve at START, no 'from')
         # Must run BEFORE command handler to intercept this special pattern
@@ -308,6 +335,11 @@ class REPL:
 
         for p in parts:
             p = p.strip()
+            
+            # Skip 'evolve' keyword parts (they trigger evolution, not data)
+            if p.lower().startswith("evolve"):
+                continue
+                
             if "=" not in p:
                 is_data_pattern = False
                 break
@@ -332,10 +364,22 @@ class REPL:
             target_func = list(candidate_func_names)[0]
 
             # Check for trailing "evolve" keyword - triggers evolution instead of exact finding
+            # Supports: "..., evolve" OR "..., evolve f(x)" patterns
             raw_stripped = raw_text.strip().lower()
-            if raw_stripped.endswith("evolve"):
-                # Extract data portion (without trailing "evolve")
-                data_text = raw_text.rsplit("evolve", 1)[0].strip().rstrip(",").strip()
+            
+            # Pattern 1: ends with just "evolve"
+            ends_with_evolve = raw_stripped.endswith("evolve")
+            
+            # Pattern 2: ends with "evolve func(vars)" e.g., "evolve f(x)"
+            evolve_func_match = re.search(r",?\s*evolve\s+\w+\s*\([^)]*\)\s*$", raw_stripped)
+            
+            if ends_with_evolve or evolve_func_match:
+                # Extract data portion (without trailing evolve command)
+                if evolve_func_match:
+                    # Remove the "evolve f(x)" part
+                    data_text = raw_text[:evolve_func_match.start()].strip().rstrip(",").strip()
+                else:
+                    data_text = raw_text.rsplit("evolve", 1)[0].strip().rstrip(",").strip()
 
                 # Infer parameter count from first data point
                 first_part = parts[0].strip()
@@ -363,6 +407,7 @@ class REPL:
 
                 _handle_evolve(evolve_cmd, self.variables)
                 return
+
 
             # Original exact finding logic
             # Construct synthetic command
