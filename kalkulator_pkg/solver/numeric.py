@@ -162,7 +162,13 @@ def _solve_simple_trig_equation(
         return None  # Not a recognized trig function
     
     # Sort and deduplicate (use 14 decimals to preserve precision while still deduping)
-    roots = sorted(set(round(r, 14) for r in roots))
+    safe_roots = []
+    for r in roots:
+        try:
+            safe_roots.append(round(float(r), 14))
+        except (TypeError, ValueError):
+            safe_roots.append(r)
+    roots = sorted(set(safe_roots), key=lambda x: abs(x))
     
     return [sp.N(r, 15) for r in roots]  # Return with high precision
 
@@ -213,7 +219,13 @@ def _numeric_roots_for_single_var(
             except (ValueError, TypeError):
                 continue
         if finite_values:
-            unique_values = sorted({round(x_val, 12) for x_val in finite_values})
+            unique_values_list = []
+            for x_val in finite_values:
+                try:
+                    unique_values_list.append(round(x_val, 12))
+                except (TypeError, ValueError):
+                    pass
+            unique_values = sorted(set(unique_values_list))
             return [sp.N(root_val) for root_val in unique_values]
     except (ValueError, TypeError, NotImplementedError):
         pass
@@ -226,7 +238,13 @@ def _numeric_roots_for_single_var(
                 if abs(sp.im(root)) < NUMERIC_TOLERANCE:
                     roots.append(float(sp.re(root)))
             if roots:
-                unique_roots = sorted({round(x_val, 12) for x_val in roots})
+                unique_roots_list = []
+                for x_val in roots:
+                    try:
+                        unique_roots_list.append(round(x_val, 12))
+                    except (TypeError, ValueError):
+                         pass
+                unique_roots = sorted(set(unique_roots_list))
                 return [sp.N(root_val) for root_val in unique_roots]
     except (ValueError, TypeError):
         pass
@@ -258,10 +276,14 @@ def _numeric_roots_for_single_var(
         except (ValueError, TypeError):
             previous_value = None
 
-    # De-duplicate and limit candidate points
-    candidate_points = sorted({round(candidate, 8) for candidate in candidate_points})[
-        :COARSE_GRID_MIN_SIZE
-    ]
+    candidate_points_safe = []
+    for candidate in candidate_points:
+         try:
+             candidate_points_safe.append(round(candidate, 8))
+         except (TypeError, ValueError):
+             pass
+    
+    candidate_points = sorted(set(candidate_points_safe))[:COARSE_GRID_MIN_SIZE]
     for guess in candidate_points:
         try:
             root = sp.nsolve(

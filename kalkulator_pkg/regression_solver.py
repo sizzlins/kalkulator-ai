@@ -36,7 +36,10 @@ def _symbolify_coefficient(val):
             return None  # Suppress near-zero
 
         # 1. Fast Path: Integers
-        rounded = round(val)
+        try:
+            rounded = round(val)
+        except (TypeError, ValueError):
+            return None  # Complex or other non-roundable type
         if abs(val - rounded) < 1e-9:
             if rounded == 1:
                 return None  # Will be handled as implicit 1
@@ -188,7 +191,11 @@ def solve_regression_stage(
 
                 for c in coeffs:
                     # Try integer
-                    c_int = int(round(c))
+                    try:
+                        c_int = int(round(c))
+                    except (TypeError, ValueError):
+                         all_snapped = False
+                         break
                     if abs(c - c_int) < 1e-9:
                         snapped_coeffs.append(c_int)
                         continue
