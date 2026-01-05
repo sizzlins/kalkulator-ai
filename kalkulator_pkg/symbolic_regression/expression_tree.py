@@ -705,8 +705,11 @@ class ExpressionTree:
             for child in node.children:
                 if child.node_type == NodeType.CONSTANT:
                     try:
-                        # Snap to nearest integer
-                        child.value = float(round(child.value))
+                        try:
+                            # Snap to nearest integer
+                            child.value = float(round(child.value))
+                        except (TypeError, ValueError):
+                            pass
                     except:
                         pass
 

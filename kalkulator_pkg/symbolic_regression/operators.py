@@ -298,7 +298,11 @@ def constant_optimization(
                     continue  # Skip complex numbers with significant imaginary part
                 current_val = float(current_val.real)
             
-            nearest_int = round(current_val)
+            try:
+                nearest_int = round(current_val)
+            except (TypeError, ValueError):
+                # Fallback for types that don't support round (complex, etc.)
+                continue
             
             # Only test if we are reasonably close (avoid snapping 15.5 to 16)
             # Widen tolerance to 0.05 to catch "flat landscape" drift (e.g., 16.011)
