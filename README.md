@@ -1,13 +1,13 @@
 ![Demo](demo.png)
 
-# Kalkulator-ai
+# Kalkulator-ai CLI
 
 ![Status](https://img.shields.io/badge/Status-Beta-yellow.svg)
 ![Version](https://img.shields.io/badge/Version-1.4.0-blue.svg)
 ![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)
 ![License](https://img.shields.io/badge/License-MIT-purple.svg)
 
-Symbolic regression engine. Discovers mathematical formulas, ODEs, and causal relationships from data.
+**Research-grade CLI for Symbolic Regression.** Discovers mathematical formulas, ODEs, and causal relationships from data directly in your terminal.
 
 ## Capabilities
 
