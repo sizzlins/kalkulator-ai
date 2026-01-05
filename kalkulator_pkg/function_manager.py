@@ -376,9 +376,6 @@ def define_function(name: str, params: list[str], body_expr: str) -> None:
         # We pass local_dict to ensure parameters are parsed as Symbols, not Functions or undefined
         body = _parse_preprocessed_impl(body_expr_preprocessed, local_dict=local_dict)
     except Exception as e:
-        import traceback
-
-        traceback.print_exc()
         raise ValidationError(
             f"Failed to parse function body '{body_expr}': {str(e)}",
             "FUNCTION_BODY_PARSE_ERROR",
