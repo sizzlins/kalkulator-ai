@@ -654,31 +654,37 @@ def simplify_exponential_bases(expr: sp.Expr) -> sp.Expr:
                 # Check if exp(total_coeff) is close to an integer/simple rational
                 try:
                     val = sp.exp(total_coeff)
-                    val_f = float(val.evalf())
-
-                    # Check for integer closeness (tolerance 1e-9)
-                    if abs(val_f - round(val_f)) < 1e-9:
-                        base = int(round(val_f))
-                        if base > 1:
-                            return sp.Pow(base, remaining)
-
-                    # Additional check for 1/integer (e.g. 0.5^x)
-                    if abs(val_f) > 1e-9:  # Avoid division by zero
-                        inv_val_f = 1.0 / val_f
-                        if abs(inv_val_f - round(inv_val_f)) < 1e-9:
-                            inv_base = int(round(inv_val_f))
-                            if inv_base > 1:
-                                return sp.Pow(sp.Rational(1, inv_base), remaining)
+                    # Use complex conversion to handle potential complex values safely
+                    val_c = complex(val.evalf())
+                    
+                    # Only simplify if imaginary part is negligible
+                    if abs(val_c.imag) < 1e-9:
+                        val_r = val_c.real
+                        if abs(val_r - round(val_r)) < 1e-9:
+                            base = int(round(val_r))
+                            if base > 1:
+                                return sp.Pow(base, remaining)
+                        
+                        # Additional check for 1/integer (e.g. 0.5^x)
+                        if abs(val_r) > 1e-9:
+                            inv_val_r = 1.0 / val_r
+                            if abs(inv_val_r - round(inv_val_r)) < 1e-9:
+                                inv_base = int(round(inv_val_r))
+                                if inv_base > 1:
+                                    return sp.Pow(sp.Rational(1, inv_base), remaining)
                 except Exception:
                     pass
 
         # Check for simple exp(c) -> integer pattern
         elif arg.is_number:
             try:
-                val_f = float(expr.evalf())
-                if abs(val_f - round(val_f)) < 1e-9:
-                    base = int(round(val_f))
-                    return sp.Integer(base)
+                val = expr.evalf()
+                val_c = complex(val)
+                if abs(val_c.imag) < 1e-9:
+                    val_r = val_c.real
+                    if abs(val_r - round(val_r)) < 1e-9:
+                        base = int(round(val_r))
+                        return sp.Integer(base)
             except Exception:
                 pass
 
