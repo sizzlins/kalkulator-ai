@@ -5,10 +5,13 @@ Extracted from app.py to enforce Rule 4 (Small Units).
 
 import logging
 import re
+import warnings
 from typing import Any
 from typing import Dict
 
 import kalkulator_pkg.parser as kparser
+import math
+import numpy as np
 
 from ..cache_manager import export_cache_to_file
 from ..cache_manager import get_persistent_cache
@@ -18,9 +21,11 @@ from ..function_manager import clear_functions
 from ..function_manager import clear_saved_functions
 from ..function_manager import export_function_to_file
 from ..function_manager import list_functions
+from ..utils.data_loading import load_csv_data
 from ..function_manager import load_functions
 from ..function_manager import save_functions
 from ..solver.dispatch import solve_single_equation
+from ..symbolic_regression import GeneticConfig, GeneticSymbolicRegressor
 from ..utils.formatting import format_solution
 from ..utils.formatting import print_result_pretty
 from ..worker import clear_caches
@@ -141,6 +146,10 @@ def handle_command(text: str, ctx: Any, variables: Dict[str, str]) -> bool:
         return True
 
     # === Function Finding/System ===
+    if raw_lower.startswith("find ode"):
+        _handle_find_ode(text)
+        return True
+
     if raw_lower.startswith("find "):
         # e.g. "find f(x)" or "find f(x) given ..."
         # Implement _handle_find_command logic here or call helper
@@ -167,6 +176,10 @@ def handle_command(text: str, ctx: Any, variables: Dict[str, str]) -> bool:
 
     if raw_lower.startswith("loadcache"):
         _handle_load_cache(text)
+        return True
+
+    if raw_lower.startswith("export"):
+        _handle_export(text)
         return True
 
     # === Health Check ===
@@ -344,11 +357,218 @@ def _handle_benchmark(text: str):
     print("Try: 'health' for a basic system check instead.")
 
 
-def generate_pattern_seeds(X, y, variable_names):
+def _detect_outer_functions(y):
+    """Phase 2: Detect likely outer wrapper functions from y range.
+    
+    Implements human reasoning: bounded ranges suggest trig, exponential growth suggests exp.
+    
+    Args:
+        y: Output data array
+        
+    Returns:
+        List of suggested outer function names like ['sin', 'cos']
+    """
+    import numpy as np
+    
+    y_finite = y[np.isfinite(y)]
+    if len(y_finite) == 0:
+        return []
+    
+    y_min, y_max = np.min(y_finite), np.max(y_finite)
+    y_range = y_max - y_min
+    
+    suggestions = []
+    
+    # Trig-bounded: approximately [-1, 1]
+    if -1.2 < y_min < -0.8 and 0.8 < y_max < 1.2:
+        suggestions.extend(['sin', 'cos', 'tanh'])
+    
+    # Always-positive with max ~1 (could be abs of trig)
+    elif y_min > -0.1 and 0.8 < y_max < 1.2:
+        suggestions.append('abs')
+    
+    # Exponential growth detected (range > 100 and monotonic-ish)
+    elif y_range > 100 and y_max > 10 * abs(y_min):
+        # Don't add exp seeds here - exp is already in basic operators
+        pass
+    
+    return suggestions
+
+
+def _compose_seeds(pole_seeds, outer_functions):
+    """Phase 3: Generate composed seeds like sin(1/(x-3)).
+    
+    Combines detected poles with detected outer functions to create
+    hypothesis expressions.
+    
+    Args:
+        pole_seeds: List of pole expressions like ['1/(x-3)', '1/(x-3)**2']
+        outer_functions: List of function names like ['sin', 'cos']
+        
+    Returns:
+        List of composed expressions like ['sin(1/(x-3))', 'cos(1/(x-3))']
+    """
+    composed = []
+    
+    # Only compose with basic pole seeds (not squared or multiplied)
+    basic_poles = [s for s in pole_seeds if '**' not in s and ' * ' not in s]
+    
+    for pole in basic_poles:
+        for func in outer_functions:
+            composed.append(f'{func}({pole})')
+            
+            # Also try inverted pole
+            # If pole is 1/(x-3), also try sin(1/(3-x))
+            if '1/(' in pole and '-' in pole:
+                inverted = pole.replace('-(', '+(').replace('-', '+', 1).replace('+(', '-(', 1)
+                if inverted != pole:
+                    composed.append(f'{func}({inverted})')
+    
+    return composed
+
+
+def _detect_symmetry(X, y):
+    """Phase 3: Symmetry Analysis - Check if function is Even or Odd."""
+    import numpy as np
+    # Find matching pairs (x, -x)
+    # This assumes 1D X for now
+    if X.ndim > 1 and X.shape[1] > 1: return None 
+    
+    x_vals = X.flatten()
+    # Create dict for fast lookup (round to avoid float issues)
+    data_map = {}
+    for i, x in enumerate(x_vals):
+        # Skip if complex with precision tolerance
+        if isinstance(x, complex) or np.iscomplex(x):
+             if abs(x.imag) > 1e-9: continue
+             x = float(x.real)
+             
+        key = round(float(x), 6)
+        data_map[key] = y[i]
+        
+    pairs = 0
+    even_score = 0
+    odd_score = 0
+    
+    for x in data_map:
+        if x > 0 and -x in data_map:
+            pairs += 1
+            y_pos = data_map[x]
+            y_neg = data_map[-x]
+            
+            # Check Even: f(x) ≈ f(-x)
+            # Ensure values are finite to avoid RuntimeWarning: invalid value in scalar subtract
+            try:
+                # Helper to check finiteness safely for both float and complex
+                def is_finite_safe(v):
+                    try:
+                        if isinstance(v, complex) or hasattr(v, 'imag'):
+                            return math.isfinite(v.real) and math.isfinite(v.imag)
+                        return math.isfinite(v)
+                    except:
+                        return False
+
+                if not (is_finite_safe(y_pos) and is_finite_safe(y_neg)):
+                    continue
+                if abs(y_pos - y_neg) < 1e-4:
+                    even_score += 1
+            except (ValueError, TypeError, OverflowError):
+                continue
+            # Check Odd: f(x) ≈ -f(-x)
+            if abs(y_pos + y_neg) < 1e-4:
+                odd_score += 1
+                
+    if pairs < 2: return None # Not enough data
+    
+    if even_score == pairs: return 'even'
+    if odd_score == pairs: return 'odd'
+    return None
+
+
+def _detect_composition(X, y, symmetry=None):
+    """Phase 4: Compositional De-layering (Forensic Decomposition).
+    
+    Tries to peel back outer layers by inverting them and checking correlation against inner structure.
+    Implements the 'Inversion' and 'Correlation' steps of the human algorithm.
+    """
+    import numpy as np
+    
+    candidates = []
+    x_flat = X.flatten()
+    
+    # 1. Define Outer Probes (Name, Inverse Func, Domain Check)
+    probes = [
+        ('sin', np.arcsin, lambda vals: np.all(np.abs(vals) <= 1.0 + 1e-9)),
+        ('cos', np.arccos, lambda vals: np.all(np.abs(vals) <= 1.0 + 1e-9)),
+        ('exp', np.log,    lambda vals: np.all(vals > 1e-9)), # Avoid log(0)
+    ]
+    
+    # 2. Define Inner Candidates (Name, Func, Symmetry)
+    # We check if u = Inverse(y) correlates with Candidate(x)
+    inner_patterns = [
+        ('x', lambda x: x, 'odd'),
+        ('x^2', lambda x: x**2, 'even'),
+        ('cos(x)', np.cos, 'even'),
+        ('sin(x)', np.sin, 'odd'),
+        ('abs(x)', np.abs, 'even'),
+    ]
+    
+    for outer_name, inverse_func, domain_check in probes:
+        # Check domain validity
+        if not domain_check(y):
+            continue
+            
+        try:
+            # Peel the layer
+            with np.errstate(all='ignore'):
+                 # Clip for safety (e.g. 1.00000001 -> 1.0)
+                y_clipped = y
+                if outer_name in ('sin', 'cos'):
+                    y_clipped = np.clip(y, -1.0, 1.0)
+                u = inverse_func(y_clipped)
+                
+            # Remove nans if any produced
+            valid_mask = np.isfinite(u)
+            if np.sum(valid_mask) < 5: continue
+            
+            u_clean = u[valid_mask]
+            x_clean = x_flat[valid_mask]
+            
+            # Check against inner candidates
+            for inner_name, inner_func, inner_sym in inner_patterns:
+                # Symmetry Filter: If Function is Even, Outer(Inner) must preserve it.
+                # sin(Odd) = Odd. If f is Even, and Outer=sin, Inner MUST be Even.
+                if outer_name == 'sin' and symmetry == 'even' and inner_sym == 'odd':
+                    continue
+                # cos(x) is Even regardless of Inner parity? mostly. 
+                # But strict matching helps reduce false positives.
+                
+                v = inner_func(x_clean)
+                
+                # Correlation check
+                if np.std(u_clean) < 1e-9 or np.std(v) < 1e-9:
+                    continue # Constant arrays
+                    
+                corr = abs(np.corrcoef(u_clean, v)[0, 1])
+                
+                if corr > 0.99:
+                    candidates.append(f"{outer_name}({inner_name})")
+                    
+        except Exception:
+            continue
+            
+    return list(set(candidates))
+
+
+def generate_pattern_seeds(X, y, variable_names, verbose=False):
     """Detect patterns in data and return seed expression strings for evolve.
 
-    Smart seeding: detects poles (inf/nan) and frequencies, then generates
-    seed expressions that give evolution a head start.
+    Implements 5-phase human algorithm:
+    1. Singularity Analysis - detect poles
+    2. Range Analysis - detect bounded outputs suggesting trig
+    3. Composed Seeds - combine poles with outer functions
+    4. Probe Points - (future)
+    5. Asymptotic - (future)
 
     Args:
         X: Input data array (n_samples, n_vars) or (n_samples,)
@@ -356,11 +576,14 @@ def generate_pattern_seeds(X, y, variable_names):
         variable_names: List of variable names like ['x'] or ['x', 'y']
 
     Returns:
-        List of seed expression strings like ['1/(x-1)', '1/(x-1)**2']
+        List of seed expression strings like ['sin(1/(x-3))', '1/(x-1)**2']
     """
     import numpy as np
+    import time
+    t0 = time.perf_counter()
 
     seeds = []
+    pole_seeds = []  # Track basic pole seeds for Phase 3 composition
     var = variable_names[0] if variable_names else "x"
 
     # Ensure X is 2D
@@ -374,6 +597,7 @@ def generate_pattern_seeds(X, y, variable_names):
     
     # --- 1. Detect poles (where y is inf/nan) ---
     seen_poles = set()
+    detected_pole_info = [] # Track for verbosity
     
     for i, y_val in enumerate(y):
         try:
@@ -389,10 +613,23 @@ def generate_pattern_seeds(X, y, variable_names):
                         continue
                     seen_poles.add(pole_key)
                     
-                    val_str = str(val).replace("(", "").replace(")", "")
+                    # Convert complex to real if imaginary part is negligible
+                    if isinstance(val, complex):
+                        if abs(val.imag) < 1e-10:
+                            val = val.real
+                        else:
+                            # Skip truly complex poles for now
+                            continue
+                    
+                    # Format as clean number string
+                    val_str = str(float(val))
+                    
+                    if verbose and (var_name, val_str) not in seen_poles:
+                         detected_pole_info.append(f"{var_name}={val_str}")
                     
                     # Generate pole-based seeds for this variable
                     basic_pole = f"1/({var_name}-({val_str}))"
+                    pole_seeds.append(basic_pole)  # Track for composition
                     seeds.append(basic_pole)
                     seeds.append(f"1/({var_name}-({val_str}))**2")
                     # Inverse pole
@@ -407,6 +644,11 @@ def generate_pattern_seeds(X, y, variable_names):
         except TypeError:
             continue
             
+    if verbose and detected_pole_info:
+        # Filter duplicates if any sneaked in
+        unique_info = list(set(detected_pole_info))
+        print(f"   Singularity Analysis: Detected {len(unique_info)} pole(s) at {', '.join(unique_info)}")
+            
     # --- 2. Detect near-zero crossings (potential 1/(x-a) patterns) ---
     # Look for large jumps in y that might indicate near-pole behavior
     if len(y) >= 3:
@@ -419,7 +661,122 @@ def generate_pattern_seeds(X, y, variable_names):
                     if ratio > 10 or (ratio > 0 and ratio < 0.1):
                         # Possible pole between these points
                         mid_x = (X[i, 0] + X[i + 1, 0]) / 2
-                        seeds.append(f"1/({var}-{mid_x:.2f})")
+                        near_pole = f"1/({var}-{mid_x:.2f})"
+                        pole_seeds.append(near_pole)
+                        seeds.append(near_pole)
+
+    # --- Phase 2: Detect outer functions from range ---
+    outer_functions = _detect_outer_functions(y)
+    
+    if verbose and outer_functions:
+        y_finite = y[np.isfinite(y)]
+        if len(y_finite) > 0:
+            y_min, y_max = np.min(y_finite), np.max(y_finite)
+            print(f"   Range Analysis: Output in [{y_min:.2f}, {y_max:.2f}] suggests {', '.join(outer_functions)}")
+    
+    # --- Phase 3: Compose seeds (combine poles with outer functions) ---
+    if pole_seeds and outer_functions:
+        composed = _compose_seeds(pole_seeds, outer_functions)
+        if composed and verbose:
+             examples = ", ".join(composed[:3])
+             suffix = f"... ({len(composed)} total)" if len(composed) > 3 else ""
+             print(f"   Composed Hypothesis: Generates {examples}{suffix}")
+        seeds.extend(composed) # Use extend for list
+        
+    # 5. Smart Seeding: Rational Deduction (Singularities + Zeros)
+    # Combine detected Numerators (Zeros) and Denominators (Poles)
+    numerator_seeds = _detect_zeros(X, y)
+    if numerator_seeds and verbose:
+        print(f"   Zero Detection: Found {len(numerator_seeds)} numerator candidates from zeros")
+        
+    denominator_seeds = []
+    
+    # Extract denominators from pole seeds "1/(...)"
+    for s in pole_seeds:
+        if s.startswith("1/"):
+            denominator_seeds.append(s[2:]) # Strip "1/"
+            
+    # Combine them: Num / Den
+    rational_seeds = []
+    if numerator_seeds and denominator_seeds:
+         if verbose:
+             print(f"   Rational Analysis: Mixing {len(numerator_seeds)} numerators and {len(denominator_seeds)} denominators")
+         for num in numerator_seeds:
+             for den in denominator_seeds:
+                 rational_seeds.append(f"{num} / {den}")
+    seeds.extend(rational_seeds) # Add the composed rationals
+                 
+    # 6. Integer Pattern Analysis ("Sherlock Mode")
+    integer_patterns = _detect_integer_patterns(X, y)
+    if integer_patterns:
+        if verbose:
+            print(f"   Integer Analysis: Deduced patterns {integer_patterns}")
+        seeds.extend(integer_patterns)
+    
+    # 6. Self-Power Detection (x^x)
+    self_power = _detect_self_power(X, y)
+    if self_power:
+        if verbose:
+            print(f"   Self-Power Analysis: Detected {self_power}")
+        seeds.extend(self_power)
+
+    # 6.5 ReLU Detection (Piecewise Linear)
+    relu_patterns = _detect_relu_patterns(X, y)
+    if relu_patterns:
+        if verbose:
+            print(f"   ReLU Analysis: Detected piecewise linear patterns {relu_patterns}")
+        seeds.extend(relu_patterns)
+
+    # 6.6 Bessel Function Detection (J0, J1)
+    bessel_patterns = _detect_bessel_patterns(X, y)
+    if bessel_patterns:
+        if verbose:
+            print(f"   Bessel Analysis: Detected special function {bessel_patterns}")
+        seeds.extend(bessel_patterns)
+
+    # 6.7 Gamma Function Detection (extends factorials)
+    gamma_patterns = _detect_gamma_patterns(X, y)
+    if gamma_patterns:
+        if verbose:
+            print(f"   Gamma Analysis: Detected Gamma function {gamma_patterns}")
+        seeds.extend(gamma_patterns)
+
+    # 6.8 Prime-Counting Function Detection (π(x))
+    prime_patterns = _detect_prime_counting_patterns(X, y)
+    if prime_patterns:
+        if verbose:
+            print(f"   Prime Analysis: Detected prime-counting function {prime_patterns}")
+        seeds.extend(prime_patterns)
+
+    # 6.9 Bitwise Logic Detection (XOR, AND, OR, Shifts)
+    bitwise_patterns = _detect_bitwise_patterns(X, y)
+    if bitwise_patterns:
+        if verbose:
+            print(f"   Bitwise Analysis: Detected digital logic {bitwise_patterns}")
+        seeds.extend(bitwise_patterns)
+
+    # 7. Step Function Detection (floor, ceil, round)
+    # If step function is detected, return it immediately - genetic engine can't evolve these
+    step_patterns = _detect_step_patterns(X, y)
+    if step_patterns:
+        if verbose:
+            print(f"   Step Analysis: Detected step function {step_patterns}")
+            print(f"   ⚡ Short-circuit: Returning exact match (genetic engine cannot evolve step functions)")
+        # Return tuple with seeds and exact match indicator
+        return (unique_seeds if 'unique_seeds' in dir() else seeds, step_patterns[0])
+    
+    # --- Phase 4: Compositional De-layering (Forensic Decomposition) ---
+    # 1. Symmetry Analysis
+    symmetry = _detect_symmetry(X, y)
+    if verbose and symmetry:
+        print(f"   Symmetry Analysis: Function appears to be {symmetry.capitalize()}")
+        
+    # 2. De-layering
+    layer_seeds = _detect_composition(X, y, symmetry)
+    if layer_seeds:
+        if verbose:
+             print(f"   Forensic Decomposition: De-layering detected {', '.join(layer_seeds)}")
+        seeds.extend(layer_seeds)
 
     # Remove duplicates while preserving order
     seen = set()
@@ -429,22 +786,1225 @@ def generate_pattern_seeds(X, y, variable_names):
             seen.add(s)
             unique_seeds.append(s)
 
-    return unique_seeds
+    dt = time.perf_counter() - t0
+    if verbose:
+        print(f"   Pattern Analysis: {len(unique_seeds)} seeds generated in {dt:.4f}s")
+    
+    return (unique_seeds, None)  # No exact match, return seeds for evolution
+
+
+def _detect_zeros(X, y):
+    """
+    Detects roots (zeros) of the function.
+    Returns list of seed strings like '(x-1)', '(x+1)', '(x^2-1)'.
+    """
+    zeros = []
+    if X.ndim > 1 and X.shape[1] > 1:
+        return []
+        
+    x_flat = X.flatten()
+    
+    # Check for near-zero values
+    # We use a relatively strict tolerance because we are looking for structural zeros
+    mask = np.abs(y) < 1e-6
+    if np.sum(mask) == 0:
+        return []
+
+    found_zeros = x_flat[mask]
+    
+    seeds = []
+    var_name = "x"
+    
+    for z in found_zeros:
+        # Skip complex values
+        if np.iscomplex(z) or (hasattr(z, 'imag') and abs(z.imag) > 1e-9):
+            continue
+            
+        # Avoid identifying 0.0 as (x-0.0), just x
+        if abs(z) < 1e-9:
+            seeds.append(f"{var_name}")
+            continue
+        
+        try:
+            z_val = float(z.real if hasattr(z, 'real') else z)
+        except (TypeError, ValueError):
+            continue
+        
+        # 1. Simple linear root: (x - z)
+        seeds.append(f"({var_name} - {z_val})")
+        if z_val < 0:
+            seeds.append(f"({var_name} + {abs(z_val)})")
+            
+        # 2. Power roots: (x^2 - z^2), (x^3 - z^3), (x^3 + z^3)
+        # If root is at x=-1, it could be x+1 OR x^3+1
+        # If root is at x=1, it could be x-1 OR x^3-1
+        if abs(abs(z_val) - 1.0) < 1e-9:
+             # Special case for 1/-1: common in x^n +/- 1
+             for n in [2, 3]:
+                 seeds.append(f"({var_name}^{n} - 1)")
+                 seeds.append(f"({var_name}^{n} + 1)")
+        
+        # General power roots check
+        # Heuristic: try to construct (x^n - c) where c is compact
+        for n in [2, 3]:
+            try:
+                pow_val = pow(z_val, n)
+                seeds.append(f"({var_name}^{n} - {pow_val})")
+            except:
+                pass
+
+    return list(set(seeds))
+
+
+def _detect_step_patterns(X, y):
+    """
+    Detect step function patterns like floor(x), ceil(x), round(x).
+    Since step functions are not in the genetic operator set, we detect them
+    heuristically and seed them directly if they match perfectly.
+    """
+    # Only works for 1D data
+    if X.ndim > 1 and X.shape[1] > 1:
+        return []
+    
+    try:
+        x_flat = X.flatten()
+    except Exception:
+        return []
+    
+    seeds = []
+    var_name = "x"
+    
+    # Filter out complex values
+    valid_mask = []
+    for i, (x_val, y_val) in enumerate(zip(x_flat, y)):
+        # Skip complex
+        if np.iscomplex(x_val) or np.iscomplex(y_val):
+            valid_mask.append(False)
+            continue
+        if hasattr(x_val, 'imag') and abs(x_val.imag) > 1e-9:
+            valid_mask.append(False)
+            continue
+        if hasattr(y_val, 'imag') and abs(y_val.imag) > 1e-9:
+            valid_mask.append(False)
+            continue
+        if not np.isfinite(x_val) or not np.isfinite(y_val):
+            valid_mask.append(False)
+            continue
+        valid_mask.append(True)
+    
+    valid_mask = np.array(valid_mask)
+    if np.sum(valid_mask) < 3:
+        return []
+    
+    
+    # Safely convert to float, taking real part if strictly real-valued
+    def to_real(val):
+        if hasattr(val, 'real'):
+            return float(val.real)
+        return float(val)
+
+    x_valid = np.array([to_real(x) for x, m in zip(x_flat, valid_mask) if m])
+    y_valid = np.array([to_real(yv) for yv, m in zip(y, valid_mask) if m])
+    
+    # Check if all Y values are integers (strong indicator of step function)
+    y_are_integers = all(abs(yv - round(yv)) < 1e-9 for yv in y_valid)
+    if not y_are_integers:
+        return []
+    
+    # Test floor(x)
+    floor_matches = all(abs(np.floor(xv) - yv) < 1e-9 for xv, yv in zip(x_valid, y_valid))
+    if floor_matches:
+        seeds.append(f"floor({var_name})")
+        return seeds  # Return immediately - floor is the answer
+    
+    # Test ceil(x)
+    ceil_matches = all(abs(np.ceil(xv) - yv) < 1e-9 for xv, yv in zip(x_valid, y_valid))
+    if ceil_matches:
+        seeds.append(f"ceil({var_name})")
+        return seeds
+    
+    # Test round(x)
+    round_matches = all(abs(round(xv) - yv) < 1e-9 for xv, yv in zip(x_valid, y_valid))
+    if round_matches:
+        seeds.append(f"round({var_name})")
+        return seeds
+    
+    # Test floor(x) + constant offset
+    # Common pattern: floor(x) + c or floor(x + c)
+    for offset in [-1, 1, -2, 2]:
+        floor_offset_matches = all(abs(np.floor(xv) + offset - yv) < 1e-9 for xv, yv in zip(x_valid, y_valid))
+        if floor_offset_matches:
+            if offset > 0:
+                seeds.append(f"floor({var_name}) + {offset}")
+            else:
+                seeds.append(f"floor({var_name}) - {abs(offset)}")
+            return seeds
+    
+    return seeds
+
+    return seeds
+
+
+def _detect_relu_patterns(X, y):
+    """
+    Detects ReLU-like patterns: High concentration of zeros + Linear behavior.
+    Includes verification against complex numbers (The "Complex Bridge").
+    Ref: f(x) = (x + |x|) / 2
+    """
+    if X.ndim > 1 and X.shape[1] > 1:
+        return []
+        
+    try:
+        x_flat = X.flatten()
+    except:
+        return []
+
+    seeds = []
+    
+    # Separation of datasets
+    x_real = []
+    y_real = []
+    x_complex = []
+    y_complex = []
+    
+    for xv, yv in zip(x_flat, y):
+        # Check for complex data points
+        is_complex_x = np.iscomplex(xv) or (hasattr(xv, 'imag') and abs(xv.imag) > 1e-9)
+        is_complex_y = np.iscomplex(yv) or (hasattr(yv, 'imag') and abs(yv.imag) > 1e-9)
+        
+        if is_complex_x or is_complex_y:
+            x_complex.append(xv)
+            y_complex.append(yv)
+        elif np.isfinite(xv) and np.isfinite(yv):
+            # Use .real explicitly to avoid ComplexWarning if type is complex but imag is 0
+            xv_real = xv.real if hasattr(xv, 'real') else xv
+            yv_real = yv.real if hasattr(yv, 'real') else yv
+            x_real.append(float(xv_real))
+            y_real.append(float(yv_real))
+
+    if len(x_real) < 4:
+        return []
+        
+    x_real = np.array(x_real)
+    y_real = np.array(y_real)
+    
+    # Identify Zero Region vs Active Region on Real Data
+    is_zero = np.abs(y_real) < 1e-6
+    n_zeros = np.sum(is_zero)
+    n_active = len(y_real) - n_zeros
+    
+    # Heuristic: Need significant mix of zeros and non-zeros
+    if n_zeros < 2 or n_active < 2:
+        return []
+        
+    # Analyze Active Region
+    x_active = x_real[~is_zero]
+    y_active = y_real[~is_zero]
+    
+    # Check if Active Region is Linear y = mx + c
+    A = np.vstack([x_active, np.ones(len(x_active))]).T
+    m, c = np.linalg.lstsq(A, y_active, rcond=None)[0]
+    
+    # Calculate R2
+    y_pred = m * x_active + c
+    ss_res = np.sum((y_active - y_pred)**2)
+    ss_tot = np.sum((y_active - np.mean(y_active))**2)
+    r2 = 1.0 if ss_tot < 1e-9 and ss_res < 1e-9 else (1 - (ss_res / ss_tot) if ss_tot > 1e-9 else 0.0)
+        
+    if r2 > 0.99:
+        # Linear fit is good! Pattern: y = m*x + c for active region
+        candidates = []
+        
+        # Format slope and intercept
+        # If m ~ 1, use implicit 1. If m ~ -1, use implicit -1. Else use m.
+        
+        m_val = m
+        c_val = c
+        
+        # General form: m * (x + |x|)/2 + c (for positive active region)
+        # Verify active region inputs sign to distinguish Positive vs Negative ReLU
+        # If active region is x > 0: Positive ReLU
+        # If active region is x < 0: Negative ReLU (slope likely negative of observed?)
+        # Let's check centroid of active x
+        x_centroid = np.mean(x_active)
+        
+        term = ""
+        if x_centroid > 0:
+            # Positive ReLU: max(0, x) -> (x + |x|)/2
+            term = "(x + abs(x)) / 2"
+        else:
+             # Negative ReLU: max(0, -x) -> (-x + |x|)/2 = (-x + abs(-x)) / 2
+            term = "(-x + abs(-x)) / 2"
+
+        # Construct formula: m * term + c
+        # Clean up 1.0 multipliers and 0.0 additions for cosmetic seed
+        
+        seed_parts = []
+        if abs(m_val - 1.0) < 0.1:
+            seed_parts.append(term)
+        elif abs(m_val + 1.0) < 0.1:
+            seed_parts.append(f"-1 * {term}")
+        else:
+            seed_parts.append(f"{m_val:.4g} * {term}")
+            
+        if abs(c_val) > 0.01:
+            seed_parts.append(f"+ {c_val:.4g}")
+            
+        candidate_formula = " ".join(seed_parts)
+        candidates.append(candidate_formula)
+        
+        # Add basic forms too just in case
+        candidates.append("abs(x)")
+        candidates.append("max(0, x)")
+            
+        # Verify Candidates against Complex Data (Phase 3: The Complex Bridge)
+        validated_seeds = []
+        for seed in candidates:
+            if not x_complex:
+                validated_seeds.append(seed)
+                continue
+                
+            # Test hypothesis on complex data
+            is_valid = True
+            for cx, cy in zip(x_complex, y_complex):
+                try:
+                    # Evaluate seed (simple eval)
+                    # Note: We rely on python's eval/numpy for this quick check
+                    # Map 'abs' to np.abs, 'max' to np.maximum (or fails for complex)
+                    
+                    # Safe eval context
+                    ctx = {"x": cx, "abs": np.abs, "max": np.maximum} 
+                    # Note: np.maximum supports broadcoasting, but max(0, complex) might fail in pure python
+                    # but (x+abs(x))/2 is safe.
+                    
+                    if "max" in seed and np.iscomplex(cx):
+                        # max(0, complex) is undefined/error in many contexts
+                        # So we skip max() seeds for complex data
+                        is_valid = False
+                        break
+                        
+                    val = eval(seed, {"__builtins__": None}, ctx)
+                    if abs(val - cy) > 1e-4:
+                        is_valid = False
+                        break
+                except:
+                    is_valid = False
+                    break
+            
+            if is_valid:
+                validated_seeds.append(seed)
+                
+        seeds.extend(validated_seeds)
+            
+    return seeds
+
+
+def _detect_self_power(X, y):
+    """
+    Detects if f(x) = x^x (Self-Power) or related forms.
+    Uses heuristic: Checks matches for x^x on input data.
+    """
+    seeds = []
+    
+    # Flatten X
+    x_flat = X.ravel()
+    y_flat = y if isinstance(y, (list, np.ndarray)) else [y]
+    
+    matches = 0
+    total_checks = 0
+    
+    for x_val, y_val in zip(x_flat, y_flat):
+        try:
+            # Handle potential strings/complex types
+            # Use complex() to handle "1+2j" strings if present
+            cx = complex(str(x_val).replace('i', 'j')) if isinstance(x_val, str) else complex(x_val)
+            cy = complex(str(y_val).replace('i', 'j')) if isinstance(y_val, str) else complex(y_val)
+            
+            # Skip unreasonably large values/zeros that might cause undefined/overflow
+            if abs(cx) > 100: 
+                continue
+            
+            # Python 0**0 -> 1. Mathematical limit x->0 x^x is 1.
+            # Handle 0 specifically if needed, but Python default matches limit.
+            
+            expected = cx ** cx
+            
+            # Check for exact match (within tolerance)
+            # Use relative tolerance for large numbers
+            # diff < atol + rtol * abs(target)
+            diff = abs(expected - cy)
+            tol = 1e-4 + 1e-4 * abs(cy)
+            
+            if diff < tol:
+                matches += 1
+            elif abs(abs(expected) - abs(cy)) < tol:
+                # Weak match on magnitude (e.g. branch cut issues with complex power?)
+                # For now, require strict match or at least real part match if y is real
+                pass
+                
+            total_checks += 1
+        except Exception:
+            continue
+            
+    # Heuristic: If we have at least 3 matches and > 90% match rate on checked points
+    # (Checking integer points like 1, 2, 3, 4 is usually sufficient)
+    if total_checks > 0 and matches >= 3 and matches >= total_checks * 0.9:
+        seeds.append("pow(x, x)")
+        
+    return seeds
+    """
+    Detects if f(x) = x^x (Self-Power) or related forms.
+    Uses heuristic: Checks matches for x^x on input data.
+    """
+    seeds = []
+    
+    # Flatten X
+    x_flat = X.ravel()
+    y_flat = y if isinstance(y, (list, np.ndarray)) else [y]
+    
+    matches = 0
+    total_checks = 0
+    
+    for x_val, y_val in zip(x_flat, y_flat):
+        try:
+            # Handle potential strings/complex types
+            # Use complex() to handle "1+2j" strings if present
+            cx = complex(str(x_val).replace('i', 'j')) if isinstance(x_val, str) else complex(x_val)
+            cy = complex(str(y_val).replace('i', 'j')) if isinstance(y_val, str) else complex(y_val)
+            
+            # Skip unreasonably large values/zeros that might cause undefined/overflow
+            if abs(cx) > 100: 
+                continue
+            
+            # Python 0**0 -> 1. Mathematical limit x->0 x^x is 1.
+            # Handle 0 specifically if needed, but Python default matches limit.
+            
+            expected = cx ** cx
+            
+            # Check for exact match (within tolerance)
+            # Use relative tolerance for large numbers
+            # diff < atol + rtol * abs(target)
+            diff = abs(expected - cy)
+            tol = 1e-4 + 1e-4 * abs(cy)
+            
+            if diff < tol:
+                matches += 1
+            elif abs(abs(expected) - abs(cy)) < tol:
+                # Weak match on magnitude (e.g. branch cut issues with complex power?)
+                # For now, require strict match or at least real part match if y is real
+                pass
+                
+            total_checks += 1
+        except Exception:
+            continue
+            
+    # Heuristic: If we have at least 3 matches and > 90% match rate on checked points
+    # (Checking integer points like 1, 2, 3, 4 is usually sufficient)
+    if total_checks > 0 and matches >= 3 and matches >= total_checks * 0.9:
+        seeds.append("pow(x, x)")
+        
+    return seeds
+
+
+def _detect_bessel_patterns(X, y):
+    """
+    Detects if f(x) = J0(x) (Bessel function of first kind, order 0).
+    
+    Uses the user's "Forensic Algorithm":
+    1. f(0) ≈ 1 (starts at peak)
+    2. Damped oscillation (amplitude shrinking)
+    3. Zero crossing at x ≈ 2.4 (first root of J0: 2.4048)
+    """
+    seeds = []
+    
+    # Require 1D input
+    if X.ndim > 1 and X.shape[1] > 1:
+        return []
+    
+    x_flat = X.flatten()
+    y_flat = np.array(y).flatten()
+    
+    # Check for complex values - skip if present
+    if np.any(np.iscomplex(x_flat)) or np.any(np.iscomplex(y_flat)):
+        return []
+    
+    # Sort by x for easier analysis
+    sort_idx = np.argsort(x_flat)
+    x_sorted = x_flat[sort_idx]
+    y_sorted = y_flat[sort_idx]
+    
+    # Filter finite values
+    valid_mask = np.isfinite(x_sorted) & np.isfinite(y_sorted)
+    x_clean = x_sorted[valid_mask]
+    y_clean = y_sorted[valid_mask]
+    
+    if len(x_clean) < 5:
+        return []
+    
+    # Phase 1: Check if f(0) ≈ 1 (Relaxed)
+    # If shifted J0(x)+C, peak won't be 1.
+    # We skip strict check to allow offsets.
+    
+    # Phase 2: Check for damped oscillation
+    # Find sign changes (zero crossings) of CENTERED data
+    # This allows detecting J0(x) + 10 (which oscillates around 10)
+    y_centered = y_clean - np.median(y_clean)
+    sign_changes = np.where(np.diff(np.sign(y_centered)))[0]
+    
+    if len(sign_changes) < 1:
+        return []  # Not oscillating
+    
+    # Phase 3: Check if first zero crossing is near 2.4 (J0 first root: 2.4048)
+    # J0 second root is at 5.5201
+    first_crossing_idx = sign_changes[0]
+    x_first_crossing = (x_clean[first_crossing_idx] + x_clean[first_crossing_idx + 1]) / 2
+    
+    # J0 first root tolerance
+    if abs(x_first_crossing - 2.4) < 0.3:
+        # Strong match for J0
+        seeds.append("bessel_j0(x)")
+        
+    # Check second crossing if available
+    if len(sign_changes) >= 2:
+        second_crossing_idx = sign_changes[1]
+        x_second_crossing = (x_clean[second_crossing_idx] + x_clean[second_crossing_idx + 1]) / 2
+        
+        if abs(x_second_crossing - 5.5) < 0.3:
+            # Even stronger match
+            if "bessel_j0(x)" not in seeds:
+                seeds.append("bessel_j0(x)")
+    
+    # Phase 4: Verify by computing J0 and checking fit
+    # Phase 4: Verify by computing J0 [REMOVED STRICT MSE]
+    # We allow the seed even if MSE is high, because the shape (damped oscillation)
+    # is a strong indicator. The genetic engine will figure out scaling/offset.
+    # We only check for gross mismatch (e.g. sign flip or completely different scale)
+    if seeds:
+        try:
+            from scipy.special import j0
+            expected = j0(x_clean)
+            # Check correlation instead of MSE to allow A * J0(x) + B
+            corr = np.corrcoef(y_clean, expected)[0, 1]
+            if np.isnan(corr) or corr < 0.5:
+                # Weak or negative correlation - might not be J0
+                if len(seeds) > 0:
+                   seeds.pop()
+        except Exception:
+            pass
+    
+    return seeds
+
+
+def _detect_gamma_patterns(X, y):
+    """
+    Detects if f(x) = Gamma(x) (Gamma function - extends factorials).
+    
+    Uses the user's "Forensic Algorithm":
+    Phase 1: Integer Sequence (Factorial Fingerprint)
+        - f(n) for integer n should equal (n-1)!
+        - e.g., f(4)=6, f(5)=24, f(6)=120
+    Phase 2: Pi Connection (Half-Integer Analysis)
+        - f(1.5) = sqrt(π)/2 ≈ 0.88623
+        - f(2.5) = (3/4)*sqrt(π) ≈ 1.32934
+    Phase 3: Recursive Relationship
+        - f(x+1) = x * f(x)
+    """
+    seeds = []
+    
+    # Require 1D input
+    if X.ndim > 1 and X.shape[1] > 1:
+        return []
+    
+    x_flat = X.flatten()
+    y_flat = np.array(y).flatten()
+    
+    # Check for complex values - skip if present
+    if np.any(np.iscomplex(x_flat)) or np.any(np.iscomplex(y_flat)):
+        return []
+    
+    # Filter finite values
+    valid_mask = np.isfinite(x_flat) & np.isfinite(y_flat) & (y_flat > 0)
+    x_clean = x_flat[valid_mask]
+    y_clean = y_flat[valid_mask].astype(float)
+    
+    if len(x_clean) < 3:
+        return []
+    
+    # Phase 1: Factorial Fingerprint (Strict & Offset)
+    # Check if f(n) = (n-1)! for small integers
+    factorial_matches = 0
+    factorial_checks = 0
+    
+    # Also track offsets to detect f(x) = Gamma(x) + C
+    factorial_diffs = []
+    
+    # Known factorial values: 0!=1, 1!=1, 2!=2, 3!=6, 4!=24, 5!=120, 6!=720
+    factorials = {0: 1, 1: 1, 2: 2, 3: 6, 4: 24, 5: 120, 6: 720, 7: 5040}
+    
+    for x_val, y_val in zip(x_clean, y_clean):
+        # Check if x is (nearly) an integer
+        if abs(x_val - round(x_val)) < 0.01:
+            x_int = int(round(x_val))
+            expected_arg = x_int - 1  # Gamma(n) = (n-1)!
+            
+            if expected_arg in factorials:
+                expected_y = factorials[expected_arg]
+                factorial_checks += 1
+                
+                # Check strict match
+                if expected_y > 0:
+                    rel_error = abs(y_val - expected_y) / max(expected_y, 1)
+                    if rel_error < 0.05:  # 5% tolerance
+                        factorial_matches += 1
+                        
+                # Track diff for offset analysis
+                factorial_diffs.append(y_val - expected_y)
+    
+    # Check for consistent offset
+    detected_offset = None
+    if len(factorial_diffs) >= 3:
+        median_diff = np.median(factorial_diffs)
+        std_diff = np.std(factorial_diffs)
+        # If std is low, we have a constant offset
+        if std_diff < 1.0 or (abs(median_diff) > 1 and std_diff / abs(median_diff) < 0.1):
+            detected_offset = median_diff
+
+    # Phase 2: Pi Connection (Half-Integers)
+    # Gamma(1/2) = sqrt(pi), Gamma(3/2) = sqrt(pi)/2, Gamma(5/2) = 3*sqrt(pi)/4
+    pi_matches = 0
+    sqrt_pi = np.sqrt(np.pi)
+    
+    # Half-integer Gamma values: Gamma(n+1/2)
+    half_int_values = {
+        0.5: sqrt_pi,           # Gamma(1/2) = sqrt(pi)
+        1.5: sqrt_pi / 2,       # Gamma(3/2) = sqrt(pi)/2
+        2.5: 3 * sqrt_pi / 4,   # Gamma(5/2) = 3*sqrt(pi)/4
+        3.5: 15 * sqrt_pi / 8,  # Gamma(7/2)
+        4.5: 105 * sqrt_pi / 16,  # Gamma(9/2)
+    }
+    
+    # Check regular AND shifted Pi values
+    for x_val, y_val in zip(x_clean, y_clean):
+        for half_x, expected_y in half_int_values.items():
+            if abs(x_val - half_x) < 0.01:
+                # Check strict
+                rel_error = abs(y_val - expected_y) / max(expected_y, 0.001)
+                if rel_error < 0.01:  # 1% tolerance
+                    pi_matches += 1
+                elif detected_offset is not None:
+                     # Check shifted
+                     expected_shifted = expected_y + detected_offset
+                     rel_error_shifted = abs(y_val - expected_shifted) / max(expected_shifted, 0.001)
+                     if rel_error_shifted < 0.05:
+                          pi_matches += 1
+    
+    # Phase 3: Recursive Relationship f(x+1) = x * f(x)
+    # Note: f(x) = Gamma(x) + C does NOT satisfy f(x+1) = x*f(x)
+    # Gamma(x+1) + C = x*Gamma(x) + C != x*(Gamma(x)+C) = x*Gamma(x) + x*C
+    # So recursion fails for affine shifts unless C=0 or x=1.
+    recursive_matches = 0
+    recursive_checks = 0
+    
+    for i, (x1, y1) in enumerate(zip(x_clean, y_clean)):
+        for j, (x2, y2) in enumerate(zip(x_clean, y_clean)):
+            if i != j and abs(x2 - (x1 + 1)) < 0.01:  # x2 ≈ x1 + 1
+                recursive_checks += 1
+                # Check if y2 ≈ x1 * y1 (Pure Gamma)
+                expected_y2 = x1 * y1
+                # Check if y2 - C ≈ x1 * (y1 - C) (Shifted Gamma)
+                
+                if detected_offset is not None:
+                     # Verify recursion on shifted values
+                     y1_corr = y1 - detected_offset
+                     y2_corr = y2 - detected_offset
+                     expected_y2_corr = x1 * y1_corr
+                     if abs(expected_y2_corr) > 0.001:
+                          rel_error = abs(y2_corr - expected_y2_corr) / abs(expected_y2_corr)
+                          if rel_error < 0.05:
+                               recursive_matches += 1
+                elif expected_y2 > 0:
+                    rel_error = abs(y1 - expected_y2 / x1) # wait, comparison
+                    rel_error = abs(y2 - expected_y2) / max(expected_y2, 0.001)
+                    if rel_error < 0.02:  # 2% tolerance
+                        recursive_matches += 1
+    
+    # Decision: Seed Gamma if multiple phases match OR strong offset match
+    score = 0
+    
+    if factorial_checks >= 2:
+        if factorial_matches >= factorial_checks * 0.8:
+             score += 2  # Strong strict factorial
+        elif detected_offset is not None:
+             score += 2  # Strong shifted factorial
+    
+    if pi_matches >= 1:
+        score += 2  # Pi connection is distinctive
+    
+    if recursive_checks >= 2 and recursive_matches >= recursive_checks * 0.8:
+        score += 1  # Recursive relationship confirmed
+    
+    if score >= 2:
+        if detected_offset is not None and abs(detected_offset) > 0.01:
+             # Round to integer if close
+             if abs(detected_offset - round(detected_offset)) < 0.01:
+                  off_int = int(round(detected_offset))
+                  if off_int > 0:
+                       seeds.append(f"gamma(x) + {off_int}")
+                  else:
+                       seeds.append(f"gamma(x) - {abs(off_int)}")
+             else:
+                  seeds.append(f"gamma(x) + {detected_offset:.3f}")
+             
+             # Also add pure gamma as backup
+             if "gamma(x)" not in seeds:
+                 seeds.append("gamma(x)")
+        else:
+            if "gamma(x)" not in seeds:
+                seeds.append("gamma(x)")
+    
+    return seeds
+    
+    return seeds
+
+
+def _detect_prime_counting_patterns(X, y):
+    """
+    Detects if f(x) = π(x) (Prime-Counting Function).
+    
+    Uses the user's "Forensic Algorithm":
+    Phase 1: Incremental Analysis (Step Test)
+        - Detect where output "steps up" by 1
+        - e.g., f(2)=1, f(3)=2 → jump at 3
+    Phase 2: Pattern Identification (Prime Suspect)
+        - Verify that jumps occur exactly at prime numbers
+        - e.g., jumps at 2, 3, 5, 7, 11, 13, 17, 19
+    Phase 3: Definition Verification
+        - Confirm flat sections (no jump) are at composite numbers
+        - e.g., f(8)=f(9)=f(10)=4 (8,9,10 are not prime)
+    """
+    seeds = []
+    
+    # Require 1D input with integer-like values
+    if X.ndim > 1 and X.shape[1] > 1:
+        return []
+    
+    x_flat = X.flatten()
+    y_flat = np.array(y).flatten()
+    
+    # Check for complex values - skip if present
+    if np.any(np.iscomplex(x_flat)) or np.any(np.iscomplex(y_flat)):
+        return []
+    
+    # Filter finite values and sort by x
+    valid_mask = np.isfinite(x_flat) & np.isfinite(y_flat)
+    x_clean = x_flat[valid_mask]
+    y_clean = y_flat[valid_mask]
+    
+    if len(x_clean) < 5:
+        return []
+    
+    # Sort by x for analysis
+    sort_idx = np.argsort(x_clean)
+    x_sorted = x_clean[sort_idx]
+    y_sorted = y_clean[sort_idx]
+    
+    # All x and y values should be integers (or very close)
+    if not np.allclose(x_sorted, np.round(x_sorted), atol=0.01):
+        return []
+    if not np.allclose(y_sorted, np.round(y_sorted), atol=0.01):
+        return []
+    
+    x_int = np.round(x_sorted).astype(int)
+    y_int = np.round(y_sorted).astype(int)
+    
+    # Output must be non-decreasing (prime count never decreases)
+    if np.any(np.diff(y_int) < 0):
+        return []
+    
+    # Output must increase by at most 1 at a time (one prime at a time)
+    if np.any(np.diff(y_int) > 1):
+        return []
+    
+    # Phase 1: Find jump points (where f(x) increases)
+    jump_points = []
+    for i in range(len(x_int) - 1):
+        if y_int[i + 1] > y_int[i]:
+            # Jump occurs at x_int[i + 1]
+            jump_points.append(x_int[i + 1])
+    
+    if len(jump_points) < 2:
+        return []  # Need at least 2 jumps to identify pattern
+    
+    # Phase 2: Check if jump points are prime numbers
+    def is_prime(n):
+        if n < 2:
+            return False
+        if n == 2:
+            return True
+        if n % 2 == 0:
+            return False
+        for i in range(3, int(n**0.5) + 1, 2):
+            if n % i == 0:
+                return False
+        return True
+    
+    prime_jumps = sum(1 for p in jump_points if is_prime(p))
+    prime_ratio = prime_jumps / len(jump_points)
+    
+    if prime_ratio < 0.8:  # At least 80% of jumps should be at primes
+        return []
+    
+    # Phase 3: Verify flat sections are at composite numbers
+    # Check that f(x) = f(x-1) for composite x
+    flat_at_composite = 0
+    composite_checks = 0
+    
+    for i in range(1, len(x_int)):
+        if y_int[i] == y_int[i - 1]:  # Flat section
+            x_val = x_int[i]
+            if x_val > 1 and not is_prime(x_val):
+                flat_at_composite += 1
+            composite_checks += 1
+    
+    if composite_checks > 0 and flat_at_composite / composite_checks < 0.7:
+        return []  # Too many flat sections at primes
+    
+    # All phases passed - likely prime-counting function
+    seeds.append("prime_pi(x)")
+    
+    # Phase 4: Verify by computing prime_pi and checking fit
+    # Phase 4: Detect Integer Offsets (e.g. prime_pi(x) + 1)
+    # The step pattern matches, so f(x) is likely prime_pi(x) + C.
+    try:
+        from sympy import primepi
+        expected = np.array([int(primepi(int(x))) for x in x_int])
+        diffs = y_int - expected
+        
+        # Check standard deviation of diffs (should be 0 if it's a perfect offset)
+        # But we allow some noise or small variations
+        median_offset = int(np.median(diffs))
+        
+        if median_offset != 0:
+             # Seed the offset version directly
+             if median_offset > 0:
+                 seeds.append(f"prime_pi(x) + {median_offset}")
+             else:
+                 seeds.append(f"prime_pi(x) - {abs(median_offset)}")
+                 
+             # Also seed strict prime_pi(x) just in case
+             if "prime_pi(x)" not in seeds:
+                 seeds.append("prime_pi(x)")
+                 
+    except Exception:
+        pass
+    
+    return seeds
+
+
+
+def _detect_bitwise_patterns(X, y):
+    """
+    Detects bitwise operations: XOR, AND, OR, LSHIFT, RSHIFT.
+    f(x) = x ^ k, x & k, x | k, x << k, x >> k.
+    """
+    seeds = []
+    
+    # Require 1D input
+    if X.ndim > 1 and X.shape[1] > 1:
+        return []
+    
+    try:
+        x_flat = X.flatten()
+        y_flat = np.array(y).flatten()
+    except Exception:
+        return []
+    
+    # Check for complex values - skip if present
+    if np.any(np.iscomplex(x_flat)) or np.any(np.iscomplex(y_flat)):
+        return []
+        
+    # Filter finite values
+    valid_mask = np.isfinite(x_flat) & np.isfinite(y_flat)
+    x_clean = x_flat[valid_mask]
+    y_clean = y_flat[valid_mask]
+    
+    if len(x_clean) < 3:
+        return []
+        
+    # Check if all inputs/outputs are integers
+    if not np.allclose(x_clean, np.round(x_clean), atol=0.01):
+        return []
+    if not np.allclose(y_clean, np.round(y_clean), atol=0.01):
+        return []
+        
+    x_int = np.round(x_clean).astype(int)
+    y_int = np.round(y_clean).astype(int)
+    
+    # Avoid zeros for some checks
+    nonzero_mask = (x_int != 0)
+    
+    # Phase 1: XOR (x ^ k = y => k = x ^ y)
+    # Check if k is constant
+    k_xor = x_int ^ y_int
+    if np.all(k_xor == k_xor[0]):
+        k = k_xor[0]
+        # Only seed if k is small enough to be a likely constant
+        if k < 10000: 
+            seeds.append(f"bitwise_xor(x, {k})")
+            
+    # Phase 2: AND (x & k = y)
+    # Heuristic: k must be a superset of y (k & y == y)
+    # And k must NOT set bits that are 0 in x but 1 in y (impossible for AND)
+    # If y = x & k, then for every bit set in y, it must be set in x and k.
+    # Candidate k: Bitwise OR of all y values (assuming data covers enough bits).
+    k_and_cand = 0
+    if len(y_int) > 0:
+        k_and_cand = int(np.bitwise_or.reduce(y_int))
+        if np.array_equal(x_int & k_and_cand, y_int):
+            if k_and_cand < 10000:
+                seeds.append(f"bitwise_and(x, {k_and_cand})")
+    
+    # Phase 3: OR (x | k = y)
+    # Heuristic: Candidate k = Bitwise AND of all y values
+    k_or_cand = 0
+    if len(y_int) > 0:
+        k_or_cand = int(np.bitwise_and.reduce(y_int))
+        if np.array_equal(x_int | k_or_cand, y_int):
+             # Ensure nontrivial (k!=0 usually, unless y=x)
+             if k_or_cand != 0 or not np.array_equal(x_int, y_int):
+                  if k_or_cand < 10000:
+                       seeds.append(f"bitwise_or(x, {k_or_cand})")
+    
+    # Phase 4: Shifts
+    # Left Shift: y = x << k = x * 2^k
+    if np.any(nonzero_mask):
+        ratios = y_clean[nonzero_mask] / x_clean[nonzero_mask]
+        # Check if constant
+        if np.allclose(ratios, ratios[0]):
+            r = ratios[0]
+            if r >= 1: # Left shift or identity
+                # Check if r is power of 2
+                k_float = np.log2(r)
+                if abs(k_float - round(k_float)) < 0.01:
+                    k = int(round(k_float))
+                    if 0 < k < 64:
+                        seeds.append(f"lshift(x, {k})")
+                
+    # Right Shift: y = x >> k = floor(x / 2^k)
+    # Check if x >> k == y for some small k
+    # Brute force k from 1 to 10
+    for k in range(1, 10):
+        # We assume positive integers for shift logic typically
+        if np.array_equal(x_int >> k, y_int):
+            seeds.append(f"rshift(x, {k})")
+            break
+            
+    return seeds
+
+
+def _detect_integer_patterns(X, y):
+    """
+    The 'Gemini Method': Phase 3 - Integer Pattern Recognition.
+    Checks if f(x) produces rational numbers that relate to powers of x.
+    Example: f(2) = 9/7 -> 9=2^3+1, 7=2^3-1 -> Suggests (x^3+1)/(x^3-1).
+    """
+    import fractions
+    
+    # Allow (N,1) shaped arrays - only reject if truly multivariate
+    if X.ndim > 1 and X.shape[1] > 1:
+        return []
+    
+    try:
+        x_flat = X.flatten()
+    except Exception:
+        return []
+
+    seeds = []
+    var_name = "x"
+    
+    # We only check a few small integer inputs to avoid noise
+    # Filter for integer-like inputs (skip complex values)
+    indices = []
+    for i, x_val in enumerate(x_flat):
+        # Skip complex
+        if np.iscomplex(x_val) or (hasattr(x_val, 'imag') and abs(x_val.imag) > 1e-9):
+            continue
+        try:
+            # Handle SymPy objects by converting to float
+            real_val = float(x_val.real if hasattr(x_val, 'real') else x_val)
+            if abs(real_val - round(real_val)) < 1e-9 and abs(real_val) > 1 and abs(real_val) < 10:
+                indices.append(i)
+        except (TypeError, ValueError):
+            continue
+    
+    for i in indices[:5]: # Check max 5 points
+        try:
+            x_val = int(round(float(x_flat[i].real if hasattr(x_flat[i], 'real') else x_flat[i])))
+            y_val = y[i]
+            
+            # Skip complex outputs
+            if np.iscomplex(y_val) or (hasattr(y_val, 'imag') and abs(y_val.imag) > 1e-9):
+                continue
+            if not np.isfinite(y_val):
+                continue
+            if abs(y_val) < 1e-6:
+                continue # Handled by zero detection
+            
+            # Try to convert output to rational number
+            # We search for p/q where p, q < 1000
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message="Casting complex values")
+                frac = fractions.Fraction(float(y_val)).limit_denominator(1000)
+                diff = abs(float(frac) - float(y_val))
+                
+                if diff > 1e-6:
+                    continue # not a clean fraction
+                
+            num = frac.numerator
+            den = frac.denominator
+            
+            # Now the magic: do num or den relate to powers of x?
+            # Check x^2, x^3
+            for n in [1, 2, 3]:
+                x_pow = x_val ** n
+                
+                # Check Numerator
+                num_rel = None
+                if num == x_pow: num_rel = f"{var_name}^{n}"
+                elif num == x_pow + 1: num_rel = f"({var_name}^{n} + 1)"
+                elif num == x_pow - 1: num_rel = f"({var_name}^{n} - 1)"
+                elif num == x_pow + x_val: num_rel = f"({var_name}^{n} + {var_name})"
+                
+                # Check Denominator
+                den_rel = None
+                if den == x_pow: den_rel = f"{var_name}^{n}"
+                elif den == x_pow + 1: den_rel = f"({var_name}^{n} + 1)"
+                elif den == x_pow - 1: den_rel = f"({var_name}^{n} - 1)"
+                elif den == x_pow - x_val: den_rel = f"({var_name}^{n} - {var_name})"
+                
+                # If we found relations for BOTH parts, we suggest the fraction
+                if num_rel and den_rel:
+                    seeds.append(f"{num_rel} / {den_rel}")
+                elif num_rel and den == 1:
+                     seeds.append(num_rel)
+        except Exception:
+            continue
+            
+    return list(set(seeds))
+
+
+
+def _detect_symmetry(X, y):
+    """Detect if the function y=f(x) exhibits even or odd symmetry."""
+    if X.ndim > 1 and X.shape[1] > 1:
+        return None # Only for single variable functions
+
+    x_flat = X.flatten()
+    
+    # Filter out non-finite values and corresponding x values
+    finite_mask = np.array([np.isfinite(val) and not isinstance(val, complex) for val in y])
+    if np.sum(finite_mask) < 10: # Need enough data points
+        return None
+
+    x_clean = x_flat[finite_mask]
+    y_clean = y[finite_mask]
+
+    # Check for even symmetry: f(x) = f(-x)
+    # Check for odd symmetry: f(x) = -f(-x)
+    
+    # Find points where -x also exists in the dataset
+    # Create a mapping for quick lookup
+    x_to_y = {x_val: y_val for x_val, y_val in zip(x_clean, y_clean)}
+    
+    even_matches = 0
+    odd_matches = 0
+    total_checks = 0
+
+    for x_val, y_val in x_to_y.items():
+        if x_val == 0: # Skip origin for symmetry checks
+            continue
+        
+        neg_x_val = -x_val
+        if neg_x_val in x_to_y:
+            y_neg_x_val = x_to_y[neg_x_val]
+            
+            # Check for even symmetry
+            if np.isclose(y_val, y_neg_x_val, rtol=1e-3, atol=1e-5):
+                even_matches += 1
+            
+            # Check for odd symmetry
+            if np.isclose(y_val, -y_neg_x_val, rtol=1e-3, atol=1e-5):
+                odd_matches += 1
+            
+            total_checks += 1
+            
+    if total_checks == 0:
+        return None
+
+    even_ratio = even_matches / total_checks
+    odd_ratio = odd_matches / total_checks
+
+    if even_ratio > 0.9 and even_ratio > odd_ratio:
+        return 'even'
+    elif odd_ratio > 0.9 and odd_ratio > even_ratio:
+        return 'odd'
+    else:
+        return None
+
+def _detect_composition(X, y, symmetry):
+    """
+    Attempts to de-layer a function by checking if y = Outer(Inner(x)).
+    It does this by correlating Inverse(y) with various Inner(x) candidates.
+    """
+    candidates = []
+    if X.ndim > 1 and X.shape[1] > 1:
+        return [] # Only for single variable functions
+
+    x_flat = X.flatten()
+    
+    # Filter out non-finite values
+    valid_mask_y = np.isfinite(y)
+    if np.sum(valid_mask_y) < 10:
+        return []
+
+    y = y[valid_mask_y]
+    x_flat = x_flat[valid_mask_y]
+
+    # 1. Define Outer Probes (Name, Inverse Func, Domain Check)
+    probes = [
+        ('sin', np.arcsin, lambda vals: np.all(np.abs(vals) <= 1.0 + 1e-9)),
+        ('cos', np.arccos, lambda vals: np.all(np.abs(vals) <= 1.0 + 1e-9)),
+        ('exp', np.log,    lambda vals: np.all(vals > 1e-9)), # Avoid log(0)
+    ]
+    
+    # 2. Define Inner Candidates (Name, Func, Symmetry)
+    # We check if u = Inverse(y) correlates with Candidate(x)
+    inner_patterns = [
+        ('x', lambda x: x, 'odd'),
+        ('x^2', lambda x: x**2, 'even'),
+        ('cos(x)', np.cos, 'even'),
+        ('sin(x)', np.sin, 'odd'),
+        ('abs(x)', np.abs, 'even'),
+    ]
+    
+    for outer_name, inverse_func, domain_check in probes:
+        # Check domain validity
+        if not domain_check(y):
+            continue
+            
+        try:
+            # Peel the layer
+            with np.errstate(all='ignore'):
+                 # Clip for safety (e.g. 1.00000001 -> 1.0)
+                y_clipped = y
+                if outer_name in ('sin', 'cos'):
+                    y_clipped = np.clip(y, -1.0, 1.0)
+                u = inverse_func(y_clipped)
+                
+            # Remove nans if any produced
+            valid_mask = np.isfinite(u)
+            if np.sum(valid_mask) < 5: continue
+            
+            u_clean = u[valid_mask]
+            x_clean = x_flat[valid_mask]
+            
+            # Check against inner candidates
+            for inner_name, inner_func, inner_sym in inner_patterns:
+                # Symmetry Filter: If Function is Even, Outer(Inner) must preserve it.
+                # sin(Odd) = Odd. If f is Even, and Outer=sin, Inner MUST be Even.
+                if outer_name == 'sin' and symmetry == 'even' and inner_sym == 'odd':
+                    continue
+                # cos(x) is Even regardless of Inner parity? mostly. 
+                # But strict matching helps reduce false positives.
+                
+                v = inner_func(x_clean)
+                
+                # Correlation check
+                if np.std(u_clean) < 1e-9 or np.std(v) < 1e-9:
+                    continue # Constant arrays
+                    
+                corr = abs(np.corrcoef(u_clean, v)[0, 1])
+                
+                if corr > 0.99:
+                    candidates.append(f"{outer_name}({inner_name})")
+                    
+        except Exception:
+            continue
+            
+    return list(set(candidates))
+
+
+def _compose_seeds(pole_seeds, outer_functions):
+    """
+    Combines basic pole seeds with outer functions.
+    E.g., if '1/(x-1)' is a pole and 'sin' is an outer function,
+    it generates 'sin(1/(x-1))'.
+    """
+    composed_seeds = set()
+    
+    # Extract variable name from a sample pole seed (e.g., 'x' from '1/(x-1)')
+    var_name = "x" # Default
+    if pole_seeds:
+        match = re.search(r"([a-zA-Z_][a-zA-Z0-9_]*)[-+*/]", pole_seeds[0])
+        if match:
+            var_name = match.group(1)
+        
+    # 1. Basic composition: Outer(Pole)
+    for outer_func in outer_functions:
+        for pole_seed in pole_seeds:
+            composed_seeds.add(f"{outer_func}({pole_seed})")
+
+    # Extract pole values from pole_seeds for x^n - c type poles
+    poles = []
+    for s in pole_seeds:
+        match = re.search(r"1/\((?:[a-zA-Z_][a-zA-Z0-9_]*)-?\(([-+]?\d*\.?\d+(?:e[-+]?\d+)?)\)\)", s)
+        if match:
+            try:
+                poles.append(float(match.group(1)))
+            except ValueError:
+                pass
+    
+    # 2. Add power-shifted poles: 1/(x^n - c) and 1/(x^n + c)
+    # This helps find functions like 1/(x^3 - 1)
+    for p in poles:
+        # Handle fractional poles or exact integers
+        pole_val = p
+        
+        # Generate 1/(x^2 - p), 1/(x^3 - p)
+        # If pole is at x=1, then x^3-1 has a root at 1.
+        # If pole is at x=c, then x-c is a factor.
+        # But maybe the denominator is (x^3 - c^3).
+        # Heuristic: try exponents 2, 3
+        if abs(pole_val) > 1e-6:
+            for n in [2, 3]:
+                # Check if pole_val is consistent with x^n = k
+                # If pole is at x=1, then x^n - 1 fits
+                # If pole is at x=2, then x^n - 2^n fits
+                try:
+                    k = pow(float(pole_val), n)
+                    composed_seeds.add(f"1/({var_name}^{n} - {k})")
+                    composed_seeds.add(f"1/({var_name}^{n} + {k})")
+                except:
+                    pass
+    
+    # 3. Add existing simple poles
+    for s in pole_seeds:
+        composed_seeds.add(s)
+
+    return list(composed_seeds)
 
 
 def _handle_evolve(text, variables=None):
     """Handle the 'evolve' command for genetic symbolic regression."""
     try:
-        import numpy as np
-
-        from ..symbolic_regression import GeneticConfig
-        from ..symbolic_regression import GeneticSymbolicRegressor
-
         # SHORTCUT COMMANDS: Expand to full evolve syntax
         text_lower = text.lower().strip()
         
+        # alt: ULTIMATE power mode (hybrid + verbose + boost 3 + transform)
+        if text_lower.startswith('alt '):
+            text = 'evolve --hybrid --verbose --boost 3 --transform ' + text[4:]
         # all: Full power mode (hybrid + verbose + boost 3)
-        if text_lower.startswith('all '):
+        elif text_lower.startswith('all '):
             text = 'evolve --hybrid --verbose --boost 3 ' + text[4:]
         # b: Fast mode (verbose + boost 3, no hybrid)
         elif text_lower.startswith('b '):
@@ -489,6 +2049,12 @@ def _handle_evolve(text, variables=None):
         verbose_mode = "--verbose" in text.lower()
         if verbose_mode:
             text = re.sub(r"--verbose", "", text, flags=re.IGNORECASE)
+
+        # Multi-Space Transformation
+        # Parse "--transform" flag to use multi-space evolution (direct + log + inverse)
+        use_transform = "--transform" in text.lower()
+        if use_transform:
+            text = re.sub(r"--transform", "", text, flags=re.IGNORECASE)
 
         # Strategy 10: File Input
         # Parse "--file 'path'" to load data into variables
@@ -573,6 +2139,19 @@ def _handle_evolve(text, variables=None):
         data_dict = {}
         points_y = []
         points_x = {}
+
+        # CSV LOADING SUPPORT
+        if not is_implicit and data_part and data_part.strip().lower().endswith(".csv"):
+             csv_path = data_part.strip()
+             loaded_data = load_csv_data(csv_path)
+             if loaded_data:
+                 print(f"Loaded data from CSV: {list(loaded_data.keys())}")
+                 data_dict.update(loaded_data)
+                 # Auto-populate input variables if they match column names
+                 # If user said 'evolve f(a,b)', we expect 'a' and 'b' cols.
+             else:
+                 print(f"Failed to load CSV: {csv_path}")
+                 return
 
         if is_implicit:
             # Load from context
@@ -890,13 +2469,93 @@ def _handle_evolve(text, variables=None):
         y = data_dict[output_var]
 
         # --- SMART SEEDING: Auto-detect patterns and generate seed expressions ---
-        auto_seeds = generate_pattern_seeds(X, y, input_vars)
+        # --- SMART SEEDING: Auto-detect patterns and generate seed expressions ---
+        auto_seeds_result = generate_pattern_seeds(X, y, input_vars, verbose=verbose_mode)
+        
+        # Unpack tuple (seeds, exact_match)
+        exact_match = None
+        if isinstance(auto_seeds_result, tuple):
+            auto_seeds, exact_match = auto_seeds_result
+        else:
+            auto_seeds = auto_seeds_result
+            
+        # Short-circuit if specific exact match found (e.g. step functions)
+        if exact_match:
+            print(f"\nResult: {exact_match}")
+            print(f"MSE: 0.0 (Exact Match), Complexity: {len(exact_match)}")
+            return
+
         if auto_seeds:
             seeds.extend(auto_seeds)
             if len(auto_seeds) <= 5:
                 print(f"Smart seeding: detected patterns, seeding with {auto_seeds}")
             else:
                 print(f"Smart seeding: detected {len(auto_seeds)} pattern-based seeds")
+
+        # --- FILTER: Remove inf/nan/complex from data BEFORE seeding/evolution ---
+        # Robust cleanup: Ensure data is strictly real float
+        try:
+            # Convert purely to handle potential 'zoo' strings or SymPy objects
+            # Vectorized convert is safer
+            def safe_float(val):
+                # Handle numpy complex128/complex
+                if hasattr(val, 'imag') and hasattr(val, 'real'):
+                    if abs(val.imag) < 1e-10:
+                        val = val.real  # Extract real part
+                    else:
+                        return np.nan  # DISCARD complex values
+                
+                s = str(val).lower()
+                if "zoo" in s or "inf" in s:
+                    return np.inf
+                try:
+                    return float(val)
+                except (ValueError, TypeError):
+                    return np.nan
+
+            vector_float = np.vectorize(safe_float, otypes=[object])
+            y = vector_float(y)
+            X = vector_float(X)
+
+            # Force to float64, anything else is invalid
+            try:
+                y = y.astype(np.float64)
+                X = X.astype(np.float64)
+            except (ValueError, TypeError):
+                pass
+
+        except Exception:
+            pass
+            
+        # Now filter non-finite values (inf, nan) and complex-discarded values
+        original_len = len(y)
+        
+        def is_finite_safe(arr):
+            if arr.dtype.kind == 'f':
+                 return np.isfinite(arr)
+            # Fallback
+            return np.array([np.isfinite(x) if isinstance(x, (float, int, np.number)) else False for x in arr.flatten()]).reshape(arr.shape)
+
+        y_finite = is_finite_safe(y)
+        if X.ndim > 1:
+            x_finite = np.all(is_finite_safe(X), axis=1)
+        else:
+            x_finite = is_finite_safe(X)
+        finite_mask = y_finite & x_finite
+        
+        num_filtered = original_len - np.sum(finite_mask)
+        if num_filtered > 0:
+            X = X[finite_mask]
+            y = y[finite_mask]
+            if len(y) > 0:
+                print(f"Note: Filtered {num_filtered} non-finite/complex data point(s).")
+                
+        # Check if all data filtered
+        if len(y) == 0:
+            print(f"Error: All {original_len} data points were filtered out (no valid real numbers).")
+            return
+
+        print(f"Evolving {func_name}({', '.join(input_vars)}) from {len(y)} data points...")
 
         # --- HYBRID MODE: Use find() result as seed for evolve ---
         if use_hybrid:
@@ -917,120 +2576,80 @@ def _handle_evolve(text, variables=None):
                 )
 
                 # QUALITY CHECK: Only use seed if it's actually good
-                # Parse R² from confidence note (e.g., "[R²=0.95]" or "[LOW CONFIDENCE: R²=0.17]")
+                # Instead of parsing R² from string (which doesn't exist), evaluate the function
                 use_seed = False
                 if success and func_str:
-                    # Extract R² from error (confidence note - 4th parameter)
-                    r_squared = 0.0  # Default: assume bad if no R² reported (pessimistic but safe)
-                    if error and "R²=" in str(error):
-                        r2_match = re.search(r"R²=([\d.]+)", str(error))
-                        if r2_match:
-                            r_squared = float(r2_match.group(1))
-                    
-                    # Threshold: Only use seed if R² > 0.7 (good fit)
-                    if r_squared > 0.7:
-                        use_seed = True
-                        seeds.append(func_str)
-                        display = func_str[:50] + "..." if len(func_str) > 50 else func_str
-                        print(
-                            f"Hybrid seeding: using find() result '{display}' as starting point"
-                        )
-                    else:
-                        print(
-                            f"Hybrid seeding: find() result has low R²={r_squared:.2f}, skipping seed"
-                        )
-                        print("  → Using pure evolve instead (no bad seed)")
+                    try:
+                        # Evaluate the discovered function on our data to check quality
+                        import sympy as sp
+                        symbols_dict = {var: sp.Symbol(var) for var in input_vars}
+                        discovered_expr = sp.sympify(func_str, locals=symbols_dict)
+                        
+                        # Calculate predictions
+                        # Calculate predictions (filter complex points to avoid warnings)
+                        y_pred = []
+                        y_true = []
+                        
+                        for (inputs, output) in find_data_points:
+                            # Check for complex inputs using tolerance
+                            vals = inputs if hasattr(inputs, '__iter__') else (inputs,)
+                            is_complex = False
+                            for v in vals:
+                                try:
+                                    if abs(complex(v).imag) > 1e-9:
+                                        is_complex = True
+                                        break
+                                except:
+                                    pass
+                            if is_complex: continue
+                            
+                            # Check complex output using tolerance
+                            try:
+                                if abs(complex(output).imag) > 1e-9: continue
+                            except:
+                                pass
+
+                            subs_dict = {
+                                input_vars[i]: float(vals[i].real) if isinstance(vals[i], complex) or hasattr(vals[i], 'imag') else float(vals[i]) 
+                                for i in range(len(input_vars))
+                            }
+                            try:
+                                pred = float(discovered_expr.subs(subs_dict).evalf())
+                                y_pred.append(pred)
+                                y_true.append(float(output))
+                            except Exception:
+                                continue
+                        
+                        if len(y_true) > 0:
+                            y_mean = np.mean(y_true)
+                            ss_tot = np.sum((np.array(y_true) - y_mean)**2)
+                            ss_res = np.sum((np.array(y_true) - np.array(y_pred))**2)
+                            r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
+                        else:
+                            # Fallback if no valid points for validation
+                            r_squared = 0.0
+                        
+                        # Threshold: Only use seed if R² > 0.7 (good fit)
+                        if r_squared > 0.7:
+                            use_seed = True
+                            seeds.append(func_str)
+                            display = func_str[:50] + "..." if len(func_str) > 50 else func_str
+                            print(
+                                f"Hybrid seeding: using find() result '{display}' (R²={r_squared:.4f})"
+                            )
+                        else:
+                            print(
+                                f"Hybrid seeding: find() result has low R²={r_squared:.2f}, skipping seed"
+                            )
+                            print("  → Using pure evolve instead (no bad seed)")
+                    except Exception as eval_error:
+                        # If evaluation fails, skip seed
+                        print(f"Hybrid seeding: could not evaluate find() result ({eval_error}), skipping")
             except Exception as e:
                 print(f"Hybrid mode: find() failed ({e}), continuing with other seeds")
 
-        # --- FILTER: Remove inf/nan from data AFTER pattern detection ---
-        # Robust cleanup: Ensure data is strictly float, converting 'zoo'/'inf' strings/objects to np.inf first
-        try:
-            # Convert purely to handle potential 'zoo' strings or SymPy objects
-            # Vectorized convert is safer
-            def safe_float(val):
-                # Handle numpy complex128 with zero imaginary (e.g., (-4+0j) → -4.0)
-                # This happens when array has any complex value, numpy converts all to complex128
-                if hasattr(val, 'imag') and hasattr(val, 'real'):
-                    if val.imag == 0:
-                        val = val.real  # Extract real part
-                    else:
-                        return val  # Allow complex values!
-                
-                s = str(val).lower()
-                if "zoo" in s or "inf" in s:
-                    return np.inf
-                try:
-                    return float(val)
-                except (ValueError, TypeError):
-                    try:
-                        return complex(val)
-                    except (ValueError, TypeError):
-                        return np.nan
-
-            vector_float = np.vectorize(safe_float, otypes=[object])
-            y = vector_float(y)
-            X = vector_float(X)
-
-            # Attempt to convert object arrays to numeric (float or complex)
-            try:
-                y = y.astype(np.float64)
-            except (ValueError, TypeError):
-                try:
-                    y = y.astype(np.complex128)
-                except Exception:
-                    pass  # Keep as object if fails (unlikely given safe_float)
-
-            try:
-                X = X.astype(np.float64)
-            except (ValueError, TypeError):
-                try:
-                    X = X.astype(np.complex128)
-                except Exception:
-                    pass
-
-        except Exception:
-            # Fallback if vectorization fails
-            pass
-            
-        # Now filter non-finite values (inf, nan) from both inputs (X) and outputs (y)
-        original_len = len(y)
-        
-        # Check finiteness (works for float and complex128, but needs helper for object)
-        def is_finite_safe(arr):
-            if arr.dtype.kind in 'fc': # float or complex
-                return np.isfinite(arr)
-            # Fallback for object array
-            return np.array([np.isfinite(x) if isinstance(x, (float, int, complex, np.number)) else False for x in arr.flatten()]).reshape(arr.shape)
-
-        y_finite = is_finite_safe(y)
-        # For X (2D array), check all columns - row is valid only if ALL inputs are finite
-        if X.ndim > 1:
-            x_finite = np.all(is_finite_safe(X), axis=1)
-        else:
-            x_finite = is_finite_safe(X)
-        finite_mask = y_finite & x_finite
-        
-        num_filtered = original_len - np.sum(finite_mask)
-        if num_filtered > 0:
-            X = X[finite_mask]
-            y = y[finite_mask]
-            if len(y) > 0:
-                print(f"Note: Filtered {num_filtered} non-finite data point(s) (complex/inf/nan values).")
-        
-        # Check if all data was filtered out (e.g., complex-only inputs like f(i)=i)
-        if len(y) == 0:
-            if original_len > 0:
-                print(f"Error: All {original_len} data point(s) were filtered out.")
-                print("       Complex values (like i, 2+3i) are not supported by the genetic engine.")
-                print("       Please provide real-valued data points.")
-            else:
-                print("Error: No valid data points found in command.")
-            return
-
-        print(
-            f"Evolving {func_name}({', '.join(input_vars)}) from {len(y)} data points..."
-        )
+        # Old location of filter block - moved up
+        pass
 
         # Apply boost multiplier to evolution parameters
         # --boost N gives N times more compute resources for complex functions
@@ -1066,7 +2685,51 @@ def _handle_evolve(text, variables=None):
             boosting_rounds=1,  # Already applied via parameter scaling
         )
         regressor = GeneticSymbolicRegressor(config)
-        pareto = regressor.fit(X, y, input_vars)
+        
+        # Use multi-space transformation if --transform flag is set
+        if use_transform:
+            if verbose_mode:
+                print("Multi-space mode: evolving in direct, log, and inverse spaces...")
+            best_expr, best_mse_val, best_space = regressor.fit_with_transformations(X, y, input_vars)
+            if verbose_mode:
+                print(f"Best result from {best_space} space")
+            
+            # Create a minimal ParetoFront with just the best solution
+            # Since fit_with_transformations returns a string, we need to parse it
+            import sympy as sp
+            from ..symbolic_regression import ParetoFront, ParetoSolution
+            symbols = {v: sp.Symbol(v) for v in input_vars}
+            try:
+                sympy_expr = sp.sympify(best_expr, locals=symbols)
+                from ..symbolic_regression.expression_tree import ExpressionTree
+                tree = ExpressionTree.from_sympy(sympy_expr, input_vars)
+                complexity = tree.complexity()
+                
+                pareto = ParetoFront()
+                solution = ParetoSolution(
+                    expression=best_expr,
+                    mse=best_mse_val,
+                    complexity=complexity,
+                    sympy_expr=sympy_expr,
+                    tree=tree  # Required parameter
+                )
+                pareto.add(solution)
+            except Exception as e:
+                print(f"Warning: Could not parse result: {e}")
+                print(f"Using expression string directly: {best_expr}")
+                # Create minimal tree for fallback
+                from ..symbolic_regression.expression_tree import ExpressionNode, NodeType
+                fallback_tree = ExpressionNode(NodeType.CONSTANT, 0.0, [])
+                pareto = ParetoFront()
+                pareto.add(ParetoSolution(
+                    expression=best_expr,
+                    mse=best_mse_val,
+                    complexity=10,
+                    sympy_expr=None,
+                    tree=fallback_tree
+                ))
+        else:
+            pareto = regressor.fit(X, y, input_vars)
 
         # get_knee_point attempts to balance complexity vs MSE, but for perfect fits (MSE ~ 0)
         # we should always prefer the accurate solution even if slightly more complex.
@@ -1699,3 +3362,144 @@ def _load_data_file(path):
         return {}
             
     return data
+
+
+def _handle_export(text: str):
+    """Handle export command: export <func> <file>"""
+    parts = text.split()
+    # patterns:
+    # export result.py (inference)
+    # export f result.py
+    # export f to result.py
+    
+    if len(parts) < 2:
+        print("Usage: export <function> <filename> (e.g., 'export f result.py')")
+        return
+
+    # default
+    func_name = None
+    filename = None
+    
+    # Check for "to"/"as" keywords and strip them
+    cmd_args = [p for p in parts[1:] if p.lower() not in ("to", "as")]
+    
+    if len(cmd_args) == 1:
+        # export result.py -> Infer function
+        filename = cmd_args[0]
+        funcs = list_functions()
+        if len(funcs) == 1:
+            func_name = next(iter(funcs))
+            print(f"Exporting function '{func_name}' to {filename}...")
+        elif len(funcs) == 0:
+            print("No functions defined to export.")
+            return
+        else:
+            print(f"Ambiguous: multiple functions defined ({', '.join(funcs.keys())}). Please specify function name: export <func> <file>")
+            return
+    elif len(cmd_args) >= 2:
+        func_name = cmd_args[0]
+        filename = cmd_args[1]
+    else:
+        print("Usage: export <function> <filename>")
+        return
+        
+    # Call export
+    try:
+        # Check if function exists
+        funcs = list_functions()
+        if func_name not in funcs:
+             print(f"Function '{func_name}' not found.")
+             return
+
+        # We need to call export_function_to_file from function_manager
+        # Assuming signature is (name, path)
+        success, msg = export_function_to_file(func_name, filename)
+        print(msg)
+    except Exception as e:
+        print(f"Export failed: {e}")
+
+
+def _handle_find_ode(text: str):
+    """Handle find ode command: find ode <file.csv>"""
+    parts = text.split()
+    # parts[0]="find", parts[1]="ode"
+    
+    csv_path = None
+    if len(parts) >= 3:
+        csv_path = parts[2]
+    
+    if not csv_path:
+        print("Usage: find ode <file.csv>")
+        return
+        
+    try:
+        # Load data
+        # Note: load_csv_data is imported at module level
+        data = load_csv_data(csv_path) 
+        if not data:
+             print(f"Failed to load data from {csv_path}")
+             return
+             
+        # Identify 't'
+        t_col = None
+        # Try exact match first
+        if 't' in data: t_col = 't'
+        elif 'time' in data: t_col = 'time'
+        elif 'Time' in data: t_col = 'Time'
+        elif 'T' in data: t_col = 'T'
+        
+        if not t_col:
+            print("Error: CSV must contain 't' or 'time' column for time steps.")
+            print(f"Found columns: {list(data.keys())}")
+            return
+            
+        t = data[t_col]
+        
+        # Everything else is a state variable
+        state_vars = [k for k in data.keys() if k != t_col]
+        if not state_vars:
+            print("Error: No state columns found (only time column).")
+            return
+            
+        # Build X matrix (n_samples, n_vars)
+        # Ensure column ordering matches state_vars list
+        X_cols = [data[v] for v in state_vars]
+        X = np.column_stack(X_cols)
+        
+        print(f"Discovered {len(state_vars)} state variables: {state_vars}")
+        print(f"Time steps: {len(t)} points.")
+        
+        # Import SINDy
+        try:
+            from ..dynamics_discovery.sindy import SINDy, SINDyConfig
+        except ImportError:
+            print("Error: SINDy module not available (kalkulator_pkg.dynamics_discovery).")
+            return
+            
+        # Run SINDy
+        print("Running SINDy algorithm...")
+        
+        # Adaptive configuration
+        n_samples = len(t)
+        method = "savgol"
+        if n_samples < 20:
+            print(f"Small dataset ({n_samples} points), using finite_difference for derivatives.")
+            method = "finite_difference"
+            
+        config = SINDyConfig(
+            derivative_method=method, 
+            threshold=0.05, # Conservative threshold
+            poly_order=2 if n_samples < 15 else 3 # Limit complexity for small data
+        )
+        sindy = SINDy(config)
+        sindy.fit(X, t, variable_names=state_vars)
+        eqs = sindy.equations
+        
+        print(f"\nDiscovered ODEs from {csv_path}:")
+        if not eqs:
+            print("No equations found (check data quality or threshold).")
+        for lhs, rhs in eqs.items():
+            print(f"  {lhs} = {rhs}")
+            
+    except Exception as e:
+        print(f"Error discovering ODE: {e}")
