@@ -745,6 +745,29 @@ class ExpressionNode:
                 raise ValueError(f"No SymPy equivalent for: {self.value}")
             return op_func(left_expr, right_expr)
 
+    def to_sympy_fast(self, symbols: dict[str, sp.Symbol]) -> sp.Expr:
+        """Fast SymPy conversion without expensive nsimplify rationalization.
+        
+        Used for lambdify compilation where exact rationals aren't needed.
+        """
+        if self.node_type == NodeType.CONSTANT:
+            return sp.Float(self.value)
+        elif self.node_type == NodeType.VARIABLE:
+            return symbols.get(self.value, sp.Symbol(self.value))
+        elif self.node_type == NodeType.UNARY_OP:
+            child_expr = self.children[0].to_sympy_fast(symbols)
+            op_func = SYMPY_UNARY.get(self.value)
+            if op_func is None:
+                raise ValueError(f"No SymPy equivalent for: {self.value}")
+            return op_func(child_expr)
+        else:  # BINARY_OP
+            left_expr = self.children[0].to_sympy_fast(symbols)
+            right_expr = self.children[1].to_sympy_fast(symbols)
+            op_func = SYMPY_BINARY.get(self.value)
+            if op_func is None:
+                raise ValueError(f"No SymPy equivalent for: {self.value}")
+            return op_func(left_expr, right_expr)
+
     def copy_subtree(self) -> ExpressionNode:
         """Create a deep copy of this subtree."""
         new_node = ExpressionNode(
@@ -867,7 +890,9 @@ class ExpressionTree:
         # Try to compile on first evaluation (lazy compilation)
         if self._compiled_func is None:
             try:
-                sympy_expr = self.to_sympy()
+                # Use fast SymPy conversion (no nsimplify) for lambdify
+                symbols_dict = {var: sp.Symbol(var) for var in self.variables}
+                sympy_expr = self.root.to_sympy_fast(symbols_dict)
                 symbols = [sp.Symbol(var) for var in self.variables]
                 # lambdify with numpy backend for fast vectorized evaluation
                 self._compiled_func = sp.lambdify(
