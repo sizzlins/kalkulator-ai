@@ -3097,6 +3097,7 @@ def _handle_evolve(text, variables=None):
 
         # Polynomial Mode: Ban all transcendentals, force pure polynomial evolution
         # This enables Taylor series discovery for functions like sin(x)
+        polynomial_taylor_seeds = []
         use_polynomial = "--polynomial" in text.lower()
         if use_polynomial:
             text = re.sub(r"--polynomial", "", text, flags=re.IGNORECASE)
@@ -3109,7 +3110,39 @@ def _handle_evolve(text, variables=None):
             ]
             banned_operators.extend(polynomial_banned)
             print(f"   [Polynomial Mode] Forcing pure polynomial search")
-            print(f"   [Polynomial Mode] Banned: {polynomial_banned}")
+            
+            # Taylor Series Templates for common transcendentals
+            # sin(x) ≈ x - x³/6 + x⁵/120 - x⁷/5040
+            # cos(x) ≈ 1 - x²/2 + x⁴/24 - x⁶/720
+            # exp(x) ≈ 1 + x + x²/2 + x³/6
+            # sinh(x) ≈ x + x³/6 + x⁵/120
+            # cosh(x) ≈ 1 + x²/2 + x⁴/24
+            polynomial_taylor_seeds = [
+                # Sine Taylor (odd, oscillatory)
+                'x - x**3/6',
+                'x - x**3/6 + x**5/120',
+                'x - x**3/6 + x**5/120 - x**7/5040',
+                # Cosine Taylor (even, oscillatory)
+                '1 - x**2/2',
+                '1 - x**2/2 + x**4/24',
+                '1 - x**2/2 + x**4/24 - x**6/720',
+                # Exponential Taylor
+                '1 + x + x**2/2',
+                '1 + x + x**2/2 + x**3/6',
+                # Sinh Taylor (odd, exponential growth)
+                'x + x**3/6',
+                'x + x**3/6 + x**5/120',
+                # Cosh Taylor (even, exponential growth)
+                '1 + x**2/2',
+                '1 + x**2/2 + x**4/24',
+                # Generic polynomials
+                'x + a*x**3',
+                'x + a*x**3 + b*x**5',
+                '1 + a*x**2',
+                '1 + a*x**2 + b*x**4',
+            ]
+            seeds.extend(polynomial_taylor_seeds)
+            print(f"   [Polynomial Mode] Seeding with {len(polynomial_taylor_seeds)} Taylor templates")
 
         # Strategy 10: File Input
         # Parse "--file 'path'" to load data into variables
