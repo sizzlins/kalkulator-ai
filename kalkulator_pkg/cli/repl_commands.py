@@ -3095,6 +3095,22 @@ def _handle_evolve(text, variables=None):
             text = re.sub(r'--ban\s+[a-zA-Z0-9_,]+', '', text)
             print(f"   [Constraint] Banned functions: {banned_operators}")
 
+        # Polynomial Mode: Ban all transcendentals, force pure polynomial evolution
+        # This enables Taylor series discovery for functions like sin(x)
+        use_polynomial = "--polynomial" in text.lower()
+        if use_polynomial:
+            text = re.sub(r"--polynomial", "", text, flags=re.IGNORECASE)
+            # Ban all transcendental and special functions
+            polynomial_banned = [
+                'sin', 'cos', 'tan', 'exp', 'log', 'sqrt',
+                'bessel_j0', 'gamma', 'prime_pi',
+                'bitwise_xor', 'bitwise_and', 'bitwise_or', 'lshift', 'rshift',
+                'floor', 'ceil', 'frac'
+            ]
+            banned_operators.extend(polynomial_banned)
+            print(f"   [Polynomial Mode] Forcing pure polynomial search")
+            print(f"   [Polynomial Mode] Banned: {polynomial_banned}")
+
         # Strategy 10: File Input
         # Parse "--file 'path'" to load data into variables
         file_match = re.search(r"--file\s+[\"']?([^\"'\s]+)[\"']?", text)
