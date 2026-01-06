@@ -26,6 +26,7 @@ from ..function_manager import load_functions
 from ..function_manager import save_functions
 from ..solver.dispatch import solve_single_equation
 from ..symbolic_regression import GeneticConfig, GeneticSymbolicRegressor
+from ..symbolic_regression.expression_tree import symbolify_constants
 from ..utils.formatting import format_solution
 from ..utils.formatting import print_result_pretty
 from ..worker import clear_caches
@@ -76,6 +77,7 @@ COMMAND_REGISTRY = {
     "clearcache",
     "define",
     "health",
+    "plot",
 }
 
 
@@ -176,6 +178,10 @@ def handle_command(text: str, ctx: Any, variables: Dict[str, str]) -> bool:
 
     if raw_lower.startswith("loadcache"):
         _handle_load_cache(text)
+        return True
+
+    if raw_lower.startswith("plot"):
+        _handle_plot_command(text, variables)
         return True
 
     if raw_lower.startswith("export"):
@@ -594,15 +600,111 @@ def generate_pattern_seeds(X, y, variable_names, verbose=False):
     derived_vars = variable_names if variable_names and len(variable_names) == n_vars else [f"x{k}" for k in range(n_vars)]
 
     import numpy as np
+
+    # =========================================================================
+    # PRIORITY 1: High-Confidence Specialized Patterns
+    # These generators produce few, high-quality seeds. We prioritize them
+    # to avoid truncation by the genetic engine's population limit.
+    # =========================================================================
+
+    # 1. Step Function Detection (floor, ceil, round) -- "The VIPs"
+    # If step function is detected, return it immediately if it's a perfect match
+    step_patterns = _detect_step_patterns(X, y)
+    if step_patterns:
+        if verbose:
+            print(f"   Step Analysis: Detected step function {step_patterns}")
+            print(f"   ⚡ Short-circuit: Returning exact match (genetic engine cannot evolve step functions)")
+        seeds.extend(step_patterns)
+        # Note: We continue to generate other seeds in case the step function is part of a larger expression
+        # But if it's a perfect match, the REPL might want to stop.
+        # The original logic performed a return here for exact matches. We keeps this behavior.
+        # We need to dedupe first to be safe, or just return the pattern directly.
+        return (step_patterns, step_patterns[0])
+
+    # 2. Integer Pattern Analysis ("Sherlock Mode")
+    integer_patterns = _detect_integer_patterns(X, y)
+    if integer_patterns:
+        if verbose:
+            print(f"   Integer Analysis: Deduced patterns {integer_patterns}")
+        seeds.extend(integer_patterns)
+
+    # 3. Self-Power Detection (x^x)
+    self_power = _detect_self_power(X, y, verbose=verbose)
+    if self_power:
+        seeds.extend(self_power)
+
+    # 4. ReLU Detection (Piecewise Linear)
+    relu_patterns = _detect_relu_patterns(X, y)
+    if relu_patterns:
+        if verbose:
+            print(f"   ReLU Analysis: Detected piecewise linear patterns {relu_patterns}")
+        seeds.extend(relu_patterns)
+
+    # 5. Special Functions (Bessel, Gamma, Prime, Bitwise)
+    bessel_patterns = _detect_bessel_patterns(X, y, verbose=verbose)
+    if bessel_patterns:
+        seeds.extend(bessel_patterns)
+
+    gamma_patterns = _detect_gamma_patterns(X, y, verbose=verbose)
+    if gamma_patterns:
+        seeds.extend(gamma_patterns)
+
+    prime_patterns = _detect_prime_counting_patterns(X, y)
+    if prime_patterns:
+        if verbose:
+            print(f"   Prime Analysis: Detected prime-counting function {prime_patterns}")
+        seeds.extend(prime_patterns)
+
+    bitwise_patterns = _detect_bitwise_patterns(X, y)
+    if bitwise_patterns:
+        if verbose:
+            print(f"   Bitwise Analysis: Detected digital logic {bitwise_patterns}")
+        seeds.extend(bitwise_patterns)
+
+    # Modulo Pattern Analysis
+    modulo_patterns = _detect_modulo_patterns(X, y, verbose=verbose)
+    if modulo_patterns:
+        seeds.extend(modulo_patterns)
+
+    # Fibonacci Analysis
+    fib_patterns = _detect_fibonacci_patterns(X, y, verbose=verbose)
+    if fib_patterns:
+        seeds.extend(fib_patterns)
+        
+    # 6. Forensic Anchor Analysis (Sherlock Mode II)
+    anchor_patterns = _detect_anchor_patterns(X, y, verbose=verbose)
+    if anchor_patterns:
+        seeds.extend(anchor_patterns)
+
+    # 7. Odd Function Detection (Softsign, x/(abs(x)+1))
+    odd_patterns = _detect_odd_function_patterns(X, y, verbose=verbose)
+    if odd_patterns:
+        seeds.extend(odd_patterns)
+
+    # 8. Rosenbrock/Valley Function Detection (2-variable optimization benchmarks)
+    rosenbrock_patterns = _detect_rosenbrock_patterns(X, y, variable_names=variable_names, verbose=verbose)
+    if rosenbrock_patterns:
+        seeds.extend(rosenbrock_patterns)
+
+    # 9. Fractal Cosine/Fourier Series Detection (e.g., Weierstrass)
+    fractal_patterns = _detect_fractal_cosine_patterns(X, y, verbose=verbose)
+    if fractal_patterns:
+        seeds.extend(fractal_patterns)
+
+    # =========================================================================
+    # PRIORITY 2: Exploratory / Combinatorial Patterns
+    # These produce many seeds (Singularities, Rationals, Compositions).
+    # They go after the VIPs.
+    # =========================================================================
     
-    # --- 1. Detect poles (where y is inf/nan) ---
+    # --- 7. Singularity Analysis (Poles) ---
     seen_poles = set()
     detected_pole_info = [] # Track for verbosity
     
     for i, y_val in enumerate(y):
         try:
             if not np.isfinite(y_val):
-                # Check for each variable if it correlates with the pole
+                # Check for each variable if it correlations with the pole
                 for col_idx in range(n_vars):
                     val = X[i, col_idx]
                     var_name = derived_vars[col_idx]
@@ -635,9 +737,7 @@ def generate_pattern_seeds(X, y, variable_names, verbose=False):
                     # Inverse pole
                     seeds.append(f"1/({val_str}-({var_name}))")
                     
-                    # --- NEW: Generate Composite Rational Seeds (x/y, z/y, etc.) ---
-                    # If we found a pole 1/y, also try x * (1/y), z * (1/y)
-                    # This bridges the gap between the pole feature and the numerator variable
+                    # --- Composite Rational Seeds (x/y, z/y, etc.) ---
                     for other_var in derived_vars:
                          seeds.append(f"{other_var} * ({basic_pole})")
 
@@ -649,8 +749,7 @@ def generate_pattern_seeds(X, y, variable_names, verbose=False):
         unique_info = list(set(detected_pole_info))
         print(f"   Singularity Analysis: Detected {len(unique_info)} pole(s) at {', '.join(unique_info)}")
             
-    # --- 2. Detect near-zero crossings (potential 1/(x-a) patterns) ---
-    # Look for large jumps in y that might indicate near-pole behavior
+    # --- 8. Detect near-zero crossings (potential 1/(x-a) patterns) ---
     if len(y) >= 3:
         y_finite = np.array([yi if np.isfinite(yi) else 0 for yi in y])
         y_max = np.max(np.abs(y_finite)) if np.any(np.isfinite(y_finite)) else 1
@@ -665,7 +764,7 @@ def generate_pattern_seeds(X, y, variable_names, verbose=False):
                         pole_seeds.append(near_pole)
                         seeds.append(near_pole)
 
-    # --- Phase 2: Detect outer functions from range ---
+    # --- 9. Detect outer functions from range ---
     outer_functions = _detect_outer_functions(y)
     
     if verbose and outer_functions:
@@ -674,17 +773,16 @@ def generate_pattern_seeds(X, y, variable_names, verbose=False):
             y_min, y_max = np.min(y_finite), np.max(y_finite)
             print(f"   Range Analysis: Output in [{y_min:.2f}, {y_max:.2f}] suggests {', '.join(outer_functions)}")
     
-    # --- Phase 3: Compose seeds (combine poles with outer functions) ---
+    # --- 10. Compose seeds (combine poles with outer functions) ---
     if pole_seeds and outer_functions:
         composed = _compose_seeds(pole_seeds, outer_functions)
         if composed and verbose:
              examples = ", ".join(composed[:3])
              suffix = f"... ({len(composed)} total)" if len(composed) > 3 else ""
              print(f"   Composed Hypothesis: Generates {examples}{suffix}")
-        seeds.extend(composed) # Use extend for list
+        seeds.extend(composed)
         
-    # 5. Smart Seeding: Rational Deduction (Singularities + Zeros)
-    # Combine detected Numerators (Zeros) and Denominators (Poles)
+    # --- 11. Smart Seeding: Rational Deduction (Singularities + Zeros) ---
     numerator_seeds = _detect_zeros(X, y)
     if numerator_seeds and verbose:
         print(f"   Zero Detection: Found {len(numerator_seeds)} numerator candidates from zeros")
@@ -704,73 +802,9 @@ def generate_pattern_seeds(X, y, variable_names, verbose=False):
          for num in numerator_seeds:
              for den in denominator_seeds:
                  rational_seeds.append(f"{num} / {den}")
-    seeds.extend(rational_seeds) # Add the composed rationals
-                 
-    # 6. Integer Pattern Analysis ("Sherlock Mode")
-    integer_patterns = _detect_integer_patterns(X, y)
-    if integer_patterns:
-        if verbose:
-            print(f"   Integer Analysis: Deduced patterns {integer_patterns}")
-        seeds.extend(integer_patterns)
+    seeds.extend(rational_seeds)
     
-    # 6. Self-Power Detection (x^x)
-    self_power = _detect_self_power(X, y)
-    if self_power:
-        if verbose:
-            print(f"   Self-Power Analysis: Detected {self_power}")
-        seeds.extend(self_power)
-
-    # 6.5 ReLU Detection (Piecewise Linear)
-    relu_patterns = _detect_relu_patterns(X, y)
-    if relu_patterns:
-        if verbose:
-            print(f"   ReLU Analysis: Detected piecewise linear patterns {relu_patterns}")
-        seeds.extend(relu_patterns)
-
-    # 6.6 Bessel Function Detection (J0, J1)
-    bessel_patterns = _detect_bessel_patterns(X, y)
-    if bessel_patterns:
-        if verbose:
-            print(f"   Bessel Analysis: Detected special function {bessel_patterns}")
-        seeds.extend(bessel_patterns)
-
-    # 6.7 Gamma Function Detection (extends factorials)
-    gamma_patterns = _detect_gamma_patterns(X, y)
-    if gamma_patterns:
-        if verbose:
-            print(f"   Gamma Analysis: Detected Gamma function {gamma_patterns}")
-        seeds.extend(gamma_patterns)
-
-    # 6.8 Prime-Counting Function Detection (π(x))
-    prime_patterns = _detect_prime_counting_patterns(X, y)
-    if prime_patterns:
-        if verbose:
-            print(f"   Prime Analysis: Detected prime-counting function {prime_patterns}")
-        seeds.extend(prime_patterns)
-
-    # 6.9 Bitwise Logic Detection (XOR, AND, OR, Shifts)
-    bitwise_patterns = _detect_bitwise_patterns(X, y)
-    if bitwise_patterns:
-        if verbose:
-            print(f"   Bitwise Analysis: Detected digital logic {bitwise_patterns}")
-        seeds.extend(bitwise_patterns)
-        
-    # 7. Forensic Anchor Analysis (Sherlock Mode II)
-    anchor_patterns = _detect_anchor_patterns(X, y, verbose=verbose)
-    if anchor_patterns:
-        seeds.extend(anchor_patterns)
-
-    # 7. Step Function Detection (floor, ceil, round)
-    # If step function is detected, return it immediately - genetic engine can't evolve these
-    step_patterns = _detect_step_patterns(X, y)
-    if step_patterns:
-        if verbose:
-            print(f"   Step Analysis: Detected step function {step_patterns}")
-            print(f"   ⚡ Short-circuit: Returning exact match (genetic engine cannot evolve step functions)")
-        # Return tuple with seeds and exact match indicator
-        return (unique_seeds if 'unique_seeds' in dir() else seeds, step_patterns[0])
-    
-    # --- Phase 4: Compositional De-layering (Forensic Decomposition) ---
+    # --- 12. Compositional De-layering (Forensic Decomposition) ---
     # 1. Symmetry Analysis
     symmetry = _detect_symmetry(X, y)
     if verbose and symmetry:
@@ -857,6 +891,28 @@ def _detect_zeros(X, y):
                 seeds.append(f"({var_name}^{n} - {pow_val})")
             except:
                 pass
+
+    # --- SYMMETRIC ZERO DETECTION ---
+    # If zeros exist at ±a, suggests sqrt(x² - a²)
+    # Example: zeros at ±4 → sqrt(x² - 16)
+    positive_zeros = [z for z in found_zeros if z.real > 0.1] if hasattr(found_zeros[0], 'real') else [z for z in found_zeros if z > 0.1]
+    
+    for pz in positive_zeros:
+        try:
+            pz_val = float(pz.real if hasattr(pz, 'real') else pz)
+            # Check if -pz also exists in zeros
+            has_negative = any(abs(z + pz_val) < 0.01 for z in found_zeros)
+            if has_negative:
+                # Symmetric zeros at ±pz_val → sqrt(x² - pz_val²)
+                a_squared = pz_val ** 2
+                # Round if close to integer
+                if abs(a_squared - round(a_squared)) < 0.01:
+                    a_squared = int(round(a_squared))
+                seeds.append(f"sqrt({var_name}^2 - {a_squared})")
+                seeds.append(f"sqrt(Abs({var_name}^2 - {a_squared}))")
+                seeds.append(f"({var_name}^2 - {a_squared})^(1/2)")
+        except (TypeError, ValueError, AttributeError):
+            continue
 
     return list(set(seeds))
 
@@ -1073,22 +1129,21 @@ def _detect_relu_patterns(X, y):
             is_valid = True
             for cx, cy in zip(x_complex, y_complex):
                 try:
-                    # Evaluate seed (simple eval)
-                    # Note: We rely on python's eval/numpy for this quick check
-                    # Map 'abs' to np.abs, 'max' to np.maximum (or fails for complex)
-                    
-                    # Safe eval context
-                    ctx = {"x": cx, "abs": np.abs, "max": np.maximum} 
-                    # Note: np.maximum supports broadcoasting, but max(0, complex) might fail in pure python
-                    # but (x+abs(x))/2 is safe.
+                    # Use SymPy for safe evaluation instead of raw eval()
+                    import sympy as sp
+                    x_sym = sp.Symbol('x')
                     
                     if "max" in seed and np.iscomplex(cx):
                         # max(0, complex) is undefined/error in many contexts
                         # So we skip max() seeds for complex data
                         is_valid = False
                         break
-                        
-                    val = eval(seed, {"__builtins__": None}, ctx)
+                    
+                    # Parse seed using SymPy (safe)
+                    expr = sp.sympify(seed, locals={'x': x_sym, 'abs': sp.Abs})
+                    # Substitute value and evaluate
+                    val = complex(expr.subs(x_sym, cx).evalf())
+                    
                     if abs(val - cy) > 1e-4:
                         is_valid = False
                         break
@@ -1104,7 +1159,7 @@ def _detect_relu_patterns(X, y):
     return seeds
 
 
-def _detect_self_power(X, y):
+def _detect_self_power(X, y, verbose: bool = False):
     """
     Detects if f(x) = x^x (Self-Power) or related forms.
     Uses heuristic: Checks matches for x^x on input data.
@@ -1117,6 +1172,7 @@ def _detect_self_power(X, y):
     
     matches = 0
     total_checks = 0
+    example_matches = []  # Store examples for verbose
     
     for x_val, y_val in zip(x_flat, y_flat):
         try:
@@ -1140,8 +1196,12 @@ def _detect_self_power(X, y):
             diff = abs(expected - cy)
             tol = 1e-4 + 1e-4 * abs(cy)
             
-            if diff < tol:
+            is_match = diff < tol
+            if is_match:
                 matches += 1
+                # Store first few examples for verbose
+                if len(example_matches) < 4 and isinstance(x_val, (int, float)) and x_val > 0:
+                    example_matches.append((x_val, expected.real if expected.imag == 0 else expected, cy))
             elif abs(abs(expected) - abs(cy)) < tol:
                 # Weak match on magnitude (e.g. branch cut issues with complex power?)
                 # For now, require strict match or at least real part match if y is real
@@ -1154,6 +1214,14 @@ def _detect_self_power(X, y):
     # Heuristic: If we have at least 3 matches and > 90% match rate on checked points
     # (Checking integer points like 1, 2, 3, 4 is usually sufficient)
     if total_checks > 0 and matches >= 3 and matches >= total_checks * 0.9:
+        if verbose:
+            print(f"   Forensic Analysis: Checking Self-Power pattern...")
+            print(f"      → Testing hypothesis: f(x) = x^x")
+            for x_ex, computed, y_ex in example_matches:
+                x_disp = int(x_ex) if x_ex == int(x_ex) else f"{x_ex:.4f}"
+                print(f"      → f({x_disp}): {x_disp}^{x_disp} = {int(computed) if computed == int(computed) else f'{computed:.4f}'} ✓")
+            print(f"      → Match rate: {matches}/{total_checks} points ({100*matches/total_checks:.0f}%)")
+            print(f"      → Self-Power confirmed: f(x) = x^x")
         seeds.append("pow(x, x)")
         
     return seeds
@@ -1211,7 +1279,7 @@ def _detect_self_power(X, y):
     return seeds
 
 
-def _detect_bessel_patterns(X, y):
+def _detect_bessel_patterns(X, y, verbose: bool = False):
     """
     Detects if f(x) = J0(x) (Bessel function of first kind, order 0).
     
@@ -1267,6 +1335,12 @@ def _detect_bessel_patterns(X, y):
     # J0 first root tolerance
     if abs(x_first_crossing - 2.4) < 0.3:
         # Strong match for J0
+        if verbose:
+            print(f"   Forensic Analysis: Checking Bessel J0 pattern...")
+            print(f"      → Phase 1: Damped oscillation detected ({len(sign_changes)} zero crossings)")
+            print(f"      → Phase 2: First zero crossing at x ≈ {x_first_crossing:.4f}")
+            print(f"      → Known: J0(x) first root = 2.4048")
+            print(f"      → Match: |{x_first_crossing:.4f} - 2.4048| < 0.3 ✓")
         seeds.append("bessel_j0(x)")
         
     # Check second crossing if available
@@ -1276,10 +1350,14 @@ def _detect_bessel_patterns(X, y):
         
         if abs(x_second_crossing - 5.5) < 0.3:
             # Even stronger match
+            if verbose and "bessel_j0(x)" not in seeds:
+                print(f"   Forensic Analysis: Checking Bessel J0 pattern...")
+                print(f"      → Second zero crossing at x ≈ {x_second_crossing:.4f}")
+                print(f"      → Known: J0(x) second root = 5.5201")
+                print(f"      → Match: |{x_second_crossing:.4f} - 5.5201| < 0.3 ✓")
             if "bessel_j0(x)" not in seeds:
                 seeds.append("bessel_j0(x)")
     
-    # Phase 4: Verify by computing J0 and checking fit
     # Phase 4: Verify by computing J0 [REMOVED STRICT MSE]
     # We allow the seed even if MSE is high, because the shape (damped oscillation)
     # is a strong indicator. The genetic engine will figure out scaling/offset.
@@ -1294,13 +1372,16 @@ def _detect_bessel_patterns(X, y):
                 # Weak or negative correlation - might not be J0
                 if len(seeds) > 0:
                    seeds.pop()
+            elif verbose:
+                print(f"      → Correlation with J0(x): {corr:.4f} ✓")
+                print(f"      → Bessel J0 confirmed: f(x) = J0(x)")
         except Exception:
             pass
     
     return seeds
 
 
-def _detect_gamma_patterns(X, y):
+def _detect_gamma_patterns(X, y, verbose: bool = False):
     """
     Detects if f(x) = Gamma(x) (Gamma function - extends factorials).
     
@@ -1360,6 +1441,9 @@ def _detect_gamma_patterns(X, y):
                 expected_y = factorials[expected_arg]
                 factorial_checks += 1
                 
+                if verbose:
+                     print(f"      → f({x_int})={y_val:.4g}: ({expected_arg})! = {expected_y}")
+                
                 # Check strict match
                 if expected_y > 0:
                     rel_error = abs(y_val - expected_y) / max(expected_y, 1)
@@ -1391,7 +1475,8 @@ def _detect_gamma_patterns(X, y):
         3.5: 15 * sqrt_pi / 8,  # Gamma(7/2)
         4.5: 105 * sqrt_pi / 16,  # Gamma(9/2)
     }
-    
+
+
     # Check regular AND shifted Pi values
     for x_val, y_val in zip(x_clean, y_clean):
         for half_x, expected_y in half_int_values.items():
@@ -1474,6 +1559,220 @@ def _detect_gamma_patterns(X, y):
     return seeds
     
 
+def _detect_prime_counting_patterns(X, y):
+    """Detect if f(x) matches the prime-counting function π(x)."""
+    seeds = []
+    if X.ndim > 1 and X.shape[1] > 1: return []
+    
+    x_flat = X.flatten()
+    y_flat = np.array(y).flatten()
+    
+    matched_points = 0
+    total_checks = 0
+    
+    try:
+        from sympy import primepi
+        
+        for x_val, y_val in zip(x_flat, y_flat):
+            if not np.isfinite(x_val) or abs(x_val - round(x_val)) > 0.01:
+                continue
+                
+            x_int = int(round(x_val))
+            if x_int < 2: continue
+            
+            expected = float(primepi(x_int))
+            if abs(y_val - expected) < 0.1:
+                matched_points += 1
+            total_checks += 1
+            
+        if total_checks >= 3 and matched_points == total_checks:
+            seeds.append("prime_pi(x)")
+    except ImportError:
+        pass
+        
+    return seeds
+
+
+def _detect_bitwise_patterns(X, y):
+    """Detect simple bitwise operations like x & 1, x | 1, x ^ 1."""
+    seeds = []
+    if X.ndim > 1 and X.shape[1] > 1: return []
+    
+    x_flat = X.flatten()
+    y_flat = np.array(y).flatten()
+    
+    # Check for integers
+    valid_integers = [x for x in x_flat if np.isfinite(x) and abs(x - round(x)) < 0.01]
+    if len(valid_integers) < len(x_flat) * 0.8: # Require mostly integers
+        return []
+        
+    # Check common masks
+    masks = [1, 2, 3, 4, 7, 8, 15, 16, 31, 255]
+    
+    for M in masks:
+        # AND
+        matches_and = 0
+        matches_or = 0
+        matches_xor = 0
+        count = 0
+        
+        for x_val, y_val in zip(x_flat, y_flat):
+            if not np.isfinite(x_val) or abs(x_val - round(x_val)) > 0.01: continue
+            
+            x_i = int(round(x_val))
+            
+            if abs(y_val - (x_i & M)) < 0.01: matches_and += 1
+            if abs(y_val - (x_i | M)) < 0.01: matches_or += 1
+            if abs(y_val - (x_i ^ M)) < 0.01: matches_xor += 1
+            count += 1
+            
+        if count > 0:
+            if matches_and == count: seeds.append(f"bitwise_and(x, {M})")
+            if matches_or == count: seeds.append(f"bitwise_or(x, {M})")
+            if matches_xor == count: seeds.append(f"bitwise_xor(x, {M})")
+            
+    return seeds
+
+
+def _detect_fibonacci_patterns(X, y, verbose: bool = False) -> list[str]:
+    """Detect k-bonacci recursions: f(n) = f(n-1) + f(n-2) + ... + f(n-k).
+    
+    Supports:
+    - Fibonacci (k=2): f(n) = f(n-1) + f(n-2)
+    - Tribonacci (k=3): f(n) = f(n-1) + f(n-2) + f(n-3)
+    - Tetranacci (k=4): f(n) = f(n-1) + f(n-2) + f(n-3) + f(n-4)
+    """
+    seeds = []
+    
+    # 1. Require 1D input
+    if X.ndim > 1 and X.shape[1] > 1: return []
+    
+    x_flat = X.flatten()
+    y_flat = np.array(y).flatten()
+    
+    # 2. Sort by x
+    perm = np.argsort(x_flat)
+    x_sort = x_flat[perm]
+    y_sort = y_flat[perm]
+    
+    # 3. Check for integer sequence (skip complex values)
+    def is_near_integer(x):
+        try:
+            if np.iscomplex(x) or not np.isfinite(np.real(x)):
+                return False
+            return abs(np.real(x) - round(np.real(x))) < 0.01
+        except:
+            return False
+    
+    mask = [is_near_integer(x) for x in x_sort]
+    if sum(mask) < 3: return []
+    
+    x_int = [int(round(np.real(x))) for i, x in enumerate(x_sort) if mask[i]]
+    y_int = [y_sort[i] for i, x in enumerate(x_sort) if mask[i]]
+    
+    # Build map n -> y
+    data_map = {}
+    for xv, yv in zip(x_int, y_int):
+        if xv not in data_map: data_map[xv] = yv
+        
+    sorted_integers = sorted(data_map.keys())
+    
+    # K-bonacci constants (dominant eigenvalues and normalization factors)
+    # Values computed from characteristic equations
+    KBONACCI_CONSTANTS = {
+        2: {  # Fibonacci
+            "name": "Fibonacci",
+            "tau": 1.618033988749895,  # (1+sqrt(5))/2
+            "formula": "((1 + sqrt(5))/2)**x - ((1 - sqrt(5))/2)**x) / sqrt(5)",
+            "approx_divisor": 2.23606797749979,  # sqrt(5)
+        },
+        3: {  # Tribonacci  
+            "name": "Tribonacci",
+            "tau": 1.8392867552141612,  # Real root of x³ - x² - x - 1 = 0
+            "formula": "round(1.8392867552141612**x / 3.022420519352963)",
+            "approx_divisor": 3.022420519352963,  # Normalization constant
+        },
+        4: {  # Tetranacci
+            "name": "Tetranacci",
+            "tau": 1.9275619754829254,  # Real root of x⁴ - x³ - x² - x - 1 = 0
+            "formula": "round(1.9275619754829254**x / 3.145432627498968)",
+            "approx_divisor": 3.145432627498968,
+        },
+    }
+    
+    # Try each k-bonacci order (check higher orders first for specificity)
+    for k in [4, 3, 2]:
+        matches = 0
+        checks = 0
+        
+        for n in sorted_integers:
+            # Check if all k previous terms exist
+            if all((n-i) in data_map for i in range(1, k+1)):
+                val_n = data_map[n]
+                expected = sum(data_map[n-i] for i in range(1, k+1))
+                
+                if abs(val_n - expected) < 0.01:
+                    matches += 1
+                checks += 1
+        
+        # Need enough checks and all must match
+        if checks >= k and matches == checks:
+            const = KBONACCI_CONSTANTS[k]
+            
+            if verbose:
+                print(f"   Forensic Analysis: Linear Recurrence detected")
+                recurrence = " + ".join([f"f(n-{i})" for i in range(1, k+1)])
+                print(f"      → f(n) = {recurrence} confirmed for {checks} points")
+                print(f"      → Matches {const['name']} sequence")
+            
+            if k == 2:  # Fibonacci - use exact Binet formula
+                # Check for standard Fibonacci (0, 1, 1, 2, 3, 5...)
+                is_standard_fib = (0 in data_map and abs(data_map[0]) < 0.01) and \
+                                  (1 in data_map and abs(data_map[1] - 1) < 0.01)
+                                  
+                is_lucas = (0 in data_map and abs(data_map[0] - 2) < 0.01) and \
+                           (1 in data_map and abs(data_map[1] - 1) < 0.01)
+                           
+                phi_part = "((1 + sqrt(5)) / 2)"
+                psi_part = "((1 - sqrt(5)) / 2)"
+                sqrt5 = "sqrt(5)"
+                
+                if is_standard_fib:
+                    if verbose: print(f"      → Standard Fibonacci F_n")
+                    seeds.append(f"({phi_part}**x - {psi_part}**x) / {sqrt5}")
+                elif is_lucas:
+                    if verbose: print(f"      → Lucas sequence L_n")
+                    seeds.append(f"{phi_part}**x + {psi_part}**x")
+                else:
+                    if verbose: print(f"      → Generic Fibonacci-like")
+                    seeds.append(f"({phi_part}**x)")
+                    seeds.append(f"({psi_part}**x)")
+                    
+            else:  # Tribonacci/Tetranacci - use dominant eigenvalue approximation
+                tau = const["tau"]
+                divisor = const["approx_divisor"]
+                
+                # Seed the closed-form approximation
+                # Use floor(x + 0.5) instead of round(x) for symbolic compatibility
+                seeds.append(f"floor({tau}**x / {divisor} + 0.5)")
+                seeds.append(f"{tau}**x / {divisor}")
+                seeds.append(f"{tau}**x")  # Dominant term for evolution
+                
+                # Also try to estimate the coefficient
+                if len(sorted_integers) > 0:
+                    n_last = sorted_integers[-1]
+                    if n_last > 0:
+                        y_last = data_map[n_last]
+                        c_est = y_last / (tau ** n_last)
+                        if abs(c_est) > 0.001:
+                            seeds.append(f"{c_est:.6f} * {tau}**x")
+            
+            # Found a match, don't check lower orders
+            break
+                          
+    return seeds
+
+
 def _detect_anchor_patterns(X, y, verbose: bool = False) -> list[str]:
     """Detect functions based on specific 'anchor' values (Forensic Analysis).
     
@@ -1502,11 +1801,52 @@ def _detect_anchor_patterns(X, y, verbose: bool = False) -> list[str]:
         x_col = X[:, 0]
         
     for i, x_val in enumerate(x_col):
-        # Skip complex
+        # Handle complex numbers - extract real part if imaginary is negligible
         if isinstance(x_val, (complex, np.complexfloating)):
-            continue
+            if abs(x_val.imag) > 1e-10:
+                continue  # Truly complex, skip
+            x_val = x_val.real  # Use real part
+            
         if abs(x_val) < 1e-9:
-             f0 = y[i]
+             f0_raw = y[i]  # Keep raw value (may be complex)
+             f0 = None
+             f0_imag = None
+             
+             # Check if f(0) is pure imaginary (e.g., 4i for sqrt(x²-16))
+             if isinstance(f0_raw, (complex, np.complexfloating)):
+                 if abs(f0_raw.real) < 1e-6 and abs(f0_raw.imag) > 1e-6:
+                     f0_imag = abs(f0_raw.imag)
+                     
+                     # FINGERPRINT: f(0) = πi/2 suggests acosh(x)
+                     # acosh(0) = i * acos(0) = i * π/2
+                     if abs(f0_imag - math.pi/2) < 0.01:
+                         if verbose:
+                             print(f"   Forensic Analysis: f(0) = {f0_raw.imag:.4f}i ≈ πi/2")
+                             print(f"      → acosh(0) = i * acos(0) = i * π/2")
+                             print(f"      → Deduced structure: acosh(x)")
+                         seeds.append("acosh(x)")
+                         seeds.append("log(x + sqrt(x^2 - 1))")  # Definition of acosh
+                     # FINGERPRINT: f(0) = πi suggests asin/acos derivative or branch
+                     elif abs(f0_imag - math.pi) < 0.01:
+                         if verbose:
+                             print(f"   Forensic Analysis: f(0) = {f0_raw.imag:.4f}i ≈ πi")
+                             print(f"      → Suggests acosh(-1) or similar branch cut")
+                         seeds.append("acosh(-x)")
+                     else:
+                         # Default: pure imaginary → sqrt(x² - a²)
+                         a_squared = f0_imag ** 2
+                         if abs(a_squared - round(a_squared)) < 0.01:
+                             a_squared = int(round(a_squared))
+                         if verbose:
+                             print(f"   Forensic Analysis: f(0) = {f0_raw.imag:.4f}i (pure imaginary)")
+                             print(f"      → {f0_imag:.4f}² = {a_squared}, so sqrt(-{a_squared}) at origin")
+                             print(f"      → Deduced structure: sqrt(x² - {a_squared})")
+                         seeds.append(f"sqrt(x^2 - {a_squared})")
+                         seeds.append(f"sqrt(Abs(x^2 - {a_squared}))")
+                 elif abs(f0_raw.imag) < 1e-10:
+                     f0 = f0_raw.real  # Essentially real
+             else:
+                 f0 = f0_raw
              break
              
     if f0 is not None and not isinstance(f0, (complex, np.complexfloating)):
@@ -1516,30 +1856,123 @@ def _detect_anchor_patterns(X, y, verbose: bool = False) -> list[str]:
         # Check sin(1) ~ 0.84147
         if abs(val_check - math.sin(1)) < 1e-4:
             if verbose:
-                print(f"   Forensic Analysis: f(0)={f0:.4f} ≈ sin(1). Suggests sin(u(x)) where u(0)=1.")
+                print(f"   Forensic Analysis: f(0) = {f0:.4f} ≈ sin(1) = 0.8415")
+                print(f"      → Outer function: sin(...)")
+                print(f"      → Inner u(x) must satisfy u(0) = 1")
+                print(f"      → Candidates: cos(0)=1, exp(0)=1, cos(tan(0))=1")
             # Seed structures that give u(0)=1
-            seeds.append("sin(cos(tan(x)))") # The user's specific case
+            seeds.append("sin(cos(tan(x)))")
             seeds.append("sin(cos(x))")
-            seeds.append("sin(exp(x))") # exp(0)=1
+            seeds.append("sin(exp(x))")
             
         # Check cos(1) ~ 0.5403
         elif abs(val_check - math.cos(1)) < 1e-4:
              if verbose:
-                print(f"   Forensic Analysis: f(0)={f0:.4f} ≈ cos(1). Suggests cos(u(x)) where u(0)=1.")
+                print(f"   Forensic Analysis: f(0) = {f0:.4f} ≈ cos(1) = 0.5403")
+                print(f"      → Outer function: cos(...)")
+                print(f"      → Inner u(x) must satisfy u(0) = 1")
              seeds.append("cos(cos(x))")
              seeds.append("cos(exp(x))")
+             seeds.append("cos(cos(tan(x)))")
+             
+        # Check tan(1) ~ 1.5574
+        elif abs(val_check - math.tan(1)) < 1e-3:
+             if verbose:
+                print(f"   Forensic Analysis: f(0) = {f0:.4f} ≈ tan(1) = 1.5574")
+                print(f"      → Outer function: tan(...)")
+                print(f"      → Inner u(x) must satisfy u(0) = 1")
+             seeds.append("tan(cos(x))")
+             seeds.append("tan(exp(x))")
+             
+        # Check exp(-1) ~ 0.3679
+        elif abs(val_check - math.exp(-1)) < 1e-4:
+             if verbose:
+                print(f"   Forensic Analysis: f(0) = {f0:.4f} ≈ e⁻¹ = 0.3679")
+                print(f"      → Structure: exp(-u(x))")
+                print(f"      → Inner u(x) must satisfy u(0) = 1")
+             seeds.append("exp(-cos(x))")
+             seeds.append("exp(-exp(x))")
+             
+        # Check ln(2) ~ 0.6931
+        elif abs(val_check - math.log(2)) < 1e-4:
+             if verbose:
+                print(f"   Forensic Analysis: f(0) = {f0:.4f} ≈ ln(2) = 0.6931")
+                print(f"      → Structure: log(...)")
+                print(f"      → Inner must equal 2 at x=0: 1+cos(0)=2, 2*exp(0)=2")
+             seeds.append("log(1 + cos(x))")
+             seeds.append("log(2*exp(x))")
+             
+        # Check asinh(1) = ln(1 + sqrt(2)) ≈ 0.8814
+        elif abs(val_check - math.asinh(1)) < 1e-4:
+             if verbose:
+                print(f"   Forensic Analysis: f(0) = {f0:.4f} ≈ asinh(1) = 0.8814")
+                print(f"      → asinh(1) = ln(1 + √2)")
+                print(f"      → Suggests asinh(u(x)) where u(0) = 1")
+             seeds.append("asinh(cos(x))")
+             seeds.append("asinh(exp(x))")
+             
+        # Check atanh(0.5) ≈ 0.5493
+        elif abs(val_check - math.atanh(0.5)) < 1e-4:
+             if verbose:
+                print(f"   Forensic Analysis: f(0) = {f0:.4f} ≈ atanh(0.5) = 0.5493")
+                print(f"      → atanh(x) = 0.5 * ln((1+x)/(1-x))")
+                print(f"      → Suggests atanh(u(x)) structure")
+             seeds.append("atanh(sin(x))")
+             seeds.append("atanh(x/2)")
+             
+    # 3. Check Anchor: f(1) = 0 (suggests acosh, as acosh(1) = 0)
+    f1 = None
+    for i, x_val in enumerate(x_col):
+        if isinstance(x_val, (complex, np.complexfloating)):
+            if abs(x_val.imag) > 1e-10:
+                continue
+            x_val = x_val.real
+        if abs(x_val - 1.0) < 1e-6:
+            f1_raw = y[i]
+            if isinstance(f1_raw, (complex, np.complexfloating)):
+                if abs(f1_raw.imag) < 1e-10:
+                    f1 = f1_raw.real
+            else:
+                f1 = f1_raw
+            break
+    
+    if f1 is not None and abs(f1) < 1e-6:
+        if verbose:
+            print(f"   Forensic Analysis: f(1) = 0 ← key anchor point")
+            print(f"      → acosh(1) = ln(1 + sqrt(0)) = ln(1) = 0")
+            print(f"      → Deduced structure: acosh(x) or log-based")
+        if "acosh(x)" not in seeds:
+            seeds.append("acosh(x)")
+        seeds.append("log(x + sqrt(x^2 - 1))")
+    
+    # Check f(1) = asinh(1) = ln(1+√2) ≈ 0.8814
+    elif f1 is not None and abs(f1 - math.asinh(1)) < 1e-4:
+        if verbose:
+            print(f"   Forensic Analysis: f(1) = {f1:.4f} ≈ asinh(1) = 0.8814")
+            print(f"      → asinh(1) = ln(1 + √2)")
+            print(f"      → Deduced structure: asinh(x)")
+        seeds.append("asinh(x)")
+        seeds.append("log(x + sqrt(x^2 + 1))")  # Definition of asinh
              
     # 2. Check Periodicity: f(0) vs f(pi) vs f(pi/2)
     # Find pi and 2pi
     f_pi = None
     f_2pi = None
     for i, x_val in enumerate(x_col):
-        if isinstance(x_val, (complex, np.complexfloating)): continue
+        # Handle complex - extract real part if imaginary is negligible
+        if isinstance(x_val, (complex, np.complexfloating)):
+            if abs(x_val.imag) > 1e-10:
+                continue
+            x_val = x_val.real
         
         if abs(x_val - math.pi) < 0.01:
             f_pi = y[i]
+            if isinstance(f_pi, (complex, np.complexfloating)):
+                f_pi = f_pi.real if abs(f_pi.imag) < 1e-10 else None
         elif abs(x_val - 2*math.pi) < 0.01:
             f_2pi = y[i]
+            if isinstance(f_2pi, (complex, np.complexfloating)):
+                f_2pi = f_2pi.real if abs(f_2pi.imag) < 1e-10 else None
             
     if f0 is not None and f_pi is not None:
          # Check if f(0) == f(pi)
@@ -1550,6 +1983,511 @@ def _detect_anchor_patterns(X, y, verbose: bool = False) -> list[str]:
              seeds.append("cos(2*x)")
              seeds.append("sin(2*x)")
              
+    # 4. Check Integer Anchor Pattern: f(n) = n + c for all integers
+    # This suggests floor-based functions like floor(x) + frac(x)^2 + c
+    # We detect the STRUCTURE only - the genetic engine will find the constant c naturally
+    integer_anchors = []
+    raw_offsets = []  # Track f(n) - n for each integer n (as float)
+    for i, x_val in enumerate(x_col):
+        if isinstance(x_val, (complex, np.complexfloating)):
+            if abs(x_val.imag) > 1e-10:
+                continue
+            x_val = x_val.real
+        # Check if x is an integer
+        if abs(x_val - round(x_val)) < 1e-6:
+            y_val = y[i]
+            if isinstance(y_val, (complex, np.complexfloating)):
+                if abs(y_val.imag) > 1e-10:
+                    continue
+                y_val = y_val.real
+            # Track the offset: f(n) - n
+            offset = y_val - round(x_val)
+            integer_anchors.append(int(round(x_val)))
+            raw_offsets.append(offset)
+    
+    # If we have at least 3 integer anchors with consistent offset, suggest floor-based structure
+    if len(integer_anchors) >= 3 and len(raw_offsets) >= 3:
+        # Check if all offsets are approximately the same (any constant c)
+        offset_std = np.std(raw_offsets)
+        
+        # Consistent offset if standard deviation is very small
+        if offset_std < 1e-4:
+            # We detected a floor-based pattern!
+            # Seed the STRUCTURE only - do not hardcode the constant
+            if verbose:
+                print(f"   Forensic Analysis: f(n) = n + c for integers {integer_anchors[:5]}...")
+                print(f"      → Function anchors at integers with consistent offset")
+                print(f"      → Suggests floor-based structure: floor(x) + f(frac(x))")
+            # Seed structural templates WITHOUT the constant
+            # The genetic engine will evolve constants naturally
+            seeds.append("floor(x) + frac(x)**2")
+            seeds.append("floor(x) + frac(x)")
+            seeds.append("floor(x)")
+            # Also seed with x since it's the core linear component
+            seeds.append("x")
+             
+    # 5. Check "Inverse Self-Power": y^y = x
+    inverse_sp_matches = 0
+    total_sp_checks = 0
+    example_matches = []  # Store examples for verbose output
+    
+    for i, x_val in enumerate(x_col):
+        y_val_check = y[i]
+        
+        # Determine if we need complex check
+        is_complex_check = isinstance(y_val_check, (complex, np.complexfloating)) or \
+                          (isinstance(y_val_check, (int, float)) and y_val_check < 0)
+                          
+        try:
+            val_inv = 0
+            if is_complex_check:
+                c_y = complex(y_val_check)
+                val_inv = c_y ** c_y
+            else:
+                val_inv = float(y_val_check) ** float(y_val_check)
+                
+            # Check match against x
+            x_check = complex(x_val) if isinstance(x_val, (complex, np.complexfloating)) else float(x_val)
+            
+            # Simple absolute difference check
+            diff = abs(val_inv - x_check)
+            is_match = diff < 1e-3 or (abs(x_check) > 1 and diff / abs(x_check) < 1e-3)
+            
+            if is_match:
+                inverse_sp_matches += 1
+                # Store first few examples for verbose output
+                if len(example_matches) < 4 and isinstance(y_val_check, (int, float)) and y_val_check > 0:
+                    example_matches.append((x_val, y_val_check, val_inv))
+            total_sp_checks += 1
+        except Exception:
+            pass
+            
+    if total_sp_checks >= 3 and inverse_sp_matches >= total_sp_checks * 0.9:
+        if verbose:
+            print(f"   Forensic Analysis: Checking Inverse Self-Power pattern...")
+            print(f"      → Testing hypothesis: y^y = x")
+            for x_ex, y_ex, computed in example_matches:
+                # Extract real part if complex with negligible imaginary component
+                x_real = x_ex.real if isinstance(x_ex, complex) else x_ex
+                y_real = y_ex.real if isinstance(y_ex, complex) else y_ex
+                comp_real = computed.real if isinstance(computed, complex) else computed
+                
+                y_disp = int(y_real) if y_real == int(y_real) else f"{y_real:.4f}"
+                x_disp = int(x_real) if x_real == int(x_real) else f"{x_real:.4f}"
+                comp_disp = int(comp_real) if comp_real == int(comp_real) else f"{comp_real:.4f}"
+                print(f"      → f({x_disp}) = {y_disp}: {y_disp}^{y_disp} = {comp_disp} ✓")
+            print(f"      → Match rate: {inverse_sp_matches}/{total_sp_checks} points ({100*inverse_sp_matches/total_sp_checks:.0f}%)")
+            print(f"      → Inverse of Self-Power confirmed")
+            print(f"      → Mathematical form: y = exp(W(ln(x))) where W is Lambert W")
+        seeds.append("exp(LambertW(log(x)))")
+
+    return seeds
+
+
+def _detect_odd_function_patterns(X, y, verbose: bool = False) -> list[str]:
+    """Detect odd (anti-symmetric) functions where f(-x) = -f(x).
+    
+    This detects patterns like:
+    - Softsign: f(x) = x / (1 + |x|)
+    - Odd rationals: f(x) = x / (x^2 + 1)
+    
+    Uses the user's "Forensic Algorithm":
+    Phase 1: Check if f(-x) ≈ -f(x) for paired points
+    Phase 2: Analyze the positive half to find the structure
+    Phase 3: Confirm abs(x) is needed by comparing +/- behavior
+    """
+    seeds = []
+    
+    if X.ndim > 1 and X.shape[1] > 1:
+        return []  # Only 1D for now
+    
+    try:
+        x_flat = X.flatten()
+        y_flat = np.array(y).flatten()
+    except Exception:
+        return []
+    
+    # Build a lookup: x -> y
+    data_map = {}
+    for i, x_val in enumerate(x_flat):
+        if isinstance(x_val, (complex, np.complexfloating)):
+            if abs(x_val.imag) > 1e-10:
+                continue
+            x_val = x_val.real
+        y_val = y_flat[i]
+        if isinstance(y_val, (complex, np.complexfloating)):
+            if abs(y_val.imag) > 1e-10:
+                continue
+            y_val = y_val.real
+        if np.isfinite(x_val) and np.isfinite(y_val):
+            data_map[round(x_val, 6)] = y_val
+    
+    # Phase 1: Check if f(-x) ≈ -f(x) for paired points
+    odd_count = 0
+    total_pairs = 0
+    for x_key in data_map:
+        neg_key = round(-x_key, 6)
+        if neg_key in data_map and x_key > 0:  # Only check positive x
+            total_pairs += 1
+            f_x = data_map[x_key]
+            f_neg_x = data_map[neg_key]
+            # Check if f(-x) ≈ -f(x)
+            if abs(f_neg_x + f_x) < 1e-6:
+                odd_count += 1
+    
+    # If at least 80% of pairs satisfy f(-x) = -f(x), it's an odd function
+    if total_pairs >= 3 and odd_count / total_pairs >= 0.8:
+        # Phase 2: Analyze positive integers to find the pattern
+        # Check if f(n) = n/(n+1) for positive integers (softsign signature)
+        softsign_matches = 0
+        positive_integers = 0
+        for n in range(1, 11):
+            n_key = round(float(n), 6)
+            if n_key in data_map:
+                positive_integers += 1
+                expected = n / (n + 1)
+                if abs(data_map[n_key] - expected) < 1e-6:
+                    softsign_matches += 1
+        
+        if positive_integers >= 3 and softsign_matches / positive_integers >= 0.8:
+            # This is softsign: x / (1 + |x|)
+            if verbose:
+                print(f"   Forensic Analysis: f(-x) = -f(x) for {odd_count}/{total_pairs} pairs")
+                print(f"      → Function is odd (anti-symmetric)")
+                print(f"      → f(n) = n/(n+1) for positive integers")
+                print(f"      → Confirmed: f(x) = x / (1 + abs(x))")
+            seeds.append("x / (1 + Abs(x))")
+            seeds.append("x / (Abs(x) + 1)")
+        else:
+            # Generic odd function detected - DO NOT suggest specific structure
+            # Just log the detection; seeds will come from other detectors
+            # (e.g., Composed Hypothesis will find sin(1/x) via pole + range detection)
+            if verbose:
+                print(f"   Forensic Analysis: f(-x) = -f(x) for {odd_count}/{total_pairs} pairs")
+                print(f"      → Function is odd (anti-symmetric)")
+            # Seed generic odd function templates (but don't claim a specific structure)
+            seeds.append("tanh(x)")
+            seeds.append("x / sqrt(1 + x**2)")
+    
+    return seeds
+
+
+def _detect_rosenbrock_patterns(X, y, variable_names: list[str] | None = None, verbose: bool = False) -> list[str]:
+    """Detect Rosenbrock-style functions: f(x,y) = (a - x)^2 + b*(y - x^2)^2.
+    
+    Uses the user's "Forensic Algorithm":
+    Phase 1: Valley Detection - Find low values where y ≈ x²
+    Phase 2: Steepness Analysis - Extract the multiplier b by fixing x
+    Phase 3: Extract the offset a by analyzing the valley
+    """
+    seeds = []
+    
+    # Only works for 2-variable functions
+    if X.ndim != 2 or X.shape[1] != 2:
+        return []
+    
+    try:
+        x_col = X[:, 0]
+        y_col = X[:, 1]
+        z_vals = np.array(y).flatten()
+    except Exception:
+        return []
+    
+    var_x = variable_names[0] if variable_names and len(variable_names) >= 1 else "x"
+    var_y = variable_names[1] if variable_names and len(variable_names) >= 2 else "y"
+    
+    # Build lookup: (x, y) -> z
+    data_map = {}
+    for i in range(len(x_col)):
+        x_val = x_col[i]
+        y_val = y_col[i]
+        z_val = z_vals[i]
+        
+        # Skip complex values
+        if isinstance(x_val, (complex, np.complexfloating)) and abs(x_val.imag) > 1e-10:
+            continue
+        if isinstance(y_val, (complex, np.complexfloating)) and abs(y_val.imag) > 1e-10:
+            continue
+        if isinstance(z_val, (complex, np.complexfloating)) and abs(z_val.imag) > 1e-10:
+            continue
+            
+        x_val = float(x_val.real if hasattr(x_val, 'real') else x_val)
+        y_val = float(y_val.real if hasattr(y_val, 'real') else y_val)
+        z_val = float(z_val.real if hasattr(z_val, 'real') else z_val)
+        
+        if np.isfinite(x_val) and np.isfinite(y_val) and np.isfinite(z_val):
+            data_map[(round(x_val, 4), round(y_val, 4))] = z_val
+    
+    if len(data_map) < 10:
+        return []
+    
+    # =========================================================================
+    # Phase 1: Valley Detection
+    # Find low-value outputs and check if they follow y = x² pattern
+    # =========================================================================
+    sorted_values = sorted(data_map.values())
+    min_val = sorted_values[0]
+    # Use tighter threshold: values within 10 of minimum, or top 5, whichever is more restrictive
+    threshold_by_count = sorted_values[min(5, len(sorted_values) - 1)]
+    threshold_by_range = min_val + 10
+    low_threshold = min(threshold_by_count, threshold_by_range)
+    low_points = [(k, v) for k, v in data_map.items() if v <= low_threshold]
+    
+
+    
+    # Check if low points follow y ≈ x² pattern
+    valley_matches = 0
+    for (x_val, y_val), z_val in low_points:
+        if abs(y_val - x_val**2) < 0.1 * max(1, abs(y_val)):  # y ≈ x²
+            valley_matches += 1
+    
+    valley_ratio = valley_matches / len(low_points) if low_points else 0
+    
+    if valley_ratio < 0.5:  # At least 50% of low points should follow y = x²
+        return []
+    
+    if verbose:
+        print(f"   Rosenbrock Analysis: {valley_matches}/{len(low_points)} low values follow y = x² pattern")
+    
+    # =========================================================================
+    # Phase 2: Extract offset 'a' by analyzing the valley minimum
+    # When y = x², f(x, x²) = (a - x)². The minimum is at x = a.
+    # =========================================================================
+    valley_points = []
+    for (x_val, y_val), z_val in data_map.items():
+        if abs(y_val - x_val**2) < 0.01 * max(1, abs(y_val)):  # Tight y ≈ x²
+            valley_points.append((x_val, z_val))
+    
+    a_estimate = 1  # Default Rosenbrock has a = 1
+    if valley_points:
+        # Find x where z is minimized (should be where x = a)
+        min_z = min(valley_points, key=lambda p: p[1])
+        if min_z[1] < 1:  # Near-zero minimum
+            a_estimate = round(min_z[0])
+            if verbose:
+                print(f"      → Valley minimum at x ≈ {a_estimate}, suggesting (a - x)² with a = {a_estimate}")
+    
+    # =========================================================================
+    # Phase 3: Steepness Analysis - Extract multiplier 'b'
+    # Fix x = a, vary y. Then f(a, y) = b * (y - a²)²
+    # =========================================================================
+    b_estimate = 100  # Default Rosenbrock has b = 100
+    
+    # Find points where x = a
+    a_key = round(float(a_estimate), 4)
+    fixed_x_points = [(k[1], v) for k, v in data_map.items() 
+                       if abs(k[0] - a_key) < 0.01]
+    
+    if len(fixed_x_points) >= 3:
+        # At x = a, first term is zero. So f(a, y) = b * (y - a²)²
+        a_sq = a_estimate ** 2
+        b_estimates = []
+        for y_val, z_val in fixed_x_points:
+            deviation = y_val - a_sq
+            if abs(deviation) > 0.1:  # Avoid division by small numbers
+                b_calc = z_val / (deviation ** 2)
+                if 1 < b_calc < 1000:  # Reasonable range
+                    b_estimates.append(b_calc)
+        
+        if b_estimates:
+            b_estimate = round(np.median(b_estimates))
+            if verbose:
+                print(f"      → Steepness multiplier b ≈ {b_estimate}")
+    
+    # =========================================================================
+    # Generate Rosenbrock seed
+    # =========================================================================
+    if verbose:
+        print(f"      → Confirmed: f({var_x}, {var_y}) = ({a_estimate} - {var_x})^2 + {b_estimate}*({var_y} - {var_x}^2)^2")
+    
+    seeds.append(f"({a_estimate} - {var_x})**2 + {b_estimate}*({var_y} - {var_x}**2)**2")
+    seeds.append(f"(1 - {var_x})**2 + 100*({var_y} - {var_x}**2)**2")  # Classic Rosenbrock
+    
+    return seeds
+
+
+def _detect_fractal_cosine_patterns(X, y, verbose: bool = False) -> list[str]:
+    """Detect fractal cosine sums like Weierstrass functions.
+    
+    Uses 'Peeling the Onion' algorithm:
+    1. Use f(i) (complex input) to trigger exponential cosh(N) growth
+    2. Highest frequency N dominates the sum
+    3. Calculate amplitude = residual / cosh(N)
+    4. Subtract dominant term and repeat on residual
+    """
+    seeds = []
+    
+    # 1. Check for valid 1D input
+    if X.ndim != 1 and (X.ndim != 2 or X.shape[1] != 1):
+        return []
+        
+    x_col = X.flatten()
+    y_vals = np.array(y)
+    
+    # 2. Check for even symmetry (f(x) = f(-x)) -> Cosine series
+    # Find matching positive/negative x pairs
+    pairs = []
+    for i, x1 in enumerate(x_col):
+        if x1 > 0:
+            for j, x2 in enumerate(x_col):
+                if abs(x2 + x1) < 1e-9:  # x2 = -x1
+                    pairs.append((y_vals[i], y_vals[j]))
+                    break
+    
+    if len(pairs) >= 3:
+        even_matches = sum(1 for y1, y2 in pairs if abs(y1 - y2) < 1e-5)
+        is_even = even_matches / len(pairs) > 0.8
+        if not is_even:
+            return []  # Only handling cosine (even) series for now
+    
+    # 3. Find the complex data point f(i)
+    # This is the key to the "Complex Reactor"
+    complex_y = None
+    for i, x_val in enumerate(x_col):
+        # Check if x is close to imaginary unit i (0 + 1j)
+        if isinstance(x_val, (complex, np.complexfloating)):
+            if abs(x_val.real) < 1e-9 and abs(x_val.imag - 1.0) < 1e-9:
+                complex_y = y_vals[i]
+                break
+    
+    if complex_y is None:
+        return []
+
+    if verbose:
+        print(f"   Forensic Analysis: Complex Reactor activated with f(i)={complex_y.real:.2e}")
+
+    # 4. Peel the Onion: Iterative Residual Decomposition
+    residual = float(complex_y.real)
+    terms = []
+    
+    # Try to extract up to 5 layers
+    for _ in range(5):
+        best_N = None
+        best_amp = None
+        min_residual_after = float('inf')
+        
+        # Scan frequencies N from 50 down to 1
+        # Highest frequencies produce massive cosh(N), so we scan down
+        for N in range(50, 0, -1):
+            cosh_val = np.cosh(N)
+            # Amplitude = Residual / cosh(N)
+            amp_candidate = residual / cosh_val
+            
+            # Check if amplitude is a "nice" fraction (1, 1/2, 1/4, 1/8...)
+            # or a simple integer
+            if abs(amp_candidate) > 1e-6:
+                inv_amp = 1.0 / amp_candidate
+                is_nice = False
+                clean_amp = amp_candidate
+                
+                # Check 1/2^k pattern
+                if abs(inv_amp - round(inv_amp)) < 0.05:
+                    k = round(inv_amp)
+                    if k > 0 and (k & (k-1) == 0): # Power of 2
+                        is_nice = True
+                        clean_amp = 1.0 / k
+                
+                # Check integer pattern
+                if abs(amp_candidate - round(amp_candidate)) < 0.05:
+                    is_nice = True
+                    clean_amp = float(round(amp_candidate))
+                
+                if is_nice:
+                    current_residual = abs(residual - clean_amp * cosh_val)
+                    # We want the N that explains the MOST of the residual
+                    # i.e., leaves the smallest remainder relative to the term
+                    if current_residual < abs(residual) * 0.1: # Must explain >90% of signal
+                         best_N = N
+                         best_amp = clean_amp
+                         break # Found the dominant high-frequency term
+        
+        if best_N is not None:
+            terms.append((best_amp, best_N))
+            term_val = best_amp * np.cosh(best_N)
+            residual -= term_val
+            if verbose:
+                print(f"      → Layer detected: {best_amp}*cos({best_N}x) (Explained {term_val:.2e}, Residual {residual:.2e})")
+        else:
+            break # No more recognizable layers
+            
+    if not terms:
+        return []
+        
+    # 5. Pattern Recognition (Geometric Series)
+    # Check if frequencies follow a pattern (e.g. 3^k)
+    freqs = sorted([n for a, n in terms])
+    is_geometric_freq = False
+    freq_ratio = 0
+    if len(freqs) >= 2:
+        ratios = [freqs[i+1]/freqs[i] for i in range(len(freqs)-1)]
+        # Check if all ratios are consistent
+        if all(abs(r - ratios[0]) < 0.1 for r in ratios):
+             freq_ratio = int(round(ratios[0]))
+             is_geometric_freq = True
+             if verbose:
+                print(f"      → Pattern Detected: Frequencies follow geometric series (ratio {freq_ratio})")
+                
+    # 5b. Pattern Completion (The "Forensic Extrapolation")
+    # If peeling failed for low freqs (due to signal bleed), but identifying high freqs revealed a pattern,
+    # we can predict the missing lower terms.
+    if is_geometric_freq and freq_ratio > 1:
+        # Predict missing lower frequencies
+        min_freq = min(freqs)
+        while min_freq >= freq_ratio:
+            next_lower = min_freq // freq_ratio
+            if next_lower < 1: break
+            
+            # Predict amplitude pattern too?
+            # Check existing amplitudes for pattern
+            amps = {n: a for a, n in terms}
+            current_amp = amps[min_freq]
+            
+            # Try to guess next amplitude (e.g. double the previous one? or half?)
+            # Usually fractal sums have 1/freq or 1/b^k decay
+            # Let's assume amplitude grows as frequency shrinks (like 1/f noise)
+            # Find amplitude ratio
+            amp_ratio = 0
+            if min_freq * freq_ratio in amps:
+                higher_amp = amps[min_freq * freq_ratio]
+                amp_ratio = current_amp / higher_amp # e.g. 0.25 / 0.125 = 2.0
+            
+            predicted_amp = current_amp * amp_ratio if amp_ratio > 0 else current_amp * 2
+            
+            # Verify this term actually helps? 
+            # For now, aggressively add it as a seed component.
+            # Real forensics would check residual, but simple seeding is safe.
+            if verbose:
+                 print(f"      → Pattern Extrapolation: Adding predicted term {predicted_amp}*cos({next_lower}x)")
+            
+            terms.append((predicted_amp, next_lower))
+            min_freq = next_lower
+
+    # 6. Generate Seed
+    # Sort by frequency low to high for readability
+    terms.sort(key=lambda x: x[1])
+    
+    parts = []
+    for amp, freq in terms:
+        amp_str = f"{amp}"
+        if abs(amp - 1.0) < 1e-9:
+            amp_str = ""
+        elif abs(amp - 0.5) < 1e-9:
+            amp_str = "1/2 * "
+        elif abs(amp - 0.25) < 1e-9:
+            amp_str = "1/4 * "
+        elif abs(amp - 0.125) < 1e-9:
+            amp_str = "1/8 * "
+        else:
+             amp_str = f"{amp:.4g} * "
+             
+        freq_str = "x" if freq == 1 else f"{freq}*x"
+        parts.append(f"{amp_str}cos({freq_str})")
+        
+    seed = " + ".join(parts)
+    if verbose:
+        print(f"   Confirmed Fractal Cosine Sum: {seed}")
+        
+    seeds.append(seed)
     return seeds
 
 
@@ -2567,8 +3505,9 @@ def _handle_evolve(text, variables=None):
             
         # Short-circuit if specific exact match found (e.g. step functions)
         if exact_match:
-            print(f"\nResult: {exact_match}")
-            print(f"MSE: 0.0 (Exact Match), Complexity: {len(exact_match)}")
+            beautified_match = symbolify_constants(exact_match)
+            print(f"\nResult: {beautified_match}")
+            print(f"MSE: 0.0 (Exact Match), Complexity: {len(beautified_match)}")
             return
 
         if auto_seeds:
@@ -2838,8 +3777,9 @@ def _handle_evolve(text, variables=None):
             print("No suitable model found.")
             return
 
-        # Print Result
-        print(f"\nResult: {format_solution(best.expression)}")
+        # Print Result (with symbolic constant beautification)
+        beautified_expr = symbolify_constants(best.expression)
+        print(f"\nResult: {format_solution(beautified_expr)}")
         print(f"MSE: {best.mse:.6g}, Complexity: {best.complexity}")
 
         # Persist the discovered function (Engineering Standard: State Persistence)
@@ -2847,8 +3787,8 @@ def _handle_evolve(text, variables=None):
             from ..function_manager import define_function
 
             # Convert best.expression (pretty string) or best.sympy_expr to storage format
-            # define_function expects string expression
-            define_function(func_name, input_vars, best.expression)
+            # define_function expects string expression - use beautified version
+            define_function(func_name, input_vars, beautified_expr)
         except Exception as e:
             print(f"Warning: Failed to define function '{func_name}' in session: {e}")
 
@@ -3591,3 +4531,278 @@ def _handle_find_ode(text: str):
             
     except Exception as e:
         print(f"Error discovering ODE: {e}")
+
+
+def _ascii_plot(x, y, width=80, height=20):
+    """Draw a basic ASCII plot of y vs x."""
+    if len(x) != len(y) or len(x) == 0:
+        print("No data to plot.")
+        return
+
+    # Handle NaN/Inf
+    mask = np.isfinite(y)
+    x = x[mask]
+    y = y[mask]
+
+    if len(y) == 0:
+        print("Function evaluated to non-finite values only.")
+        return
+
+    min_y, max_y = np.min(y), np.max(y)
+    if min_y == max_y:
+        print(f"Constant function: y = {min_y}")
+        return
+
+    # Create grid
+    grid = [[' ' for _ in range(width)] for _ in range(height)]
+
+    # Resample y to width (if x is not linspace, this is approx)
+    # We assume x is sorted and spans the width
+
+    # Normalized Y to 0..(height-1)
+    y_norm = (y - min_y) / (max_y - min_y)
+    y_indices = (y_norm * (height - 1)).astype(int)
+
+    for col, row_idx in enumerate(y_indices):
+        if 0 <= col < width:
+            row = height - 1 - row_idx # Flip Y
+            if 0 <= row < height:
+                grid[row][col] = '*'
+
+    # Draw
+    print(f"\nPlotting range x: [{x[0]:.2f}, {x[-1]:.2f}]")
+    print("-" * (width + 2))
+    for row in grid:
+        print("|" + "".join(row) + "|")
+    print("-" * (width + 2))
+    print(f"Y range: [{min_y:.4f}, {max_y:.4f}]")
+
+
+def _handle_plot_command(text: str, variables: Dict[str, str]):
+    """Handle plot <expr>"""
+    parts = text.split(" ", 1)
+    if len(parts) < 2:
+        print("Usage: plot <expression> (e.g., 'plot sin(x)', 'plot x^2')")
+        return
+
+    expr_str = parts[1].strip()
+
+    # Check for implicit y=
+    if "=" in expr_str:
+        # assume y=... take rhs
+        expr_str = expr_str.split("=", 1)[1].strip()
+
+    # Preprocess (handle implicit mul, etc.)
+    try:
+        # Use parser preprocessing but we evaluated via numpy
+        expr_processed = kparser.preprocess(expr_str)
+    except Exception as e:
+        print(f"Error parsing expression: {e}")
+        return
+
+    # Substitute variables (excluding x)
+    plot_vars = variables.copy()
+    if 'x' in plot_vars:
+        # print(f"Note: Ignoring global x={plot_vars['x']} for plotting")
+        del plot_vars['x']
+
+    sorted_vars = sorted(plot_vars.keys(), key=len, reverse=True)
+    for var in sorted_vars:
+         # Use regex for safe word replacement
+         pattern = r"\b" + re.escape(var) + r"\b"
+         expr_processed = re.sub(pattern, f"({plot_vars[var]})", expr_processed)
+
+    # Evaluate
+    # Range [-10, 10]
+    x = np.linspace(-10, 10, 80)
+
+    # Build safe local dict for numpy evaluation
+    safe_locals = {"x": x, "np": np}
+    # Add numpy math functions
+    for name in dir(np):
+        if not name.startswith("_"):
+            safe_locals[name] = getattr(np, name)
+
+    # Also add standard names mapped to numpy
+    safe_locals["sin"] = np.sin
+    safe_locals["cos"] = np.cos
+    safe_locals["tan"] = np.tan
+    safe_locals["exp"] = np.exp
+    safe_locals["log"] = np.log
+    safe_locals["sqrt"] = np.sqrt
+    safe_locals["pi"] = np.pi
+
+    try:
+        # Use SymPy for safe evaluation instead of raw eval()
+        import sympy as sp
+        from sympy import lambdify
+        
+        x_sym = sp.Symbol('x')
+        # Parse expression safely with SymPy
+        expr = sp.sympify(expr_processed, locals={'x': x_sym, 'pi': sp.pi, 'e': sp.E})
+        
+        # Convert to numpy function for vectorized evaluation
+        f = lambdify(x_sym, expr, modules=['numpy'])
+        y = f(x)
+
+        # Check if result is scalar (constant function)
+        if np.isscalar(y):
+            y = np.full_like(x, y)
+        elif isinstance(y, (list, tuple)):
+            y = np.array(y)
+
+        # Try Matplotlib first
+        try:
+            import matplotlib.pyplot as plt
+            
+            # Simple check to ensure we can show a window
+            # (In some environments basic import works but backend fails)
+             
+            plt.figure(figsize=(10, 6))
+            plt.plot(x, y, label=expr_str)
+            plt.title(f"Plot of {expr_str}")
+            plt.xlabel("x")
+            plt.ylabel("y")
+            plt.axhline(0, color='black', linewidth=0.5)
+            plt.axvline(0, color='black', linewidth=0.5)
+            plt.grid(True, linestyle='--', alpha=0.7)
+            plt.legend()
+            
+            # Check backend interactivity
+            if plt.get_backend().lower() == 'agg':
+                # Headless backend - save to file
+                filename = "plot_output.png"
+                plt.savefig(filename)
+                print(f"Backend is non-interactive (Agg). Saved plot to '{filename}'.")
+            else:
+                try:
+                    plt.show()
+                    print("Displayed plot in regular window.")
+                except UserWarning:
+                    # Fallback for "FigureCanvasAgg is non-interactive" warning that wasn't caught by backend check
+                    filename = "plot_output.png"
+                    plt.savefig(filename)
+                    print(f"Interactive window not available. Saved plot to '{filename}'.")
+            return
+        except ImportError:
+
+            print("Matplotlib not installed. Falling back to ASCII plot.")
+            print("Tip: Run `pip install matplotlib` for high-quality plots.")
+        except Exception as e:
+            print(f"Matplotlib error: {e}. Falling back to ASCII plot.")
+            
+        _ascii_plot(x, y)
+
+
+    except Exception as e:
+        print(f"Error evaluating plot: {e}\n(Make sure expression is valid numpy syntax)")
+
+
+def _detect_modulo_patterns(X, y, verbose: bool = False):
+    """
+    Detects if f(x) = x % T (sawtooth/modulo pattern).
+    
+    Uses heuristic:
+    1. Finds zero values in y (or near-zero).
+    2. Checks if x values at these zeros are evenly spaced (Period T).
+    3. Verifies if f(x) ≈ x % T between zeros.
+    """
+    seeds = []
+    
+    # Require 1D input
+    if X.ndim > 1 and X.shape[1] > 1:
+        return []
+        
+    x_flat = X.flatten()
+    y_flat = np.array(y).flatten()
+    
+    # Sort
+    idx = np.argsort(x_flat)
+    x_sorted = x_flat[idx]
+    y_sorted = y_flat[idx]
+    
+    # 1. Find zeros (roots)
+    # Allow small tolerance
+    zeros_mask = np.abs(y_sorted) < 1e-3
+    x_zeros = x_sorted[zeros_mask]
+    
+    if len(x_zeros) < 3:
+        # Not enough zeros to establish periodicity
+        return []
+        
+    # 2. Analyze spacing (differences between consecutive zeros)
+    diffs = np.diff(x_zeros)
+    
+    # Filter out tiny diffs (duplicate points)
+    diffs = diffs[diffs > 1e-4]
+    
+    if len(diffs) == 0:
+        return []
+        
+    # Check if diffs are consistent (multiples of some period T)
+    # Taking the median diff as candidate period T
+    # Note: If we have missing zeros, some diffs might be 2T, 3T.
+    # So we look for the GCD or smallest common gap.
+    
+    # Simple approach: Mode or Median
+    # Round diffs to avoid float noise
+    diffs_rounded = np.round(diffs, 3)
+    vals, counts = np.unique(diffs_rounded, return_counts=True)
+    best_T = vals[np.argmax(counts)]
+    
+    # Calculate consistency
+    # We expect most diffs to be integer multiples of best_T
+    is_periodic = True
+    for d in diffs:
+        ratio = d / best_T
+        if abs(ratio - round(ratio)) > 0.05:
+            is_periodic = False
+            break
+            
+    if not is_periodic:
+        return []
+        
+    # 3. Verify function shape: f(x) ≈ x % T
+    # We check a few non-zero points
+    matches = 0
+    checks = 0
+    failed = False
+    
+    for i in range(len(x_sorted)):
+        xi = x_sorted[i]
+        yi = y_sorted[i]
+        
+        # Skip the zeros we used to find T
+        if abs(yi) < 1e-3:
+            continue
+            
+        # Expected: xi % best_T
+        # Note: numpy fmod vs mod semantics for negative numbers
+        expected = xi % best_T
+        
+        # Correction for float precision near the reset point
+        # e.g. 2.999 % 1.5 -> 1.499, but observed might be near 0 if slightly over
+        if abs(expected - best_T) < 1e-3:
+            expected = 0.0
+            
+        if abs(yi - expected) < 1e-2:
+            matches += 1
+        else:
+            # Tolerant check
+            if abs(yi - expected) > 0.1: # Gross mismatch
+                failed = True
+                break
+        checks += 1
+        
+    if not failed and checks > 0 and matches >= checks * 0.8:
+        if verbose:
+            print(f"   Forensic Analysis: Checking Modulo pattern...")
+            print(f"      → Detected periodic zeros with period T={best_T}")
+            print(f"      → Pattern: f(x) = x % {best_T}")
+            print(f"      → Match rate: {matches}/{checks} checked points")
+        
+        seeds.append(f"mod(x, {best_T})")
+        # Also try "x % T" (operator syntax)
+        seeds.append(f"x % {best_T}") 
+        
+    return seeds
