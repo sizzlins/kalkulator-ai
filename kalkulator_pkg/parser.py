@@ -36,6 +36,9 @@ SAFE_GLOBALS = {
     "Integer": sp.Integer,
     "Float": sp.Float,
     "Rational": sp.Rational,
+    "Pow": sp.Pow,
+    "Add": sp.Add,
+    "Mul": sp.Mul,
 }
 
 
@@ -728,8 +731,9 @@ def preprocess(
     # Does SymPy parse "a % b" as Mod(a, b)? Yes, Python syntax.
     # Let's test this hypothesis with a script? No, I'll trust standard Python/SymPy behavior for %.
     # So "x mod y" -> "x % y".
-
-    processed_str = re.sub(r"\bmod\b", "%", processed_str, flags=re.IGNORECASE)
+    # BUT we must NOT replace "mod(" (function call) with "%(" (invalid syntax).
+    # Regex: mod word boundary, NOT followed by optional space and (
+    processed_str = re.sub(r"\bmod\b(?!\s*\()", "%", processed_str, flags=re.IGNORECASE)
 
     if not skip_exponent_conversion:
         processed_str = processed_str.replace("^", "**")
