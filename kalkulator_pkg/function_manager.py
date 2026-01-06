@@ -376,6 +376,17 @@ def define_function(name: str, params: list[str], body_expr: str) -> None:
         # We pass local_dict to ensure parameters are parsed as Symbols, not Functions or undefined
         body = _parse_preprocessed_impl(body_expr_preprocessed, local_dict=local_dict)
     except Exception as e:
+        # Check for bare function usage heuristic (e.g. "sin(cos(tan))")
+        for fname, fobj in ALLOWED_SYMPY_NAMES.items():
+            # Check if it's a Function class
+            if isinstance(fobj, type) and issubclass(fobj, sp.Function):
+                # Regex for name not followed by open paren
+                if re.search(r"\b" + re.escape(fname) + r"\b(?!\s*\()", body_expr):
+                    raise ValidationError(
+                        f"Error: '{fname}' is a function class, did you mean '{fname}(...)'? (e.g. '{fname}(x)')",
+                        "BARE_FUNCTION_USAGE",
+                    ) from e
+
         raise ValidationError(
             f"Failed to parse function body '{body_expr}': {str(e)}",
             "FUNCTION_BODY_PARSE_ERROR",

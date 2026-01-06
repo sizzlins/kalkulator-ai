@@ -85,6 +85,9 @@ class GeneticConfig:
             "bitwise_or",
             "lshift",
             "rshift",
+            "floor",
+            "ceil",
+            "frac",
         ]
     )
     # Weighted Complexity Config
@@ -127,6 +130,10 @@ class GeneticConfig:
             "bessel_j1": 2.0,
             "gamma": 2.0,
             "prime_pi": 2.0,
+            # Floor/Ceil should be slightly penalized but accessible
+            "floor": 1.5,
+            "ceil": 1.5,
+            "frac": 1.5,
         }
     )
     default_complexity_weight: float = 1.0
@@ -300,9 +307,7 @@ class GeneticSymbolicRegressor:
 
             # Use Huber loss for robustness against outliers
             # This prevents a single outlier from dominating the fitness
-            # Use Huber loss for robustness against outliers
-            # This prevents a single outlier from dominating the fitness
-            # Calculate raw element-wise losss
+            # Calculate raw element-wise loss
             raw_loss = huber_loss(y, predictions, delta=1.35)
             
             # Apply weights if provided
@@ -311,10 +316,15 @@ class GeneticSymbolicRegressor:
             else:
                 loss = np.mean(raw_loss)
 
-            # Parsimony pressure: penalize complexity
-            # Use Weighted Complexity
-            # Coeff might need adjustment if complexity scale changes?
-            # 0.01 * 50 = 0.5. 0.01 * 75 = 0.75. Slightly higher penalty is good.
+            # PERFECT FIT BYPASS (Agent Handoff Fix 2: Parsimony Trap)
+            # If the expression fits perfectly (loss < early_stop_mse), do NOT apply
+            # parsimony penalty. This ensures that high-complexity but CORRECT seeds
+            # (like floor(x) + frac(x)**2) are not outcompeted by simpler but WRONG
+            # expressions (like x) due to the complexity penalty.
+            if loss < self.config.early_stop_mse:
+                return loss  # No penalty for perfect fits
+
+            # Parsimony pressure: penalize complexity (only for non-perfect fits)
             penalty = self.config.parsimony_coefficient * complexity
 
             return loss + penalty
