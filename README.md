@@ -3,7 +3,7 @@
 # Kalkulator-ai CLI
 
 ![Status](https://img.shields.io/badge/Status-Beta-yellow.svg)
-![Version](https://img.shields.io/badge/Version-1.4.0-blue.svg)
+![Version](https://img.shields.io/badge/Version-1.4.1-blue.svg)
 ![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)
 ![License](https://img.shields.io/badge/License-MIT-purple.svg)
 
@@ -17,6 +17,23 @@
 - **Genetic Programming**: Evolves complex functional forms via mutation/crossover.
 - **Calculus**: Symbolic differentiation (`diff`) and integration (`integrate`).
 - **Agentic Discovery**: Intelligent feature selection logic.
+
+## 🏆 Trophy Case: Solved Functions
+
+These demonstrate Kalkulator's ability to discover functions that defeat standard regression engines:
+
+| Function              | Description             | Why It's Hard                                       |
+| --------------------- | ----------------------- | --------------------------------------------------- |
+| `floor(x) + frac(x)²` | The Scalloped Staircase | Cusps at every integer break gradient-based solvers |
+| `x ⊕ 5`               | Bitwise XOR             | Non-continuous, digital logic                       |
+| `Fibonacci(n)`        | Golden Ratio Sequence   | Detects recurrence, seeds Binet formula             |
+| `Tribonacci(n)`       | 3-term Recurrence       | Auto-detects `f(n)=f(n-1)+f(n-2)+f(n-3)`            |
+| `x % 1.5`             | Sawtooth Modulo         | Periodic zeros detection                            |
+| `acosh(x)`            | Complex Domain          | Requires forensic detection of hyperbolic patterns  |
+| `π(x)`                | Prime Counting          | Integer-only step function                          |
+| `x^x`                 | Self-Power              | Complex logarithmic domain                          |
+| `(x+1)^(1/x)`         | Constant Anchor         | Detected via `f(2) = √3` pattern                    |
+| `dy/dt = 2y(1-y)`     | Logistic ODE            | Differential equation discovery                     |
 
 ## Installation
 
@@ -90,6 +107,17 @@ g(x) = exp(-x^2)
 ```
 >>> f(0)=5, f(1)=4, f(2)=7, f(3)=6
 Result: bitwise_xor(x, 5)
+```
+
+**Fibonacci Sequence** (with Golden Ratio)
+
+```
+>>> alt f(0)=0, f(1)=1, f(2)=1, f(3)=2, f(4)=3, f(5)=5, f(6)=8, f(7)=13
+Forensic Analysis: Linear Recurrence detected
+   → f(n) = f(n-1) + f(n-2) confirmed for 6 points
+   → Matches Fibonacci sequence
+Result: (-1/sqrt(5))*((1 - sqrt(5))/2)^x + (1/sqrt(5))*((1 + sqrt(5))/2)^x
+MSE: 2.82e-29 ← Binet's Formula!
 ```
 
 **Complex Transcendental** (with `alt` - intelligent discovery)
@@ -291,12 +319,19 @@ Result: diff(log(x), x) = 1/x
 
 Function finding discovers **continuous mathematical relationships**. The following are **not auto-discoverable**:
 
-| Type          | Examples                        | Reason                    |
-| ------------- | ------------------------------- | ------------------------- |
-| Combinatorial | `factorial(x)`, `binomial(n,k)` | Integer-only, huge growth |
-| Recursive     | Fibonacci, Ackermann            | No closed-form            |
+| Type                 | Examples                        | Reason                    |
+| -------------------- | ------------------------------- | ------------------------- |
+| Combinatorial        | `factorial(x)`, `binomial(n,k)` | Integer-only, huge growth |
+| Arbitrary Recurrence | Ackermann, custom recursions    | No general closed-form    |
 
 **Note:** As of v1.4.0, **Bitwise Logic** (`^`, `&`, `|`, `<<`, `>>`) and **Prime Counting** (`prime_pi`) ARE supported! Also `abs(x)` is fully supported.
+
+**NEW in v1.4.1:**
+
+- **Fibonacci/Tribonacci/Tetranacci** sequences are auto-detected via recurrence analysis and solved with Binet's formula
+- **Modulo patterns** (`x % T`) detected via periodic zero analysis
+- **Symbolic constant recognition** converts ugly decimals like `0.4472...` to `1/sqrt(5)`
+- **Lambdify caching** provides 5-10x speedup for repeated evaluations
 
 **Workaround:** Define manually: `f(x)=x!`
 
@@ -458,4 +493,24 @@ For true arbitrary precision, consider using SymPy's `Rational` or Python's `dec
 
 ## License
 
-MIT.
+MIT License
+
+Copyright (c) 2026 Muhammad Akhiel Al Syahbana
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
