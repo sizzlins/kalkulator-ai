@@ -4716,6 +4716,14 @@ def _detect_modulo_patterns(X, y, verbose: bool = False):
     x_flat = X.flatten()
     y_flat = np.array(y).flatten()
     
+    # Filter out complex numbers (can't use round() on them)
+    real_mask = np.array([np.isreal(x) and np.isreal(yv) and np.isfinite(np.real(x)) 
+                          for x, yv in zip(x_flat, y_flat)])
+    if np.sum(real_mask) < 3:
+        return []
+    x_flat = np.real(x_flat[real_mask])
+    y_flat = np.real(y_flat[real_mask])
+    
     # Sort
     idx = np.argsort(x_flat)
     x_sorted = x_flat[idx]
