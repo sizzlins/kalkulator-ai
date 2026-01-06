@@ -147,6 +147,11 @@ def handle_command(text: str, ctx: Any, variables: Dict[str, str]) -> bool:
         _handle_evolve(text, variables)
         return True
 
+    # Shortcut commands route to evolve: alt, all, b, h, v
+    if raw_lower.startswith(("alt ", "all ", "b ", "h ", "v ")):
+        _handle_evolve(text, variables)
+        return True
+
     # === Function Finding/System ===
     if raw_lower.startswith("find ode"):
         _handle_find_ode(text)
