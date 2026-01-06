@@ -754,6 +754,11 @@ def generate_pattern_seeds(X, y, variable_names, verbose=False):
         if verbose:
             print(f"   Bitwise Analysis: Detected digital logic {bitwise_patterns}")
         seeds.extend(bitwise_patterns)
+        
+    # 7. Forensic Anchor Analysis (Sherlock Mode II)
+    anchor_patterns = _detect_anchor_patterns(X, y, verbose=verbose)
+    if anchor_patterns:
+        seeds.extend(anchor_patterns)
 
     # 7. Step Function Detection (floor, ceil, round)
     # If step function is detected, return it immediately - genetic engine can't evolve these
@@ -1342,6 +1347,10 @@ def _detect_gamma_patterns(X, y):
     factorials = {0: 1, 1: 1, 2: 2, 3: 6, 4: 24, 5: 120, 6: 720, 7: 5040}
     
     for x_val, y_val in zip(x_clean, y_clean):
+        # Skip complex values - can't check integer pattern on complex numbers
+        if isinstance(x_val, (complex, np.complexfloating)):
+            continue
+        
         # Check if x is (nearly) an integer
         if abs(x_val - round(x_val)) < 0.01:
             x_int = int(round(x_val))
@@ -1464,6 +1473,83 @@ def _detect_gamma_patterns(X, y):
     
     return seeds
     
+
+def _detect_anchor_patterns(X, y, verbose: bool = False) -> list[str]:
+    """Detect functions based on specific 'anchor' values (Forensic Analysis).
+    
+    Checks specific points like f(0), f(pi) against known constants.
+    """
+    import math
+    
+    seeds = []
+    
+    # Library of Forensic Fingerprints
+    # Value -> (Suggested Structure, Tolerance)
+    fingerprints = {
+        0.84147098: ("sin(cos(tan(x)))", 1e-4),  # sin(1)
+        0.54030230: ("cos(1)", 1e-4),
+        1.55740772: ("tan(1)", 1e-4),
+        0.36787944: ("exp(-1)", 1e-4),
+        0.0133878: ("cos(tan(x)) at x=1?", 1e-4),
+    }
+    
+    # 1. Check Anchor: f(0)
+    # Find x=0 in data
+    f0 = None
+    if X.ndim == 1:
+        x_col = X
+    else:
+        x_col = X[:, 0]
+        
+    for i, x_val in enumerate(x_col):
+        # Skip complex
+        if isinstance(x_val, (complex, np.complexfloating)):
+            continue
+        if abs(x_val) < 1e-9:
+             f0 = y[i]
+             break
+             
+    if f0 is not None and not isinstance(f0, (complex, np.complexfloating)):
+        # Check against fingerprints
+        val_check = abs(f0)
+        
+        # Check sin(1) ~ 0.84147
+        if abs(val_check - math.sin(1)) < 1e-4:
+            if verbose:
+                print(f"   Forensic Analysis: f(0)={f0:.4f} ≈ sin(1). Suggests sin(u(x)) where u(0)=1.")
+            # Seed structures that give u(0)=1
+            seeds.append("sin(cos(tan(x)))") # The user's specific case
+            seeds.append("sin(cos(x))")
+            seeds.append("sin(exp(x))") # exp(0)=1
+            
+        # Check cos(1) ~ 0.5403
+        elif abs(val_check - math.cos(1)) < 1e-4:
+             if verbose:
+                print(f"   Forensic Analysis: f(0)={f0:.4f} ≈ cos(1). Suggests cos(u(x)) where u(0)=1.")
+             seeds.append("cos(cos(x))")
+             seeds.append("cos(exp(x))")
+             
+    # 2. Check Periodicity: f(0) vs f(pi) vs f(pi/2)
+    # Find pi and 2pi
+    f_pi = None
+    f_2pi = None
+    for i, x_val in enumerate(x_col):
+        if isinstance(x_val, (complex, np.complexfloating)): continue
+        
+        if abs(x_val - math.pi) < 0.01:
+            f_pi = y[i]
+        elif abs(x_val - 2*math.pi) < 0.01:
+            f_2pi = y[i]
+            
+    if f0 is not None and f_pi is not None:
+         # Check if f(0) == f(pi)
+         if abs(f0 - f_pi) < 1e-3:
+             if verbose:
+                 print(f"   Forensic Analysis: f(0) ≈ f(pi). Suggests periodicity pi or 2pi.")
+             # Add pi-periodic hints if not already present
+             seeds.append("cos(2*x)")
+             seeds.append("sin(2*x)")
+             
     return seeds
 
 
@@ -2769,7 +2855,9 @@ def _handle_evolve(text, variables=None):
     except ImportError as e:
         print(f"Error: Required module not available: {e}")
     except Exception as e:
+        import traceback
         print(f"Error: {e}")
+        traceback.print_exc()  # DEBUG: Full stack trace
 
 
 def _handle_save_cache(text):

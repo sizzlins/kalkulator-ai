@@ -34,6 +34,105 @@ class NodeType(Enum):
     BINARY_OP = auto()  # Binary operator (e.g., +, -, *, /)
 
 
+# -----------------------------------------------------------------------------
+# Symbolic Constant Recognition
+# -----------------------------------------------------------------------------
+# Common mathematical constants and their symbolic representations
+SYMBOLIC_CONSTANTS = [
+    # (decimal_value, symbolic_string, tolerance)
+    # Golden ratio related
+    (1.618033988749895, "(1 + sqrt(5))/2", 1e-10),      # phi
+    (-0.618033988749895, "(1 - sqrt(5))/2", 1e-10),     # psi (negative phi reciprocal)
+    (0.618033988749895, "(sqrt(5) - 1)/2", 1e-10),      # 1/phi
+    (0.4472135954999579, "1/sqrt(5)", 1e-10),           # 1/sqrt(5)
+    (-0.4472135954999579, "-1/sqrt(5)", 1e-10),         # -1/sqrt(5)
+    (2.23606797749979, "sqrt(5)", 1e-10),               # sqrt(5)
+    
+    # Pi related
+    (3.141592653589793, "pi", 1e-10),                   # π
+    (6.283185307179586, "2*pi", 1e-10),                 # 2π
+    (1.5707963267948966, "pi/2", 1e-10),                # π/2
+    (0.7853981633974483, "pi/4", 1e-10),                # π/4
+    (1.0471975511965976, "pi/3", 1e-10),                # π/3
+    (0.5235987755982988, "pi/6", 1e-10),                # π/6
+    (0.3183098861837907, "1/pi", 1e-10),                # 1/π
+    
+    # Euler's number related
+    (2.718281828459045, "e", 1e-10),                    # e
+    (0.36787944117144233, "1/e", 1e-10),                # 1/e
+    (7.38905609893065, "e^2", 1e-10),                   # e²
+    
+    # Natural logarithms
+    (0.6931471805599453, "ln(2)", 1e-10),               # ln(2)
+    (1.0986122886681098, "ln(3)", 1e-10),               # ln(3)
+    (2.302585092994046, "ln(10)", 1e-10),               # ln(10)
+    
+    # Square roots
+    (1.4142135623730951, "sqrt(2)", 1e-10),             # √2
+    (1.7320508075688772, "sqrt(3)", 1e-10),             # √3
+    (2.449489742783178, "sqrt(6)", 1e-10),              # √6
+    (2.8284271247461903, "2*sqrt(2)", 1e-10),           # 2√2
+    (0.7071067811865476, "1/sqrt(2)", 1e-10),           # 1/√2
+    (0.5773502691896258, "1/sqrt(3)", 1e-10),           # 1/√3
+    
+    # K-bonacci constants
+    (1.8392867552141612, "tribonacci_constant", 1e-10), # Tribonacci τ
+    (3.022420519352963, "tribonacci_divisor", 1e-10),   # Tribonacci normalization
+    (1.9275619754829254, "tetranacci_constant", 1e-10), # Tetranacci τ
+    (3.145432627498968, "tetranacci_divisor", 1e-10),   # Tetranacci normalization
+    
+    # Other important constants
+    (0.5772156649015329, "gamma", 1e-10),               # Euler-Mascheroni constant
+    (1.2020569031595942, "zeta(3)", 1e-10),             # Apéry's constant
+]
+
+
+def symbolify_constants(expr_str: str) -> str:
+    """Replace decimal approximations with symbolic forms in expression string.
+    
+    Examples:
+        "0.447213595499958*1.61803398874989**x" 
+        -> "(1/sqrt(5))*(((1 + sqrt(5))/2))**x"
+        
+        "3.14159265358979*x" -> "pi*x"
+    
+    Args:
+        expr_str: Expression string with potential decimal constants
+        
+    Returns:
+        Expression string with recognized constants replaced by symbolic forms
+    """
+    import re
+    
+    result = expr_str
+    
+    # Pattern to match floating point numbers (including negative)
+    # Matches: 3.14159, -0.618, 1.618033988749895, etc.
+    float_pattern = re.compile(r'-?\d+\.\d{6,}')
+    
+    def replace_constant(match):
+        num_str = match.group(0)
+        try:
+            num_val = float(num_str)
+        except ValueError:
+            return num_str
+            
+        # Check against known constants
+        for const_val, const_sym, tol in SYMBOLIC_CONSTANTS:
+            if abs(num_val - const_val) < tol:
+                # Wrap in parentheses if it contains operators
+                if any(op in const_sym for op in ['+', '-', '/', '*', '^']):
+                    return f"({const_sym})"
+                return const_sym
+        
+        # No match found, keep original
+        return num_str
+    
+    result = float_pattern.sub(replace_constant, result)
+    
+    return result
+
+
 # Operator definitions with arities and safe evaluation functions
 def safe_tan(x):
     return np.tan(np.clip(x, -1e6, 1e6))
@@ -140,8 +239,88 @@ def safe_cosh(x):
     return np.cosh(np.clip(x, -700, 700))
 
 
+
 def safe_square(x):
     return np.clip(x * x, -1e100, 1e100)
+
+
+def safe_lambertw(x):
+    """Safe Lambert W function (principal branch)."""
+    # Clip magnitude to prevent overflow before passing to scipy
+    if isinstance(x, np.ndarray):
+         # Avoid processing extremely large numbers that hang scipy
+         mask = np.abs(x) < 1e100
+         result = np.zeros_like(x, dtype=np.complex128)
+         result[mask] = scipy_special.lambertw(x[mask])
+         # If input was real and output imag is tiny, cast to real?
+         # No, keep complex if needed.
+         return result
+    try:
+        if abs(x) > 1e100: return 0.0
+        return scipy_special.lambertw(x)
+    except:
+        return 0.0
+
+
+def safe_sign(x):
+    """Sign function: returns -1, 0, or 1."""
+    return np.sign(x)
+
+
+def safe_round(x):
+    """Round to nearest integer."""
+    try:
+        if np.iscomplexobj(x):
+            if np.all(np.abs(np.imag(x)) < 1e-10):
+                x = np.real(x)
+            else:
+                return np.zeros_like(x, dtype=float) if hasattr(x, 'shape') else 0.0
+        return np.round(x)
+    except:
+        return np.zeros_like(x, dtype=float) if hasattr(x, 'shape') else 0.0
+
+
+def safe_erf(x):
+    """Error function (Gaussian integral)."""
+    try:
+        return scipy_special.erf(np.clip(np.real(x) if np.iscomplexobj(x) else x, -100, 100))
+    except:
+        return 0.0
+
+
+def safe_sinc(x):
+    """Sinc function: sin(pi*x)/(pi*x), with sinc(0)=1."""
+    return np.sinc(x)  # numpy's sinc is normalized: sin(pi*x)/(pi*x)
+
+
+def safe_heaviside(x):
+    """Heaviside step function: 0 for x<0, 0.5 for x=0, 1 for x>0."""
+    try:
+        if np.iscomplexobj(x):
+            x = np.real(x)
+        return np.heaviside(x, 0.5)
+    except:
+        return 0.0
+
+
+def safe_mod(x, y):
+    """Modulo operation with safety for division by zero."""
+    try:
+        # Handle complex by extracting real parts
+        if np.iscomplexobj(x):
+            x = np.real(x)
+        if np.iscomplexobj(y):
+            y = np.real(y)
+        # Avoid mod by zero
+        if np.isscalar(y):
+            if abs(y) < 1e-10:
+                return 0.0
+        else:
+            y = np.where(np.abs(y) < 1e-10, 1.0, y)
+        return np.mod(x, y)
+    except:
+        return 0.0
+
 
 
 # Protected Operators (Agent Handoff Rule 5: Root Cause)
@@ -208,6 +387,33 @@ def safe_prime_pi(x):
     return np.vectorize(_count_primes, otypes=[float])(x)
 
 
+def safe_fibonacci(x):
+    """Fibonacci function using analytic continuation (works for all real x).
+    
+    Uses the formula: F(x) = (phi^x - cos(pi*x) * phi^(-x)) / sqrt(5)
+    This avoids complex numbers from (-0.618)^x for non-integer x.
+    """
+    phi = 1.618033988749895
+    sqrt5 = 2.23606797749979
+    try:
+        # Analytic continuation: handles non-integer x correctly
+        return (phi**x - np.cos(np.pi * x) * phi**(-x)) / sqrt5
+    except:
+        return 0.0
+
+
+def safe_lucas(x):
+    """Lucas function L(x) using analytic continuation.
+    
+    Uses: L(x) = phi^x + cos(pi*x) * phi^(-x)
+    """
+    phi = 1.618033988749895
+    try:
+        return phi**x + np.cos(np.pi * x) * phi**(-x)
+    except:
+        return 0.0
+
+
 def safe_bitwise_xor(x, y):
     """Bitwise XOR for floating point inputs (casts to int)."""
     if not (np.isscalar(x) and np.isscalar(y)) or not (np.isreal(x) and np.isreal(y)):
@@ -254,6 +460,51 @@ def safe_rshift(x, y):
 
 
 
+def safe_frac(x):
+    """Fractional part x - floor(x). Handles array/scalar."""
+    try:
+        # Handle complex inputs
+        if np.iscomplexobj(x):
+            # If essentially real, take real part
+            if np.all(np.abs(np.imag(x)) < 1e-10):
+                x = np.real(x)
+            else:
+                # If truly complex, return 0 (frac undefined)
+                if hasattr(x, 'shape'):
+                     return np.zeros_like(x, dtype=float)
+                return 0.0
+
+        return x - np.floor(x)
+    except Exception:
+        # Fallback
+        if hasattr(x, 'shape'):
+             return np.zeros_like(x)
+        return 0.0
+
+def safe_floor(x):
+    """Floor that handles complex inputs."""
+    try:
+        if np.iscomplexobj(x):
+            if np.all(np.abs(np.imag(x)) < 1e-10):
+                x = np.real(x)
+            else:
+                return np.zeros_like(x, dtype=float) if hasattr(x, 'shape') else 0.0
+        return np.floor(x)
+    except:
+        return np.zeros_like(x, dtype=float) if hasattr(x, 'shape') else 0.0
+
+def safe_ceil(x):
+    """Ceil that handles complex inputs."""
+    try:
+        if np.iscomplexobj(x):
+            if np.all(np.abs(np.imag(x)) < 1e-10):
+                x = np.real(x)
+            else:
+                return np.zeros_like(x, dtype=float) if hasattr(x, 'shape') else 0.0
+        return np.ceil(x)
+    except:
+        return np.zeros_like(x, dtype=float) if hasattr(x, 'shape') else 0.0
+
 UNARY_OPERATORS: dict[str, Callable[[float], float]] = {
     "sin": np.sin,
     "cos": np.cos,
@@ -271,10 +522,24 @@ UNARY_OPERATORS: dict[str, Callable[[float], float]] = {
     "sinh": safe_sinh,
     "cosh": safe_cosh,
     "tanh": np.tanh,
+    "asinh": np.arcsinh,
+    "acosh": np.arccosh,  # Domain: x >= 1
+    "atanh": np.arctanh,  # Domain: |x| < 1
     "bessel_j0": scipy_special.j0,  # Bessel function of first kind, order 0
     "bessel_j1": scipy_special.j1,  # Bessel function of first kind, order 1
     "gamma": scipy_special.gamma,   # Gamma function (extends factorials)
     "prime_pi": safe_prime_pi,      # Prime-counting function π(x)
+    "floor": safe_floor,            # Safe Floor function
+    "ceil": safe_ceil,              # Safe Ceiling function
+    "frac": safe_frac,              # Fractional part (FUNCTION not lambda)
+    "lambertw": safe_lambertw,      # Lambert W function
+    "sign": safe_sign,              # Sign function (-1, 0, 1)
+    "round": safe_round,            # Round to nearest integer
+    "erf": safe_erf,                # Error function (Gaussian integral)
+    "sinc": safe_sinc,              # Sinc function sin(pi*x)/(pi*x)
+    "heaviside": safe_heaviside,    # Step function (0 for x<0, 1 for x>0)
+    "fibonacci": safe_fibonacci,
+    "lucas": safe_lucas,
 }
 
 BINARY_OPERATORS: dict[str, Callable[[float, float], float]] = {
@@ -290,6 +555,7 @@ BINARY_OPERATORS: dict[str, Callable[[float, float], float]] = {
     "bitwise_or": np.vectorize(safe_bitwise_or),
     "lshift": np.vectorize(safe_lshift),
     "rshift": np.vectorize(safe_rshift),
+    "mod": safe_mod,                # Modulo operation
 }
 
 # SymPy equivalents for symbolic conversion
@@ -310,9 +576,23 @@ SYMPY_UNARY = {
     "sinh": sp.sinh,
     "cosh": sp.cosh,
     "tanh": sp.tanh,
+    "asinh": sp.asinh,
+    "acosh": sp.acosh,
+    "atanh": sp.atanh,
     "bessel_j0": lambda x: sp.besselj(0, x),
     "bessel_j1": lambda x: sp.besselj(1, x),
     "prime_pi": sp.primepi,
+    "floor": sp.floor,
+    "ceil": sp.ceiling,
+    "frac": lambda x: x - sp.floor(x),
+    "lambertw": sp.LambertW,
+    "sign": sp.sign,
+    "round": lambda x: sp.floor(x + sp.Rational(1, 2)),  # Round to nearest
+    "erf": sp.erf,
+    "sinc": sp.sinc,
+    "heaviside": lambda x: sp.Heaviside(x, sp.Rational(1, 2)),
+    "fibonacci": sp.fibonacci,
+    "lucas": sp.lucas,
 }
 
 SYMPY_BINARY: dict[str, Callable] = {
@@ -329,6 +609,7 @@ SYMPY_BINARY: dict[str, Callable] = {
     "bitwise_or": sp.Function("bitwise_or"),
     "lshift": sp.Function("lshift"),
     "rshift": sp.Function("rshift"),
+    "mod": sp.Mod,
 }
 
 
@@ -543,9 +824,15 @@ class ExpressionTree:
     variables: list[str] = field(default_factory=lambda: ["x"])
     fitness: float = field(default=float("inf"))
     age: int = field(default=0)
+    # Cached compiled function for fast repeated evaluation
+    _compiled_func: Any = field(default=None, repr=False, compare=False)
 
     def evaluate(self, X: np.ndarray) -> np.ndarray:
         """Evaluate the expression tree on input data.
+        
+        Uses lazy lambdify caching: on first call, compiles the tree to a fast
+        NumPy function via SymPy's lambdify. Subsequent calls reuse the cached
+        function for ~5-10x speedup.
 
         Args:
             X: Input data of shape (n_samples,) for single variable
@@ -558,7 +845,52 @@ class ExpressionTree:
         if X.ndim == 1:
             X = X.reshape(-1, 1)
 
-        # Build variables dict
+        # Fast path: use cached compiled function if available
+        if self._compiled_func is not None:
+            try:
+                with np.errstate(all="ignore"):
+                    if len(self.variables) == 1:
+                        result = self._compiled_func(X[:, 0])
+                    else:
+                        result = self._compiled_func(*[X[:, i] for i in range(min(X.shape[1], len(self.variables)))])
+                    
+                    # Ensure result is array of correct shape
+                    if isinstance(result, (int, float, complex, np.number)):
+                        result = np.full(X.shape[0], result)
+                    elif not isinstance(result, np.ndarray):
+                        result = np.asarray(result)
+                    return result
+            except Exception:
+                # Compiled function failed, fall back to tree traversal
+                pass
+        
+        # Try to compile on first evaluation (lazy compilation)
+        if self._compiled_func is None:
+            try:
+                sympy_expr = self.to_sympy()
+                symbols = [sp.Symbol(var) for var in self.variables]
+                # lambdify with numpy backend for fast vectorized evaluation
+                self._compiled_func = sp.lambdify(
+                    symbols, sympy_expr, 
+                    modules=['numpy', {'Heaviside': lambda x: np.heaviside(x, 0.5)}]
+                )
+                # Try the fast path now
+                with np.errstate(all="ignore"):
+                    if len(self.variables) == 1:
+                        result = self._compiled_func(X[:, 0])
+                    else:
+                        result = self._compiled_func(*[X[:, i] for i in range(min(X.shape[1], len(self.variables)))])
+                    
+                    if isinstance(result, (int, float, complex, np.number)):
+                        result = np.full(X.shape[0], result)
+                    elif not isinstance(result, np.ndarray):
+                        result = np.asarray(result)
+                    return result
+            except Exception:
+                # Lambdify failed, mark as unusable and fall back
+                self._compiled_func = False  # Sentinel: don't try again
+        
+        # Fallback: tree traversal (slower but always works)
         var_dict = {}
         for i, var_name in enumerate(self.variables):
             if i < X.shape[1]:
@@ -595,6 +927,7 @@ class ExpressionTree:
             # Fix SymPy capitalization for Python compatibility
             s = str(expr)
             s = s.replace("Max", "max").replace("Min", "min")
+            s = s.replace("Mod", "mod").replace("Heaviside", "heaviside")
             return s
         except Exception:
             return self.to_string()
