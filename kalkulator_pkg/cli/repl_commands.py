@@ -3732,6 +3732,18 @@ def _handle_evolve(text, variables=None):
             removed = set(original_ops) - set(config.operators)
             if removed:
                 print(f"   [Constraint] Remaining arsenal: {config.operators}")
+            
+            # Also filter seeds that contain banned operators
+            original_seed_count = len(config.seeds)
+            filtered_seeds = []
+            for seed in config.seeds:
+                seed_lower = seed.lower()
+                contains_banned = any(ban in seed_lower for ban in banned_operators)
+                if not contains_banned:
+                    filtered_seeds.append(seed)
+            config.seeds = filtered_seeds
+            if len(filtered_seeds) < original_seed_count:
+                print(f"   [Constraint] Filtered {original_seed_count - len(filtered_seeds)} seeds containing banned operators")
         
         regressor = GeneticSymbolicRegressor(config)
         
