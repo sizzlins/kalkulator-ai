@@ -3080,6 +3080,16 @@ def _handle_evolve(text, variables=None):
         if use_transform:
             text = re.sub(r"--transform", "", text, flags=re.IGNORECASE)
 
+        # Constraint-Based Search
+        # Parse "--ban func1,func2,..." to restrict operator search space
+        banned_operators = []
+        ban_match = re.search(r'--ban\s+([a-zA-Z0-9_,]+)', text)
+        if ban_match:
+            banned_str = ban_match.group(1)
+            banned_operators = [f.strip().lower() for f in banned_str.split(',') if f.strip()]
+            text = re.sub(r'--ban\s+[a-zA-Z0-9_,]+', '', text)
+            print(f"   [Constraint] Banned functions: {banned_operators}")
+
         # Strategy 10: File Input
         # Parse "--file 'path'" to load data into variables
         file_match = re.search(r"--file\s+[\"']?([^\"'\s]+)[\"']?", text)
@@ -3709,6 +3719,15 @@ def _handle_evolve(text, variables=None):
             seeds=seeds,
             boosting_rounds=1,  # Already applied via parameter scaling
         )
+        
+        # Apply operator bans if specified
+        if banned_operators:
+            original_ops = config.operators.copy()
+            config.operators = [op for op in config.operators if op.lower() not in banned_operators]
+            removed = set(original_ops) - set(config.operators)
+            if removed:
+                print(f"   [Constraint] Remaining arsenal: {config.operators}")
+        
         regressor = GeneticSymbolicRegressor(config)
         
         # Use multi-space transformation if --transform flag is set
