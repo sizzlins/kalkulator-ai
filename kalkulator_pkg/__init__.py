@@ -1,6 +1,6 @@
 """Kalkulator package: modularized components for parser, solver, worker, and CLI."""
 
-__version__ = "1.0.0"
+__version__ = "1.4.1"
 
 from . import api
 from . import cli
