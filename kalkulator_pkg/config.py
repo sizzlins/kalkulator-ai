@@ -276,6 +276,20 @@ ALLOWED_SYMPY_NAMES = {
     "bitwise_xor": bitwise_xor,
     "bitwise_and": bitwise_and,
     "bitwise_or": bitwise_or,
+    # Floor, ceiling, fractional part
+    "floor": sp.floor,
+    "ceil": sp.ceiling,
+    "ceiling": sp.ceiling,
+    "frac": lambda x: x - sp.floor(x),
+    # New operators
+    "erf": sp.erf,
+    "sinc": sp.sinc,
+    "heaviside": lambda x: sp.Heaviside(x, sp.Rational(1, 2)), # 0.5 at x=0
+    "Heaviside": lambda x: sp.Heaviside(x, sp.Rational(1, 2)),
+    "round": lambda x: sp.floor(x + sp.Rational(1, 2)),
+    # Recurrence
+    "fibonacci": sp.fibonacci,
+    "lucas": sp.lucas,
 }
 
 TRANSFORMATIONS = standard_transformations + (
