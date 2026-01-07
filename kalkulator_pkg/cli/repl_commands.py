@@ -4271,7 +4271,7 @@ def handle_find_command_raw(text: str, ctx: Any) -> bool:
             # error_msg holds confidence_note here if successful
             note = error_msg if error_msg else ""
             print(
-                f"Discovered: {target_func}({', '.join(target_vars)}) = {result_str}{note}"
+                f"Discovered: {target_func}({', '.join(target_vars)}) = {result_str} {note}"
             )
 
             # Auto-fallback to Genetic Engine if confidence is low
