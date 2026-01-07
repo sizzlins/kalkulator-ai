@@ -183,8 +183,16 @@ def solve_regression_stage(
             # Check if residuals are effectively zero
             y_pred = X_aug @ coeffs
             mse = np.mean((y_data - y_pred) ** 2)
+            
+            # Calculate R² for linear fit
+            y_mean_val = np.mean(y_data)
+            ss_tot = np.sum((y_data - y_mean_val) ** 2)
+            r_squared = 1.0 - (mse * len(y_data) / ss_tot) if ss_tot > 1e-12 else 1.0
 
-            if mse < 1e-18:  # It's linear
+            # Accept if EXACT fit (MSE < 1e-18) OR high R² (> 0.95) with simple coefficients
+            is_good_linear_fit = mse < 1e-18 or (r_squared > 0.95 and mse < 1.0)
+            
+            if is_good_linear_fit:
                 # Try to snap coefficients to integers or simple rationals
                 snapped_coeffs = []
                 all_snapped = True
@@ -196,7 +204,7 @@ def solve_regression_stage(
                     except (TypeError, ValueError):
                          all_snapped = False
                          break
-                    if abs(c - c_int) < 1e-9:
+                    if abs(c - c_int) < 1e-6:  # Relaxed from 1e-9 for approximate fits
                         snapped_coeffs.append(c_int)
                         continue
 
@@ -204,7 +212,7 @@ def solve_regression_stage(
                     from fractions import Fraction
 
                     c_frac = Fraction(c).limit_denominator(12)
-                    if abs(c - float(c_frac)) < 1e-9:
+                    if abs(c - float(c_frac)) < 1e-6:  # Relaxed tolerance
                         snapped_coeffs.append(c_frac)
                         continue
 
@@ -212,7 +220,7 @@ def solve_regression_stage(
                     break
 
                 if all_snapped:
-                    # We found an exact simple linear form!
+                    # We found a simple linear form!
                     terms = []
                     for i, c in enumerate(
                         snapped_coeffs[:-1]
@@ -239,7 +247,11 @@ def solve_regression_stage(
                         terms = ["0"]
 
                     poly_str = " + ".join(terms).replace("+ -", "- ")
-                    return True, poly_str, "exact_linear", 0.0
+                    # Return with R² info for approximate fits
+                    if mse < 1e-18:
+                        return True, poly_str, "exact_linear", 0.0
+                    else:
+                        return True, poly_str, f"best_linear [R²={r_squared:.4f}]", mse
         except Exception:
             pass
         # Use simple linear fit on X_data (first few cols of X_matrix are usually linear terms)

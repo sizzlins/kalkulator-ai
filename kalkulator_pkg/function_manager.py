@@ -3250,7 +3250,7 @@ def find_function_from_data(
                         except Exception:
                             pass  # Try next degree
 
-        print("DEBUG: Advanced Solver failed to find a model.", file=sys.stderr)
+        # Advanced solver couldn't find a model - fall through to polynomial interpolation
         return (False, None, None, None)
 
     except (ImportError, Exception) as e:
