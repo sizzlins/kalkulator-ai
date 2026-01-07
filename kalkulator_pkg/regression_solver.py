@@ -169,10 +169,11 @@ def solve_regression_stage(
         # --- PHASE 0: EXACT INTEGER LINEAR CHECK (Genius Mode) ---
         # Check if y is exactly A*x + B*y + C with integer/simple rational coefficients.
         try:
-            if X_data.ndim == 2:
-                X_lin = X_data
+            X_arr_lin = np.array(X_data, dtype=float)
+            if X_arr_lin.ndim == 2:
+                X_lin = X_arr_lin
             else:
-                X_lin = X_data.reshape(-1, 1)
+                X_lin = X_arr_lin.reshape(-1, 1)
 
             # Augment with 1 for intercept
             X_aug = np.column_stack([X_lin, np.ones(len(y_data))])
@@ -252,6 +253,37 @@ def solve_regression_stage(
                         return True, poly_str, "exact_linear", 0.0
                     else:
                         return True, poly_str, f"best_linear [R²={r_squared:.4f}]", mse
+                else:
+                    # Coefficients don't snap to simple values, but R² is still high
+                    # Return the approximate linear fit with floating-point coefficients
+                    if r_squared > 0.95:
+                        terms = []
+                        for i, c in enumerate(coeffs[:-1]):  # Exclude intercept
+                            if abs(c) < 1e-9:
+                                continue
+                            name = param_names[i]
+                            # Format coefficient cleanly
+                            if abs(c - round(c)) < 0.01:
+                                c_str = str(int(round(c)))
+                            else:
+                                c_str = f"{c:.4g}"
+                            if c_str == "1":
+                                terms.append(name)
+                            elif c_str == "-1":
+                                terms.append(f"-{name}")
+                            else:
+                                terms.append(f"{c_str}*{name}")
+                        
+                        c_intercept = coeffs[-1]
+                        if abs(c_intercept) > 0.01:
+                            if abs(c_intercept - round(c_intercept)) < 0.01:
+                                terms.append(str(int(round(c_intercept))))
+                            else:
+                                terms.append(f"{c_intercept:.4g}")
+                        
+                        if terms:
+                            poly_str = " + ".join(terms).replace("+ -", "- ")
+                            return True, poly_str, f"approx_linear [R²={r_squared:.4f}]", mse
         except Exception:
             pass
         # Use simple linear fit on X_data (first few cols of X_matrix are usually linear terms)
