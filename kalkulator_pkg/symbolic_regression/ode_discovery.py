@@ -333,3 +333,66 @@ class ODEDiscoveryEngine:
         expr_str = expr_str.replace('y0', 'y')
         
         return f"{expr_str} = 0"
+
+    def discover_autonomous_ode(
+        self,
+        x: np.ndarray,
+        y: np.ndarray
+    ) -> tuple[str, float]:
+        """Discover autonomous ODE y' = G(y) using phase space regression.
+        
+        Instead of fitting f(y, y', y'') = 0, this method:
+        1. Computes (y, y') pairs from data
+        2. Runs regression with y as input and y' as target
+        3. Returns the discovered G(y) function
+        
+        This detects ODEs like y' = y(1-y) for logistic sigmoid.
+        
+        Args:
+            x: Independent variable values
+            y: Dependent variable values
+            
+        Returns:
+            Tuple of (ode_string "y' = G(y)", residual_mse)
+        """
+        from .genetic_engine import GeneticSymbolicRegressor, GeneticConfig
+        
+        x = np.asarray(x, dtype=float)
+        y = np.asarray(y, dtype=float)
+        
+        # Resample if needed
+        is_even, _ = check_even_spacing(x)
+        if not is_even:
+            x, y = resample_to_even_spacing(x, y, n_points=min(50, len(x)))
+        
+        # Compute y' (first derivative only)
+        x_int, y_int, y_prime, _ = compute_derivatives(x, y, validate_spacing=False)
+        
+        if len(y_int) < 5:
+            return "?", float('inf')
+        
+        # Phase space regression: y is input, y' is target
+        # This finds G(y) such that y' = G(y)
+        Y_input = y_int.reshape(-1, 1)  # y as feature
+        Y_target = y_prime  # y' as target
+        
+        # Create config for quick regression
+        config = GeneticConfig(
+            population_size=100,
+            generations=30,
+            verbose=False,
+            parsimony_coefficient=0.02,
+            # Allow polynomial terms for y(1-y) = y - y²
+            operators=['add', 'sub', 'mul', 'square', 'neg']
+        )
+        
+        regressor = GeneticSymbolicRegressor(config)
+        pareto = regressor.fit(Y_input, Y_target, ['y'])
+        
+        best = pareto.get_best()
+        if best:
+            ode_str = f"y' = {best.expression}"
+            return ode_str, best.mse
+        else:
+            return "?", float('inf')
+

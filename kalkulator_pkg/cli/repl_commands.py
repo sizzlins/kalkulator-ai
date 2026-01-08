@@ -3940,35 +3940,50 @@ def _handle_evolve(text, variables=None):
                         parsimony_coefficient=0.01
                     )
                     ode_engine = ODEDiscoveryEngine(ode_config)
+                    
+                    # Try linear ODE first (y'' + y = 0 style)
                     ode_str, residual = ode_engine.fit(X[:, 0], y)
+                    
+                    # If linear ODE has high residual, try autonomous ODE (y' = G(y))
+                    if residual >= 0.1:
+                        auto_ode_str, auto_residual = ode_engine.discover_autonomous_ode(X[:, 0], y)
+                        if auto_residual < residual:
+                            ode_str = auto_ode_str
+                            residual = auto_residual
                     
                     # Only show if residual is low (good fit)
                     if residual < 0.1:
                         print(f"\n📖 Underlying Physics:")
                         print(f"   ODE: {ode_str}")
                         # Add interpretation based on ODE pattern
-                        # Normalize: check for key terms regardless of order
-                        has_ypp = "y''" in ode_str
-                        has_yp = "y'" in ode_str and "y''" not in ode_str
-                        
-                        if has_ypp:
-                            # Second order ODE - check for harmonic vs hyperbolic
-                            # Harmonic: y'' + y = 0 (opposite signs means oscillation)
-                            # Hyperbolic: y'' - y = 0 or y - y'' = 0 (same signs means exp)
-                            if ("y + y''" in ode_str or "y'' + y" in ode_str):
-                                print("   → Simple Harmonic Motion (oscillating wave: sin, cos)")
-                            elif ("y - y''" in ode_str or "y'' - y" in ode_str or 
-                                  "-y + y''" in ode_str or "y'' + -y" in ode_str):
-                                print("   → Exponential/Hyperbolic (exp, cosh, sinh)")
+                        # Check for autonomous ODE first (y' = ...)
+                        if ode_str.startswith("y' = "):
+                            rhs = ode_str[5:]  # Get the G(y) part
+                            if "y**2" in rhs or "y*y" in rhs or "(1 - y)" in rhs:
+                                print("   → Logistic Growth (population with carrying capacity)")
+                            elif "y" in rhs and ("*" not in rhs or rhs.count("y") == 1):
+                                print("   → Exponential dynamics")
                             else:
-                                print("   → Second-order dynamics")
-                        elif has_yp:
-                            # First order ODE
-                            if ("y' - y" in ode_str or "y - y'" in ode_str or 
-                                "-y + y'" in ode_str):
-                                print("   → Exponential growth (rate = value)")
-                            elif ("y' + y" in ode_str or "y + y'" in ode_str):
-                                print("   → Exponential decay (rate = -value)")
+                                print("   → Autonomous ODE (rate depends on state)")
+                        else:
+                            # Linear ODE interpretation
+                            has_ypp = "y''" in ode_str
+                            has_yp = "y'" in ode_str and "y''" not in ode_str
+                            
+                            if has_ypp:
+                                if ("y + y''" in ode_str or "y'' + y" in ode_str):
+                                    print("   → Simple Harmonic Motion (oscillating wave: sin, cos)")
+                                elif ("y - y''" in ode_str or "y'' - y" in ode_str or 
+                                      "-y + y''" in ode_str or "y'' + -y" in ode_str):
+                                    print("   → Exponential/Hyperbolic (exp, cosh, sinh)")
+                                else:
+                                    print("   → Second-order dynamics")
+                            elif has_yp:
+                                if ("y' - y" in ode_str or "y - y'" in ode_str or 
+                                    "-y + y'" in ode_str):
+                                    print("   → Exponential growth (rate = value)")
+                                elif ("y' + y" in ode_str or "y + y'" in ode_str):
+                                    print("   → Exponential decay (rate = -value)")
         except Exception:
             pass  # Silently fail if ODE discovery doesn't work
 
