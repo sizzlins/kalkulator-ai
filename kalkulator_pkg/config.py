@@ -292,6 +292,14 @@ ALLOWED_SYMPY_NAMES = {
     # Recurrence
     "fibonacci": sp.fibonacci,
     "lucas": sp.lucas,
+    # Piecewise and conditional
+    "Piecewise": sp.Piecewise,
+    "Eq": sp.Eq,
+    "Ne": sp.Ne,
+    "Lt": sp.Lt,
+    "Le": sp.Le,
+    "Gt": sp.Gt,
+    "Ge": sp.Ge,
 }
 
 TRANSFORMATIONS = standard_transformations + (

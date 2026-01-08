@@ -652,6 +652,13 @@ def generate_pattern_seeds(X, y, variable_names, verbose=False):
             print(f"   ReLU Analysis: Detected piecewise linear patterns {relu_patterns}")
         seeds.extend(relu_patterns)
 
+    # 4b. Clamp Detection (min/max patterns)
+    clamp_patterns = _detect_clamp_patterns(X, y, verbose=verbose)
+    if clamp_patterns:
+        if verbose:
+            print(f"   Clamp Analysis: Detected {clamp_patterns}")
+        seeds.extend(clamp_patterns)
+
     # 5. Special Functions (Bessel, Gamma, Prime, Bitwise)
     bessel_patterns = _detect_bessel_patterns(X, y, verbose=verbose)
     if bessel_patterns:
@@ -1168,6 +1175,77 @@ def _detect_relu_patterns(X, y):
                 
         seeds.extend(validated_seeds)
             
+    return seeds
+
+
+def _detect_clamp_patterns(X, y, verbose: bool = False):
+    """
+    Detects clamp patterns: min(x, c) or max(x, c).
+    Pattern: Linear for x < threshold, then constant (or vice versa).
+    """
+    if X.ndim > 1 and X.shape[1] > 1:
+        return []
+        
+    try:
+        x_flat = X.flatten().astype(float)
+        y_flat = np.array(y, dtype=float)
+    except:
+        return []
+    
+    if len(x_flat) < 4:
+        return []
+    
+    seeds = []
+    
+    # Sort by x for analysis
+    sorted_indices = np.argsort(x_flat)
+    x_sorted = x_flat[sorted_indices]
+    y_sorted = y_flat[sorted_indices]
+    
+    # Check tail (upper clamp like min(x, c))
+    tail_const_count = 1
+    for i in range(len(y_sorted) - 2, -1, -1):
+        if abs(y_sorted[i] - y_sorted[-1]) < 1e-6:
+            tail_const_count += 1
+        else:
+            break
+    
+    # Check head (lower clamp like max(x, c))
+    head_const_count = 1
+    for i in range(1, len(y_sorted)):
+        if abs(y_sorted[i] - y_sorted[0]) < 1e-6:
+            head_const_count += 1
+        else:
+            break
+    
+    # Upper clamp: min(x, threshold)
+    if tail_const_count >= 2 and (len(y_sorted) - tail_const_count) >= 2:
+        threshold = y_sorted[-1]
+        linear_idx = len(y_sorted) - tail_const_count
+        if linear_idx >= 2:
+            x_linear = x_sorted[:linear_idx]
+            y_linear = y_sorted[:linear_idx]
+            A = np.vstack([x_linear, np.ones(len(x_linear))]).T
+            m, c = np.linalg.lstsq(A, y_linear, rcond=None)[0]
+            if abs(m - 1.0) < 0.1 and abs(c) < 0.1:
+                if verbose:
+                    print(f"   Clamp Detection: Found min(x, {threshold:.4g}) pattern")
+                seeds.append(f"min(x, {threshold:.4g})")
+    
+    # Lower clamp: max(x, threshold)
+    if head_const_count >= 2 and (len(y_sorted) - head_const_count) >= 2:
+        threshold = y_sorted[0]
+        linear_start = head_const_count
+        if len(y_sorted) - linear_start >= 2:
+            x_linear = x_sorted[linear_start:]
+            y_linear = y_sorted[linear_start:]
+            A = np.vstack([x_linear, np.ones(len(x_linear))]).T
+            m, c = np.linalg.lstsq(A, y_linear, rcond=None)[0]
+            if abs(m - 1.0) < 0.1 and abs(c) < 0.1:
+                if verbose:
+                    print(f"   Clamp Detection: Found max(x, {threshold:.4g}) pattern")
+                seeds.append(f"max(x, {threshold:.4g})")
+    
     return seeds
 
 
