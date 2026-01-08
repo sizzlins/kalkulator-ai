@@ -69,7 +69,7 @@ https://github.com/sizzlins/kalkulator-ai/blob/main/kalkulator.exe
 - `f(x)=...`: Define function.
 - `find f(x)`: Discover function from data.
 - `evolve ...`: Genetic programming search.
-  - `--boost`: Enable 5-round boosting for complex models.
+  - `--boost N`: N× resources (population, generations, timeout).
   - `from file.csv`: Load data from CSV.
   - `--verbose`: Show progress.
   - `--hybrid`: Seed with find() result.
@@ -89,9 +89,12 @@ https://github.com/sizzlins/kalkulator-ai/blob/main/kalkulator.exe
 **Physics (Kinetic Energy)**
 
 ```
->>> E(2,4)=16, E(4,2)=8, E(10,1)=5, find E(m,v)
-E(m, v) = 0.5*m*v^2
+>>> alt E(2,4)=16, E(4,2)=8, E(10,1)=5, E(2,2)=4, find E(m,v)
+Result: m*v^2/2
+MSE: 0, Complexity: 7.0
 ```
+
+> ⚠️ Note: 4 points needed - 3 points define a plane (linear fit).
 
 **LambertW (Inverse x^x)**
 
@@ -100,12 +103,15 @@ E(m, v) = 0.5*m*v^2
 Discovered: f(x) = exp(LambertW(log(x)))
 ```
 
-**Gaussian**
+**Exponential Decay** (requires 3+ points)
 
 ```
->>> g(0)=1, g(1)=0.3679, find g(x)
-g(x) = exp(-x^2)
+>>> alt g(0)=1, g(1)=0.3679, g(2)=0.1353, find g(x)
+Result: exp(-x)
+MSE: 5.56e-10, Complexity: 4.0
 ```
+
+> ⚠️ Note: 2 points = line. 3+ points force the curve.
 
 **Bitwise Logic**
 
@@ -358,16 +364,14 @@ Function finding discovers **continuous mathematical relationships**. The follow
 
 ### Data Types
 
-Regression (`find`, `evolve`) requires **real-valued** inputs and outputs. Complex data is automatically filtered with a warning:
+**NEW in v1.4+**: Complex-valued data is fully supported! The genetic engine handles complex inputs/outputs.
 
 ```
->>> f(-4),f(-3),...  # Some values are complex: -5.5 - 12.5i
->>> f(-4)=..., find f(x)
-Warning: 4 data point(s) with complex/imaginary values were skipped.
-         Regression requires real-valued inputs and outputs.
+>>> alt f(i)=1+2i, f(2i)=3+4i, find f(x)
+Result: discovered complex function
 ```
 
-**Workaround:** Use only real-valued data points for regression.
+Complex numbers are preserved through evolution - no filtering required.
 
 ### Numerical Limits & Precision
 
