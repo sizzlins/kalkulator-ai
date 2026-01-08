@@ -224,6 +224,7 @@ DISCOVERY
     --hybrid              Seed with find() result
     --boost N             N× resources (pop/gen/timeout)
     --transform           Multi-space evolution (direct+log+inverse)
+    --discover-ode        Discover ODE (y'' + y = 0) instead of curve fitting
   evolve f(x) from file.csv   Load data from CSV
   find ode                Find ODE (SINDy)
   benchmark               Run benchmarks
@@ -234,6 +235,15 @@ SHORTCUTS (for evolve)
   b f(...)      Fast mode:  --verbose --boost 3
   h f(...)      Smart mode: --hybrid --verbose
   v f(...)      Verbose:    --verbose
+  ode f(...)    ODE mode:   --discover-ode (finds y'' + y = 0)
+
+PATTERN DETECTION (auto-seeding)
+  Modulo:       f(0)=0, f(3)=0, f(6)=0 → mod(x,3)
+  ReLU:         f(-1)=0, f(0)=0, f(1)=1 → max(0,x)
+  Clamp:        f(1)=1, f(5)=5, f(10)=5 → min(x,5)
+  Bouncing:     |sin(x)| via cusp detection
+  Pulse:        Heaviside patterns via edge detection
+  ODE Physics:  y'' + y = 0 (harmonic), y' = y(1-y) (logistic)
 
 DATA
   clearcache     Clear cache
@@ -249,7 +259,7 @@ SETTINGS
 
 SUPPORTED:
   Math: +, -, *, /, ^, sqrt, abs, exp, log, sin, cos, tan, asin, acos, atan, sinh, cosh, tanh
-  Special: prime_pi (primes), gamma, bessel_j/y/i/k
+  Special: prime_pi (primes), gamma, bessel_j/y/i/k, Heaviside, Piecewise
   Bitwise: bitwise_xor, bitwise_and, bitwise_or, lshift, rshift (or ^, &, |, <<, >>)
 
 Full Docs: https://github.com/sizzlins/kalkulator-ai

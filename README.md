@@ -22,18 +22,22 @@
 
 These demonstrate Kalkulator's ability to discover functions that defeat standard regression engines:
 
-| Function              | Description             | Why It's Hard                                       |
-| --------------------- | ----------------------- | --------------------------------------------------- |
-| `floor(x) + frac(x)²` | The Scalloped Staircase | Cusps at every integer break gradient-based solvers |
-| `x ⊕ 5`               | Bitwise XOR             | Non-continuous, digital logic                       |
-| `Fibonacci(n)`        | Golden Ratio Sequence   | Detects recurrence, seeds Binet formula             |
-| `Tribonacci(n)`       | 3-term Recurrence       | Auto-detects `f(n)=f(n-1)+f(n-2)+f(n-3)`            |
-| `x % 1.5`             | Sawtooth Modulo         | Periodic zeros detection                            |
-| `acosh(x)`            | Complex Domain          | Requires forensic detection of hyperbolic patterns  |
-| `π(x)`                | Prime Counting          | Integer-only step function                          |
-| `x^x`                 | Self-Power              | Complex logarithmic domain                          |
-| `(x+1)^(1/x)`         | Constant Anchor         | Detected via `f(2) = √3` pattern                    |
-| `dy/dt = 2y(1-y)`     | Logistic ODE            | Differential equation discovery                     |
+| Function                | Description             | Why It's Hard                                       |
+| ----------------------- | ----------------------- | --------------------------------------------------- |
+| `floor(x) + frac(x)²`   | The Scalloped Staircase | Cusps at every integer break gradient-based solvers |
+| `x ⊕ 5`                 | Bitwise XOR             | Non-continuous, digital logic                       |
+| `Fibonacci(n)`          | Golden Ratio Sequence   | Detects recurrence, seeds Binet formula             |
+| `Tribonacci(n)`         | 3-term Recurrence       | Auto-detects `f(n)=f(n-1)+f(n-2)+f(n-3)`            |
+| `x % 1.5`               | Sawtooth Modulo         | Periodic zeros detection                            |
+| `acosh(x)`              | Complex Domain          | Requires forensic detection of hyperbolic patterns  |
+| `π(x)`                  | Prime Counting          | Integer-only step function                          |
+| `x^x`                   | Self-Power              | Complex logarithmic domain                          |
+| `(x+1)^(1/x)`           | Constant Anchor         | Detected via `f(2) = √3` pattern                    |
+| `dy/dt = 2y(1-y)`       | Logistic ODE            | Phase space regression (y' vs y)                    |
+| `\|sin(x)\|`            | Bouncing Ball           | Cusp detector finds V-shaped zeros                  |
+| `min(x, 5)`             | Clamped Linear          | Clamp detector (linear then constant)               |
+| `Heaviside(x-3)-H(x-7)` | Rectangle Pulse         | Pulse detector finds rising/falling edges           |
+| `max(0, x)`             | ReLU                    | Piecewise linear detector                           |
 
 ## Installation
 
