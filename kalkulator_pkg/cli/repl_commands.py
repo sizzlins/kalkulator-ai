@@ -1995,6 +1995,43 @@ def _detect_anchor_patterns(X, y, verbose: bool = False) -> list[str]:
              seeds.append("cos(2*x)")
              seeds.append("sin(2*x)")
              
+    # Cusp Detector: Check for "Bouncing Ball" pattern (|sin(x)| shape)
+    # If zeros have positive neighbors on BOTH sides (V-shape), it's a rectified wave
+    # Sort data by x for proper neighbor checking
+    sorted_indices = np.argsort(x_col)
+    x_sorted = [x_col[i] for i in sorted_indices]
+    y_sorted = [y[i] if isinstance(y[i], (int, float)) else 
+                (y[i].real if abs(y[i].imag) < 1e-10 else None) 
+                for i in sorted_indices]
+    
+    # Check all zeros for cusp pattern
+    cusp_count = 0
+    for i, y_val in enumerate(y_sorted):
+        if y_val is None:
+            continue
+        # Is this a near-zero point?
+        if abs(y_val) < 0.01:  # Close to zero
+            # Check neighbors
+            has_left = i > 0 and y_sorted[i-1] is not None
+            has_right = i < len(y_sorted)-1 and y_sorted[i+1] is not None
+            
+            if has_left and has_right:
+                left_val = y_sorted[i-1]
+                right_val = y_sorted[i+1]
+                # Both neighbors positive = V-shape (cusp/bounce)
+                if left_val > 0.01 and right_val > 0.01:
+                    cusp_count += 1
+    
+    # If we detected cusps AND range is non-negative, it's a rectified wave
+    y_min = min(yv for yv in y_sorted if yv is not None)
+    if cusp_count >= 1 and y_min >= -0.01:
+        if verbose:
+            print(f"   Cusp Detection: Found {cusp_count} V-shaped zeros (bouncing ball pattern)")
+            print(f"      → Suggests rectified wave: |sin(x)| or |cos(x)|")
+        seeds.append("abs(sin(x))")
+        seeds.append("abs(cos(x))")
+        seeds.append("abs(sin(2*x))")
+             
     # 4. Check Integer Anchor Pattern: f(n) = n + c for all integers
     # This suggests floor-based functions like floor(x) + frac(x)^2 + c
     # We detect the STRUCTURE only - the genetic engine will find the constant c naturally
