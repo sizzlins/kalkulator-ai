@@ -659,6 +659,13 @@ def generate_pattern_seeds(X, y, variable_names, verbose=False):
             print(f"   Clamp Analysis: Detected {clamp_patterns}")
         seeds.extend(clamp_patterns)
 
+    # 4c. Pulse/Rectangle Detection (Heaviside patterns)
+    pulse_patterns = _detect_pulse_patterns(X, y, verbose=verbose)
+    if pulse_patterns:
+        if verbose:
+            print(f"   Pulse Analysis: Detected {pulse_patterns}")
+        seeds.extend(pulse_patterns)
+
     # 5. Special Functions (Bessel, Gamma, Prime, Bitwise)
     bessel_patterns = _detect_bessel_patterns(X, y, verbose=verbose)
     if bessel_patterns:
@@ -1245,6 +1252,78 @@ def _detect_clamp_patterns(X, y, verbose: bool = False):
                 if verbose:
                     print(f"   Clamp Detection: Found max(x, {threshold:.4g}) pattern")
                 seeds.append(f"max(x, {threshold:.4g})")
+    
+    return seeds
+
+
+def _detect_pulse_patterns(X, y, verbose: bool = False):
+    """
+    Detects pulse/rectangle patterns: value is constant in a range, 0 outside.
+    Pattern: Heaviside(x-a) - Heaviside(x-b) or equivalent.
+    
+    Examples:
+    - 0 for x<3, 1 for 3<=x<=7, 0 for x>7 → Heaviside(x-3) - Heaviside(x-7)
+    """
+    if X.ndim > 1 and X.shape[1] > 1:
+        return []
+        
+    try:
+        x_flat = X.flatten().astype(float)
+        y_flat = np.array(y, dtype=float)
+    except:
+        return []
+    
+    if len(x_flat) < 5:
+        return []
+    
+    seeds = []
+    
+    # Sort by x for analysis
+    sorted_indices = np.argsort(x_flat)
+    x_sorted = x_flat[sorted_indices]
+    y_sorted = y_flat[sorted_indices]
+    
+    # Identify distinct regions: look for 0 → constant → 0 pattern
+    # Find transitions where y changes significantly
+    transitions = []
+    for i in range(1, len(y_sorted)):
+        if abs(y_sorted[i] - y_sorted[i-1]) > 0.5:  # Significant jump
+            # Transition at midpoint between x[i-1] and x[i]
+            transition_x = (x_sorted[i] + x_sorted[i-1]) / 2
+            transition_to = y_sorted[i]
+            transitions.append((transition_x, y_sorted[i-1], transition_to))
+    
+    # Check for rectangle pattern: 0 → constant → 0
+    if len(transitions) == 2:
+        t1_x, t1_from, t1_to = transitions[0]
+        t2_x, t2_from, t2_to = transitions[1]
+        
+        # Pattern: 0 → high → 0
+        if abs(t1_from) < 0.1 and t1_to > 0.5 and abs(t2_from - t1_to) < 0.1 and abs(t2_to) < 0.1:
+            pulse_height = t1_to
+            start_x = t1_x
+            end_x = t2_x
+            
+            if verbose:
+                print(f"   Pulse Detection: Rectangle pulse from x={start_x:.4g} to x={end_x:.4g}, height={pulse_height:.4g}")
+            
+            # Seed with Heaviside difference
+            if abs(pulse_height - 1.0) < 0.1:
+                seeds.append(f"Heaviside(x - {start_x:.4g}) - Heaviside(x - {end_x:.4g})")
+                seeds.append(f"heaviside(x - {start_x:.4g}) - heaviside(x - {end_x:.4g})")
+            else:
+                seeds.append(f"{pulse_height:.4g} * (Heaviside(x - {start_x:.4g}) - Heaviside(x - {end_x:.4g}))")
+        
+        # Pattern: high → 0 → high (inverted pulse/notch)
+        elif t1_from > 0.5 and abs(t1_to) < 0.1 and abs(t2_from) < 0.1 and t2_to > 0.5:
+            notch_start = t1_x
+            notch_end = t2_x
+            level = t1_from
+            
+            if verbose:
+                print(f"   Pulse Detection: Notch from x={notch_start:.4g} to x={notch_end:.4g}")
+            
+            seeds.append(f"{level:.4g} * (1 - Heaviside(x - {notch_start:.4g}) + Heaviside(x - {notch_end:.4g}))")
     
     return seeds
 
