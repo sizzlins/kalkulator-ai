@@ -152,6 +152,13 @@ def handle_command(text: str, ctx: Any, variables: Dict[str, str]) -> bool:
         _handle_evolve(text, variables)
         return True
 
+    # ODE discovery shortcut: 'ode f(...)' is equivalent to 'alt --discover-ode f(...)'
+    if raw_lower.startswith("ode "):
+        text = text[4:]  # Remove 'ode ' prefix
+        text = "--discover-ode " + text  # Add the flag
+        _handle_evolve(text, variables)
+        return True
+
     # === Function Finding/System ===
     if raw_lower.startswith("find ode"):
         _handle_find_ode(text)

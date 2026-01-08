@@ -75,6 +75,7 @@ https://github.com/sizzlins/kalkulator-ai/blob/main/kalkulator.exe
   - `b f(...)`: Fast mode (`--verbose --boost 3`)
   - `h f(...)`: Smart mode (`--hybrid --verbose`)
   - `v f(...)`: Verbose (`--verbose`)
+  - `ode f(...)`: **ODE Discovery** - finds differential equations like `y'' + y = 0`
 - `diff(...)`: Differentiate.
 - `integrate(...)`: Integrate.
 - `save/load`: Persist state.
