@@ -3819,6 +3819,27 @@ def _handle_evolve(text, variables=None):
             print(f"\n=== ODE Discovery Result ===")
             print(f"Discovered: {ode_str}")
             print(f"Residual: {residual:.6e}")
+            
+            # Human-friendly interpretation
+            print(f"\n📖 Interpretation:")
+            if "y''" in ode_str and "y'" not in ode_str.replace("y''", ""):
+                # Contains y'' but not y' (standalone)
+                if "+ y" in ode_str or "y +" in ode_str:
+                    print("   This is Simple Harmonic Motion: acceleration = -position")
+                    print("   → The function oscillates like a wave (sin, cos)")
+                    print("   → Physical examples: pendulum, spring, vibration")
+                elif "- y" in ode_str or "y -" in ode_str:
+                    print("   This is exponential: acceleration = position")
+                    print("   → The function grows/decays exponentially (exp, cosh, sinh)")
+            elif "y'" in ode_str and "y''" not in ode_str:
+                if "+ y" in ode_str or "y +" in ode_str:
+                    print("   This is exponential decay: rate = -value")
+                    print("   → The function decays over time (e^(-x))")
+                elif "- y" in ode_str or "y -" in ode_str:
+                    print("   This is exponential growth: rate = value")
+                    print("   → The function grows exponentially (e^x)")
+            else:
+                print("   This describes how the function changes with its derivatives.")
             return
         
         regressor = GeneticSymbolicRegressor(config)
