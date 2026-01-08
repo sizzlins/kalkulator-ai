@@ -3946,13 +3946,23 @@ def _handle_evolve(text, variables=None):
                     if residual < 0.1:
                         print(f"\n📖 Underlying Physics:")
                         print(f"   ODE: {ode_str}")
-                        # Add interpretation
-                        if "y''" in ode_str and "+ y" in ode_str:
-                            print("   → Simple Harmonic Motion (oscillating wave)")
-                        elif "y'" in ode_str and "- y" in ode_str:
-                            print("   → Exponential growth (rate = value)")
-                        elif "y'" in ode_str and "+ y" in ode_str:
-                            print("   → Exponential decay (rate = -value)")
+                        # Add interpretation based on ODE pattern
+                        if "y''" in ode_str:
+                            # Second order ODE
+                            # y'' + y = 0 → oscillation (sin, cos)
+                            # y'' - y = 0 or -y + y'' = 0 → exponential (exp, cosh, sinh)
+                            if ("+ y =" in ode_str or "y + y''" in ode_str or "y'' + y" in ode_str):
+                                print("   → Simple Harmonic Motion (oscillating wave: sin, cos)")
+                            elif ("- y =" in ode_str or "-y + y''" in ode_str or "y'' - y" in ode_str):
+                                print("   → Exponential/Hyperbolic (exp, cosh, sinh)")
+                            else:
+                                print("   → Second-order dynamics")
+                        elif "y'" in ode_str:
+                            # First order ODE
+                            if "- y" in ode_str or "-y" in ode_str:
+                                print("   → Exponential growth (rate = value)")
+                            elif "+ y" in ode_str:
+                                print("   → Exponential decay (rate = -value)")
         except Exception:
             pass  # Silently fail if ODE discovery doesn't work
 
