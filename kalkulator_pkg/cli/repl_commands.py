@@ -3944,12 +3944,11 @@ def _handle_evolve(text, variables=None):
                     # Try linear ODE first (y'' + y = 0 style)
                     ode_str, residual = ode_engine.fit(X[:, 0], y)
                     
-                    # If linear ODE has high residual, try autonomous ODE (y' = G(y))
-                    if residual >= 0.1:
-                        auto_ode_str, auto_residual = ode_engine.discover_autonomous_ode(X[:, 0], y)
-                        if auto_residual < residual:
-                            ode_str = auto_ode_str
-                            residual = auto_residual
+                    # Always try autonomous ODE (y' = G(y)) and pick the better one
+                    auto_ode_str, auto_residual = ode_engine.discover_autonomous_ode(X[:, 0], y)
+                    if auto_residual < residual:
+                        ode_str = auto_ode_str
+                        residual = auto_residual
                     
                     # Only show if residual is low (good fit)
                     if residual < 0.1:
