@@ -241,7 +241,9 @@ ALLOWED_SYMPY_NAMES = {
     # Special functions
     "LambertW": sp.LambertW,
     "min": sp.Min,
+    "Min": sp.Min,  # uppercase alias
     "max": sp.Max,
+    "Max": sp.Max,  # uppercase alias
     # Factorial and combinatorics
     "factorial": sp.factorial,
     "binomial": sp.binomial,
