@@ -3922,6 +3922,40 @@ def _handle_evolve(text, variables=None):
         print(f"\nResult: {format_solution(beautified_expr)}")
         print(f"MSE: {best.mse:.6g}, Complexity: {best.complexity}")
 
+        # === AUTO ODE DISCOVERY ===
+        # Silently run ODE discovery and show if it finds meaningful physics
+        try:
+            from ..symbolic_regression.ode_discovery import ODEDiscoveryEngine, ODEConfig
+            from ..symbolic_regression.numerical_diff import check_even_spacing
+            
+            # Only run if we have enough data and it's roughly evenly spaced
+            if len(y) >= 10:
+                is_even, _ = check_even_spacing(X[:, 0])
+                # Also allow approximately even spacing
+                if is_even or len(y) >= 15:
+                    ode_config = ODEConfig(
+                        population_size=100,
+                        generations=20,
+                        verbose=False,  # Silent
+                        parsimony_coefficient=0.01
+                    )
+                    ode_engine = ODEDiscoveryEngine(ode_config)
+                    ode_str, residual = ode_engine.fit(X[:, 0], y)
+                    
+                    # Only show if residual is low (good fit)
+                    if residual < 0.1:
+                        print(f"\n📖 Underlying Physics:")
+                        print(f"   ODE: {ode_str}")
+                        # Add interpretation
+                        if "y''" in ode_str and "+ y" in ode_str:
+                            print("   → Simple Harmonic Motion (oscillating wave)")
+                        elif "y'" in ode_str and "- y" in ode_str:
+                            print("   → Exponential growth (rate = value)")
+                        elif "y'" in ode_str and "+ y" in ode_str:
+                            print("   → Exponential decay (rate = -value)")
+        except Exception:
+            pass  # Silently fail if ODE discovery doesn't work
+
         # Persist the discovered function (Engineering Standard: State Persistence)
         try:
             from ..function_manager import define_function
