@@ -3947,21 +3947,27 @@ def _handle_evolve(text, variables=None):
                         print(f"\n📖 Underlying Physics:")
                         print(f"   ODE: {ode_str}")
                         # Add interpretation based on ODE pattern
-                        if "y''" in ode_str:
-                            # Second order ODE
-                            # y'' + y = 0 → oscillation (sin, cos)
-                            # y'' - y = 0 or -y + y'' = 0 → exponential (exp, cosh, sinh)
-                            if ("+ y =" in ode_str or "y + y''" in ode_str or "y'' + y" in ode_str):
+                        # Normalize: check for key terms regardless of order
+                        has_ypp = "y''" in ode_str
+                        has_yp = "y'" in ode_str and "y''" not in ode_str
+                        
+                        if has_ypp:
+                            # Second order ODE - check for harmonic vs hyperbolic
+                            # Harmonic: y'' + y = 0 (opposite signs means oscillation)
+                            # Hyperbolic: y'' - y = 0 or y - y'' = 0 (same signs means exp)
+                            if ("y + y''" in ode_str or "y'' + y" in ode_str):
                                 print("   → Simple Harmonic Motion (oscillating wave: sin, cos)")
-                            elif ("- y =" in ode_str or "-y + y''" in ode_str or "y'' - y" in ode_str):
+                            elif ("y - y''" in ode_str or "y'' - y" in ode_str or 
+                                  "-y + y''" in ode_str or "y'' + -y" in ode_str):
                                 print("   → Exponential/Hyperbolic (exp, cosh, sinh)")
                             else:
                                 print("   → Second-order dynamics")
-                        elif "y'" in ode_str:
+                        elif has_yp:
                             # First order ODE
-                            if "- y" in ode_str or "-y" in ode_str:
+                            if ("y' - y" in ode_str or "y - y'" in ode_str or 
+                                "-y + y'" in ode_str):
                                 print("   → Exponential growth (rate = value)")
-                            elif "+ y" in ode_str:
+                            elif ("y' + y" in ode_str or "y + y'" in ode_str):
                                 print("   → Exponential decay (rate = -value)")
         except Exception:
             pass  # Silently fail if ODE discovery doesn't work
