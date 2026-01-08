@@ -3419,12 +3419,20 @@ def _handle_evolve(text, variables=None):
                     print("Error: No data provided and no active variables in session.")
                     return
             else:
-                # Try direct data points: evolve f(-4)=0.04, f(-3)=-0.56, ...
+                # Try direct data points: evolve f(-4)=0.04, f(-3)=-0.56, ..., find f(x)
                 # This pattern looks for f(value)=result pairs without 'from' keyword
                 direct_match = re.search(r"(\w+)\s*\([^)]+\)\s*=", text)
                 if direct_match:
                     func_name = direct_match.group(1)
-                    input_var_names = ["x"]  # Default to single variable
+                    
+                    # Try to extract variable names from "find func(var1, var2)" clause
+                    find_match = re.search(r"find\s+(\w+)\s*\(([^)]+)\)", text, re.IGNORECASE)
+                    if find_match and find_match.group(1) == func_name:
+                        # Extract variable names from find clause
+                        input_var_names = [v.strip() for v in find_match.group(2).split(",")]
+                    else:
+                        input_var_names = ["x"]  # Default to single variable
+                    
                     # The entire text after 'evolve' is the data part
                     data_part = text
                 else:
