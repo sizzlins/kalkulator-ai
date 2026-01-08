@@ -531,6 +531,7 @@ UNARY_OPERATORS: dict[str, Callable[[float], float]] = {
     "prime_pi": safe_prime_pi,      # Prime-counting function π(x)
     "floor": safe_floor,            # Safe Floor function
     "ceil": safe_ceil,              # Safe Ceiling function
+    "ceiling": safe_ceil,           # Alias for SymPy compatibility
     "frac": safe_frac,              # Fractional part (FUNCTION not lambda)
     "lambertw": safe_lambertw,      # Lambert W function
     "sign": safe_sign,              # Sign function (-1, 0, 1)
