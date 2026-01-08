@@ -3144,6 +3144,13 @@ def _handle_evolve(text, variables=None):
             seeds.extend(polynomial_taylor_seeds)
             print(f"   [Polynomial Mode] Seeding with {len(polynomial_taylor_seeds)} Taylor templates")
 
+        # ODE Discovery Mode: Discover differential equations instead of curve-fitting
+        # Parse "--discover-ode" flag to find relationships like y'' + y = 0
+        use_discover_ode = "--discover-ode" in text.lower()
+        if use_discover_ode:
+            text = re.sub(r"--discover-ode", "", text, flags=re.IGNORECASE)
+            print(f"   [ODE Discovery Mode] Will search for differential equations")
+
         # Strategy 10: File Input
         # Parse "--file 'path'" to load data into variables
         file_match = re.search(r"--file\s+[\"']?([^\"'\s]+)[\"']?", text)
@@ -3793,6 +3800,26 @@ def _handle_evolve(text, variables=None):
             config.seeds = filtered_seeds
             if len(filtered_seeds) < original_seed_count:
                 print(f"   [Constraint] Filtered {original_seed_count - len(filtered_seeds)} seeds containing banned operators")
+        
+        # === ODE DISCOVERY MODE ===
+        # If --discover-ode flag is set, use ODE discovery instead of standard regression
+        if use_discover_ode:
+            from ..symbolic_regression.ode_discovery import ODEDiscoveryEngine, ODEConfig
+            
+            ode_config = ODEConfig(
+                population_size=200,
+                generations=50,
+                verbose=verbose_mode,
+                parsimony_coefficient=0.01
+            )
+            
+            ode_engine = ODEDiscoveryEngine(ode_config)
+            ode_str, residual = ode_engine.fit(X[:, 0], y)  # Single variable only for now
+            
+            print(f"\n=== ODE Discovery Result ===")
+            print(f"Discovered: {ode_str}")
+            print(f"Residual: {residual:.6e}")
+            return
         
         regressor = GeneticSymbolicRegressor(config)
         
