@@ -856,7 +856,10 @@ class GeneticSymbolicRegressor:
         final_front = ParetoFront()
 
         # Data split strategy (skip if too few samples)
-        if len(y) < 5:
+        # BUG FIX: Increased threshold from 5 to 20. With only 5-7 samples,
+        # test_size=0.2 creates a tiny validation set (1-2 points) which can
+        # cause false MSE=0 if those points happen to be zeros.
+        if len(y) < 20:
             # Not enough data for split/validation, use all for training
             X_train, y_train = X, y
             X_val, y_val = X, y
