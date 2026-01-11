@@ -124,17 +124,6 @@ with st.sidebar:
 
 # --- MAIN ---
 
-# --- GLOBAL PREFILL PROCESSING (runs before tabs) ---
-# This ensures prefill data is processed on the rerun triggered by the button
-if 'prefill_for_gui' in st.session_state:
-    if 'textarea_version' not in st.session_state:
-        st.session_state.textarea_version = 0
-    st.session_state.textarea_version += 1
-    new_key = f"gui_input_v{st.session_state.textarea_version}"
-    st.session_state[new_key] = st.session_state.prefill_for_gui
-    del st.session_state.prefill_for_gui
-    st.session_state.prefill_applied = True  # Flag to show success message
-
 # --- TABS ---
 tab1, tab2, tab3 = st.tabs(["🖥️ GUI Mode", "⌨️ Terminal Mode", "🤖 AI Tutor"])
 
@@ -310,22 +299,30 @@ with tab1:
         parsed_sucess = False
         
         if input_method == "Text Input":
-            # Dynamic key versioning: Changing the key forces Streamlit to create fresh widget
-            if 'textarea_version' not in st.session_state:
-                st.session_state.textarea_version = 0
+            # Simple value-based approach: always read from and write to session state
+            default_data = "f(1) = 0.841470984807897, f(2) = 0.909297426825682, f(3) = 0.141120008059867, f(4) = -0.756802495307928, f(5) = -0.958924274663138, f(6) = -0.279415498198926"
             
-            textarea_key = f"gui_input_v{st.session_state.textarea_version}"
+            # Initialize session state if needed
+            if 'gui_input_data' not in st.session_state:
+                st.session_state.gui_input_data = default_data
             
-            # Show success message if prefill was just applied (flag set in global processing)
-            if st.session_state.get('prefill_applied'):
+            # Check if prefill was requested (set by AI Tutor button)
+            if 'prefill_for_gui' in st.session_state:
+                st.session_state.gui_input_data = st.session_state.prefill_for_gui
+                del st.session_state.prefill_for_gui
                 st.success("✨ AI-suggested data loaded! Click 'Evolve Function' to discover the formula.")
-                del st.session_state.prefill_applied
             
-            # Initialize default if this version's key doesn't exist
-            if textarea_key not in st.session_state:
-                st.session_state[textarea_key] = "f(1) = 0.841470984807897, f(2) = 0.909297426825682, f(3) = 0.141120008059867, f(4) = -0.756802495307928, f(5) = -0.958924274663138, f(6) = -0.279415498198926"
+            # Text area with VALUE parameter (not key) - always shows current session state
+            user_input = st.text_area(
+                "Enter points (e.g., f(0)=1, f(1)=2)", 
+                value=st.session_state.gui_input_data, 
+                height=150,
+                key="gui_textarea_widget"  # Fixed key just for widget identity
+            )
             
-            user_input = st.text_area("Enter points (e.g., f(0)=1, f(1)=2)", key=textarea_key, height=150)
+            # Sync user edits back to session state
+            if user_input != st.session_state.gui_input_data:
+                st.session_state.gui_input_data = user_input
             
             if user_input:
                 # Parse regex like CLI
