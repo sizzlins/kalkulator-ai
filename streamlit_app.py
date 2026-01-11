@@ -130,34 +130,48 @@ with tab3:
                         from google import genai
                         client = genai.Client(api_key=provider_api_key)
                         
-                        # Prepare context
                         combined_prompt = f"{system_prompt}\n\nUser Question: {prompt}"
                         
-                        # Construct history for context
-                        # The new SDK is cleaner, but for simplicity in this stateless run
-                        # we can just send the history as a list of contents.
-                        # However, to avoid complexity with message format migration,
-                        # we will just send the full context + prompt as a single GenerateContent for now
-                        # OR use the chat interface if simple.
-                        
-                        # Let's try the chat interface of the new SDK
-                        # history matching exact format of new SDK might be tricky blind.
-                        # Safest bet: Just convert current session history to text block context.
-                        
-                        chat = client.chats.create(model='gemini-1.5-flash')
-                        
-                        # Pre-inject history?
-                        # Actually, let's just stick to the simplest working method: 
-                        # Send (System + History + Prompt) as one big text block if history > 0.
-                        # But for "chat" feel, we try to use the chat method.
-                        
-                        # send_message_stream is standard.
-                        response_stream = chat.send_message_stream(combined_prompt)
-                        
-                        for chunk in response_stream:
-                            if chunk.text:
-                                full_response += chunk.text
-                                message_placeholder.markdown(full_response + "▌")
+                        try:
+                            # Try standard model first
+                            chat = client.chats.create(model='gemini-1.5-flash')
+                            response_stream = chat.send_message_stream(combined_prompt)
+                            
+                            for chunk in response_stream:
+                                if chunk.text:
+                                    full_response += chunk.text
+                                    message_placeholder.markdown(full_response + "▌")
+                                    
+                        except Exception as inner_e:
+                            # 404 NOT_FOUND handler
+                            if "404" in str(inner_e) or "NOT_FOUND" in str(inner_e):
+                                st.warning("⚠️ Model 'gemini-1.5-flash' not found. Fetching available models...")
+                                try:
+                                    # Fallback debug: List available models
+                                    # Note: genai SDK might differ, trying standard list
+                                    # For google-genai 0.3+, it's client.models.list()
+                                    available = []
+                                    for m in client.models.list():
+                                        name = m.name.split("/")[-1] # models/gemini-pro -> gemini-pro
+                                        if "generateContent" in m.supported_generation_methods:
+                                            available.append(name)
+                                    
+                                    st.error(f"Available models for your key: {', '.join(available)}")
+                                    st.info("Trying first available model...")
+                                    
+                                    if available:
+                                        fallback_model = available[0]
+                                        chat = client.chats.create(model=fallback_model)
+                                        response_stream = chat.send_message_stream(combined_prompt)
+                                        for chunk in response_stream:
+                                            if chunk.text:
+                                                full_response += chunk.text
+                                                message_placeholder.markdown(full_response + "▌")
+                                except Exception as list_e:
+                                    st.error(f"Could not list models: {list_e}")
+                                    raise inner_e
+                            else:
+                                raise inner_e
                                 
                     else:
                         # --- OPENAI LOGIC ---
