@@ -328,7 +328,7 @@ with tab2:
                    fig = plt.gcf()
                    if fig.get_axes(): # Only if axes were drawn
                        captured_fig = fig # Store for history
-                       st.pyplot(fig) # Show immediately
+                       st.pyplot(fig, use_container_width=True) # Show immediately
                        # plt.close(fig) # Do NOT close if we want to reuse it? 
                        # Actually, Streamlit copies the figure object? No, matplotlib figures are stateful.
                        # If we close it, can we show it again? st.pyplot converts it to image.
@@ -367,6 +367,6 @@ with tab2:
             
         st.markdown(f"**> {cmd}**")
         if fig:
-            st.pyplot(fig)
+            st.pyplot(fig, use_container_width=True)
         st.code(out)
 
