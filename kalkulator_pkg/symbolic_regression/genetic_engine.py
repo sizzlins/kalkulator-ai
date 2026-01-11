@@ -141,6 +141,11 @@ class GeneticConfig:
     timeout: float | None = 60.0
     seeds: list[str] = field(default_factory=list)  # Strategy 1: Seeding
     early_stop_mse: float = 1e-10
+    
+    # Patience-Based Early Stopping (Fix "Zombie Mode")
+    patience: int = 10  # Generations to wait for improvement
+    min_improvement: float = 0.01  # Minimum relative improvement (1%)
+    
     verbose: bool = True
 
     # Advanced options
@@ -1047,6 +1052,10 @@ class GeneticSymbolicRegressor:
                     f"{self.config.population_size} individuals each..."
                 )
 
+            # Patience tracking
+            patience_counter = 0
+            best_mse_observed = float('inf')
+
             try:
                 for gen in range(self.config.generations):
                     self.generation = gen
@@ -1102,10 +1111,32 @@ class GeneticSymbolicRegressor:
 
                     # Early stop check (on Residual)
                     best_res = self.pareto_front.get_best()
-                    if best_res and best_res.mse < self.config.early_stop_mse:
-                        if self.config.verbose:
-                            print(f"Early stop: MSE {best_res.mse:.2e}")
-                        break
+                    
+                    if best_res:
+                        current_mse = best_res.mse
+                        
+                        # Perfect Solution check
+                        if current_mse < self.config.early_stop_mse:
+                            if self.config.verbose:
+                                print(f"Early stop: MSE {current_mse:.2e}")
+                            break
+                        
+                        # Patience-Based Early Stopping (Zombie Mode Fix)
+                        # Check for percentage improvement
+                        threshold = best_mse_observed * (1 - self.config.min_improvement)
+                        
+                        if current_mse < threshold:
+                            # Significant improvement found
+                            best_mse_observed = current_mse
+                            patience_counter = 0
+                        else:
+                            # Stagnation
+                            patience_counter += 1
+                            if patience_counter >= self.config.patience:
+                                if self.config.verbose:
+                                    print(f"Early stop: Patience limit reached (no improvement >{self.config.min_improvement*100}% for {self.config.patience} gens)")
+                                break
+
             except KeyboardInterrupt:
                 if self.config.verbose:
                     print("\nEvolution interrupted by user. Stopping current round.")
