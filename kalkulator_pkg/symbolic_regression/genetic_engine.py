@@ -299,19 +299,11 @@ class GeneticSymbolicRegressor:
             if "**(" in expr_str and expr_str.count("**") > 2:
                 return float("inf")
 
-            # HIGH-PRECISION MODE: Use SymPy evalf instead of numpy
-            # Only activated when --high-precision flag is set
-            if self.config.high_precision:
-                mse = self._calculate_mse_high_precision(tree, X, y)
-                if mse < self.config.early_stop_mse:
-                    return mse  # No penalty for perfect fits
-                complexity = tree.complexity(
-                    weights=self.config.operator_weights,
-                    default_weight=self.config.default_complexity_weight
-                )
-                return mse + self.config.parsimony_coefficient * complexity
-
-            # STANDARD MODE: Use numpy (default path - unchanged)
+            # HIGH-PRECISION MODE: Available via _calculate_mse_high_precision()
+            # but NOT used during evolution due to extreme slowness (~100x slower).
+            # HP is only suitable for final result verification, not genetic search.
+            
+            # STANDARD MODE: Use numpy for fast evaluation
             predictions = tree.evaluate(X)
 
             # CRITICAL: Check for NaNs/Infs immediately
