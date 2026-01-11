@@ -149,6 +149,7 @@ class GeneticConfig:
     migration_interval: int = 10  # Generations between migrations
     elitism: int = 5  # Number of best individuals to preserve
     boosting_rounds: int = 1  # Strategy 7: Symbolic Gradient Boosting (1 = off/normal)
+    high_precision: bool = False  # Use arbitrary-precision arithmetic (50+ digits via mpmath)
 
 
 class GeneticSymbolicRegressor:

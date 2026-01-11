@@ -3292,6 +3292,14 @@ def _handle_evolve(text, variables=None):
         if use_transform:
             text = re.sub(r"--transform", "", text, flags=re.IGNORECASE)
 
+        # High-Precision Mode
+        # Parse "--high-precision" or "--hp" flag for arbitrary-precision arithmetic
+        high_precision_mode = "--high-precision" in text.lower() or "--hp" in text.lower()
+        if high_precision_mode:
+            text = re.sub(r"--high-precision", "", text, flags=re.IGNORECASE)
+            text = re.sub(r"--hp\b", "", text, flags=re.IGNORECASE)
+            print("   [High-Precision Mode] Using arbitrary-precision arithmetic (50+ digits)")
+
         # Constraint-Based Search
         # Parse "--ban func1,func2,..." to restrict operator search space
         banned_operators = []
@@ -3994,6 +4002,7 @@ def _handle_evolve(text, variables=None):
             verbose=verbose_mode,  # --verbose flag controls generation progress output
             seeds=seeds,
             boosting_rounds=1,  # Already applied via parameter scaling
+            high_precision=high_precision_mode,  # Use arbitrary-precision arithmetic
         )
         
         # Apply operator bans if specified
