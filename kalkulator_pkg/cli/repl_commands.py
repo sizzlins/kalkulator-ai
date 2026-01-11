@@ -3906,12 +3906,22 @@ def _handle_evolve(text, variables=None):
                     x_vals = tuple(X[i]) if X.ndim > 1 else (X[i],)
                     find_data_points.append((x_vals, y[i]))
 
-                # Run find() to get approximation
-                print("Hybrid mode: running find() for initial approximation...")
-                # Signature: find_function_from_data(data_points, param_names, skip_linear)
-                success, func_str, factored, error = find_function_from_data(
-                    find_data_points, input_vars
-                )
+                # Check if data has complex values - find() doesn't support complex
+                has_complex_data = np.iscomplexobj(X) or np.iscomplexobj(y)
+                success = False
+                func_str = None
+                if has_complex_data:
+                    print("Hybrid mode: skipping find() (complex data not supported, using pure evolve)")
+                else:
+                    # Run find() to get approximation
+                    print("Hybrid mode: running find() for initial approximation...")
+                    import warnings
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore")  # Suppress ComplexWarnings
+                        # Signature: find_function_from_data(data_points, param_names, skip_linear)
+                        success, func_str, factored, error = find_function_from_data(
+                            find_data_points, input_vars
+                        )
 
                 # QUALITY CHECK: Only use seed if it's actually good
                 # Instead of parsing R² from string (which doesn't exist), evaluate the function
