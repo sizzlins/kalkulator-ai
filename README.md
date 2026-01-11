@@ -270,7 +270,7 @@ Before running `find` or `evolve`:
 2. ✅ Are inputs evenly distributed across the domain?
 3. ✅ Do you have 8-20 data points?
 4. ✅ Did you include critical points (zeros, peaks, inflections)?
-5. ✅ Are all values real numbers (no complex/infinite)?
+5. ✅ Are there no infinities or NaN values?
 
 If you answered **yes** to all, you're ready for accurate discovery!
 
@@ -306,8 +306,8 @@ Discovered: 2*x + 1
 **Boosting Mode (Hard Problems)**
 
 ```bash
->>> evolve --boost f(x) ...
-Boost mode: 5x resources
+>>> evolve --boost 3 f(x) ...
+Boost mode: 3x resources (pop=300, gen=90, timeout=45s)
 ```
 
 ### Calculus
