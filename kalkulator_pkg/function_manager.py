@@ -3157,47 +3157,59 @@ def find_function_from_data(
                 x_clean = x_vals[valid_mask]
                 y_clean = y_vals[valid_mask]
 
-                if len(x_clean) >= 6:  # Need at least 6 points for degree 5
+                if len(x_clean) >= 5:  # Need sufficient points
                     for degree in [5, 4, 3]:  # Try highest degree first
-                        if len(x_clean) > degree:
-                            try:
-                                coeffs = np.polyfit(x_clean, y_clean, degree)
-                                poly_func = np.poly1d(coeffs)
-                                poly_mse = np.mean((poly_func(x_clean) - y_clean) ** 2)
+                        # COMPLEXITY GUARDRAIL: Prevent overfitting noise
+                        # Rule 1: Need degrees of freedom (N > k+1). 
+                        # Using N >= k+2 gives at least 1 DOF for error estimation.
+                        if len(x_clean) < degree + 2:
+                            continue
 
-                                # Check if polyfit is better
-                                poly_y_var = np.var(y_clean)
-                                poly_r_squared = (
-                                    1 - (poly_mse / poly_y_var)
-                                    if poly_y_var > 1e-10
-                                    else 0.0
+                        try:
+                            coeffs = np.polyfit(x_clean, y_clean, degree)
+                            
+                            # COMPLEXITY GUARDRAIL: Check for Massive Coefficients (Instability)
+                            # If we fit noise with high degree, coeffs often explode (Runge's phenomenon)
+                            # Reject if max coefficient > 1e6 (heuristic)
+                            if np.max(np.abs(coeffs)) > 1e6:
+                                continue
+                                
+                            poly_func = np.poly1d(coeffs)
+                            poly_mse = np.mean((poly_func(x_clean) - y_clean) ** 2)
+
+                            # Check if polyfit is better
+                            poly_y_var = np.var(y_clean)
+                            poly_r_squared = (
+                                1 - (poly_mse / poly_y_var)
+                                if poly_y_var > 1e-10
+                                else 0.0
+                            )
+
+                            if (
+                                poly_r_squared > 0.9999
+                                and poly_r_squared > r_squared
+                            ):
+                                # Polyfit is much better! Use it.
+                                x_sym = sp.Symbol(param_names[0])
+                                expr = sp.Float(0)
+                                for i, c in enumerate(coeffs):
+                                    power = degree - i
+                                    # Round coefficients to clean integers if close
+                                    c_rounded = round(c)
+                                    if abs(c - c_rounded) < 1e-6:
+                                        c = c_rounded
+                                    if abs(c) > 1e-10:
+                                        expr += c * x_sym**power
+
+                                func_str = str(expr)
+                                print(
+                                    f"Polyfit found degree-{degree}: {func_str} (R²={poly_r_squared:.6f})"
                                 )
-
-                                if (
-                                    poly_r_squared > 0.9999
-                                    and poly_r_squared > r_squared
-                                ):
-                                    # Polyfit is much better! Use it.
-                                    x_sym = sp.Symbol(param_names[0])
-                                    expr = sp.Float(0)
-                                    for i, c in enumerate(coeffs):
-                                        power = degree - i
-                                        # Round coefficients to clean integers if close
-                                        c_rounded = round(c)
-                                        if abs(c - c_rounded) < 1e-6:
-                                            c = c_rounded
-                                        if abs(c) > 1e-10:
-                                            expr += c * x_sym**power
-
-                                    func_str = str(expr)
-                                    print(
-                                        f"Polyfit found degree-{degree}: {func_str} (R²={poly_r_squared:.6f})"
-                                    )
-                                    # Include R² in confidence note for hybrid mode quality check
-                                    confidence_note = f" [R²={poly_r_squared:.6f}]"
-                                    return (True, func_str, None, confidence_note)
-                            except Exception:
-                                pass  # Try next degree
+                                # Include R² in confidence note for hybrid mode quality check
+                                confidence_note = f" [R²={poly_r_squared:.6f}]"
+                                return (True, func_str, None, confidence_note)
+                        except Exception:
+                            pass  # Try next degree
 
             return (success, func_str, None, confidence_note)
 
