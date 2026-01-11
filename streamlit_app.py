@@ -152,15 +152,24 @@ with tab3:
                                     # For google-genai 0.3+, it's client.models.list()
                                     available = []
                                     for m in client.models.list():
-                                        name = m.name.split("/")[-1] # models/gemini-pro -> gemini-pro
-                                        if "generateContent" in m.supported_generation_methods:
+                                        # New SDK might have different attributes, just try name
+                                        if hasattr(m, 'name'):
+                                            name = m.name.split("/")[-1]
                                             available.append(name)
+                                        elif hasattr(m, 'display_name'):
+                                            available.append(m.display_name)
+                                        else:
+                                            available.append(str(m))
                                     
                                     st.error(f"Available models for your key: {', '.join(available)}")
                                     st.info("Trying first available model...")
                                     
                                     if available:
-                                        fallback_model = available[0]
+                                        # heuristic: prefer models with 'gemini' in name
+                                        gemini_models = [x for x in available if 'gemini' in x.lower()]
+                                        fallback_model = gemini_models[0] if gemini_models else available[0]
+                                        
+                                        st.write(f"Attempting to use: {fallback_model}")
                                         chat = client.chats.create(model=fallback_model)
                                         response_stream = chat.send_message_stream(combined_prompt)
                                         for chunk in response_stream:
