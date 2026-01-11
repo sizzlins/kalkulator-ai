@@ -269,19 +269,29 @@ with tab2:
     cli_input = st.text_input("Command >", key="cli_cmd")
     
     if st.button("Run Command") and cli_input:
-        from kalkulator_pkg.cli.repl_commands import handle_command
+        # Import the full REPL core
+        from kalkulator_pkg.cli.repl_core import REPL
+        
+        # Initialize REPL with session variables
+        repl_instance = REPL()
+        repl_instance.variables = st.session_state.cli_vars
+        
         import io
         import contextlib
         
         f = io.StringIO()
         with contextlib.redirect_stdout(f):
             try:
-                # Capture stderr too? redirect_stdout usually enough for print()
-                handle_command(cli_input, {}, st.session_state.cli_vars)
+                # process_input handles commands, help, AND math expressions
+                repl_instance.process_input(cli_input)
             except Exception as e:
                 print(f"Error: {e}")
                 
         output = f.getvalue()
+        
+        # Sync variables back
+        st.session_state.cli_vars = repl_instance.variables
+        
         st.session_state.cli_history.append((cli_input, output))
         
     # Display History
