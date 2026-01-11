@@ -4056,76 +4056,22 @@ def _handle_evolve(text, variables=None):
                     p_val_str = eq_match.group(1).strip()
 
                     try:
+                        # Use robust parsing utility
+                        # This handles floats, complex numbers, pi, e, inf, nan, etc.
+                        try:
+                            from ..utils.parsing import eval_to_float
+                        except ImportError:
+                            # Fallback if module not found (e.g. during refactor)
+                            def eval_to_float(v): return float(v)
 
-                        # Check for complex values
-                        # We SUPPORT complex values now for Genetic Engine
-                        # if (
-                        #     "i" in p_args_str
-                        #     or "j" in p_args_str
-                        #     or "i" in p_val_str
-                        #     or "j" in p_val_str
-                        # ):
-                        #     skipped_complex += 1
-                        #     continue
+                        p_val = eval_to_float(p_val_str)
 
-                        # Handle infinity values (zoo, oo, inf) for pole detection
-                        p_val_lower = p_val_str.lower()
-                        if p_val_lower in (
-                            "zoo",
-                            "oo",
-                            "inf",
-                            "infinity",
-                            "complexinfinity",
-                        ):
-                            p_val = float("inf")
-                        elif p_val_lower in ("nan",):
-                            p_val = float("nan")
-                        else:
-                            # Try parsing as float first (faster), then complex
-                            try:
-                                p_val = float(p_val_str)
-                            except ValueError:
-                                try:
-                                    p_val = complex(p_val_str.replace("i", "j"))
-                                except ValueError:
-                                     # Last resort: SymPy eval (e.g. for "sin(1)+i")
-                                     try:
-                                         import sympy as sp
-                                         local_ns = {
-                                             "e": sp.E, "E": sp.E, "pi": sp.pi, "I": sp.I, "i": sp.I,
-                                             "sin": sp.sin, "cos": sp.cos, "tan": sp.tan,
-                                             "exp": sp.exp, "log": sp.log, "sqrt": sp.sqrt
-                                         }
-                                         val_expr = sp.sympify(p_val_str, locals=local_ns)
-                                         p_val = complex(val_expr.evalf())
-                                     except Exception:
-                                         continue
-
-                        # Parse arguments (supports complex validation)
+                        # Parse arguments
                         p_args = []
                         for a in p_args_str.split(","):
-                             a = a.strip()
-                             try:
-                                 arg_val = float(a)
-                             except ValueError:
-                                 try:
-                                     arg_val = complex(a.replace("i", "j"))
-                                 except ValueError:
-                                      # SymPy fallback
-                                     try:
-                                         import sympy as sp
-                                         # Define safe locals for parsing constants/funcs
-                                         local_ns = {
-                                             "e": sp.E, "E": sp.E, "pi": sp.pi, "I": sp.I, "i": sp.I,
-                                             "sin": sp.sin, "cos": sp.cos, "tan": sp.tan,
-                                             "exp": sp.exp, "log": sp.log, "sqrt": sp.sqrt
-                                         }
-                                         arg_expr = sp.sympify(a, locals=local_ns)
-                                         arg_val = complex(arg_expr.evalf())
-                                     except Exception:
-                                         # If arg fails, skip point
-                                         raise ValueError
-                             p_args.append(arg_val)
+                            a = a.strip()
+                            arg_val = eval_to_float(a)
+                            p_args.append(arg_val)
 
 
                         # DATA ARITY AUTO-CORRECTION (Genius Mode)
