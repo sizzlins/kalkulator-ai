@@ -198,8 +198,14 @@ with tab1:
                             res_col1, res_col2 = st.columns(2)
                             with res_col1:
                                 st.markdown("### 🎯 Best Result")
-                                st.latex(f"f(x) = {best_sol.expression}".replace("**", "^").replace("*", ""))
-                                st.code(best_sol.expression, language="python")
+                                
+                                # Sanitize for display: x0 -> x if 1D
+                                display_expr = best_sol.expression
+                                if X_data.shape[1] == 1:
+                                    display_expr = display_expr.replace("x0", "x")
+                                
+                                st.latex(f"f(x) = {display_expr}".replace("**", "^").replace("*", ""))
+                                st.code(display_expr, language="python")
                                 
                             with res_col2:
                                 st.metric("MSE (Error)", f"{best_sol.mse:.2e}")
@@ -220,7 +226,7 @@ with tab1:
                                     # It's easier to use matplotlib for explicit control
                                     fig, ax = plt.subplots(figsize=(10, 5))
                                     ax.scatter(X_data, y_data, color='red', label='Data Points', zorder=5)
-                                    ax.plot(x_plot, y_pred_plot, color='blue', label='Discovered: ' + best_sol.expression[:30] + '...', linewidth=2)
+                                    ax.plot(x_plot, y_pred_plot, color='blue', label='Discovered: ' + display_expr[:30] + '...', linewidth=2)
                                     ax.grid(True, alpha=0.3)
                                     ax.legend()
                                     ax.set_title("Data vs Model")
