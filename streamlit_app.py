@@ -133,8 +133,8 @@ with tab3:
                         combined_prompt = f"{system_prompt}\n\nUser Question: {prompt}"
                         
                         try:
-                            # Try standard model first
-                            chat = client.chats.create(model='gemini-1.5-flash')
+                            # Try Gemini 2.0 Flash (Fast & Capable)
+                            chat = client.chats.create(model='gemini-2.0-flash')
                             response_stream = chat.send_message_stream(combined_prompt)
                             
                             for chunk in response_stream:
@@ -143,41 +143,33 @@ with tab3:
                                     message_placeholder.markdown(full_response + "▌")
                                     
                         except Exception as inner_e:
-                            # 404 NOT_FOUND handler
+                             # Silent fallback to any available model if 2.0 fails
                             if "404" in str(inner_e) or "NOT_FOUND" in str(inner_e):
-                                st.warning("⚠️ Model 'gemini-1.5-flash' not found. Fetching available models...")
                                 try:
-                                    # Fallback debug: List available models
-                                    # Note: genai SDK might differ, trying standard list
-                                    # For google-genai 0.3+, it's client.models.list()
                                     available = []
                                     for m in client.models.list():
-                                        # New SDK might have different attributes, just try name
                                         if hasattr(m, 'name'):
-                                            name = m.name.split("/")[-1]
-                                            available.append(name)
-                                        elif hasattr(m, 'display_name'):
-                                            available.append(m.display_name)
-                                        else:
-                                            available.append(str(m))
+                                            available.append(m.name.split("/")[-1])
                                     
-                                    st.error(f"Available models for your key: {', '.join(available)}")
-                                    st.info("Trying first available model...")
-                                    
+                                    # Prefer gemini-2.0, then 1.5, then any gemini
+                                    fallback = None
                                     if available:
-                                        # heuristic: prefer models with 'gemini' in name
-                                        gemini_models = [x for x in available if 'gemini' in x.lower()]
-                                        fallback_model = gemini_models[0] if gemini_models else available[0]
-                                        
-                                        st.write(f"Attempting to use: {fallback_model}")
-                                        chat = client.chats.create(model=fallback_model)
+                                        # intelligent fallback sort
+                                        geminis = [x for x in available if 'gemini' in x.lower()]
+                                        if geminis:
+                                            # Pick the newest one blindly or just the first
+                                            fallback = geminis[0]
+                                    
+                                    if fallback:
+                                        chat = client.chats.create(model=fallback)
                                         response_stream = chat.send_message_stream(combined_prompt)
                                         for chunk in response_stream:
                                             if chunk.text:
                                                 full_response += chunk.text
                                                 message_placeholder.markdown(full_response + "▌")
-                                except Exception as list_e:
-                                    st.error(f"Could not list models: {list_e}")
+                                    else:
+                                        raise inner_e
+                                except:
                                     raise inner_e
                             else:
                                 raise inner_e
