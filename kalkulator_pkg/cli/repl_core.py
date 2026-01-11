@@ -7,10 +7,10 @@ from ..config import VAR_NAME_RE
 from ..function_manager import define_function
 from ..function_manager import define_variable
 from ..function_manager import parse_function_definition
-from ..parser import ALLOWED_SYMPY_NAMES
 from ..parser import split_top_level_commas
 from ..solver import solve_single_equation
 from ..solver import solve_system
+from ..config import ALLOWED_SYMPY_NAMES
 from ..utils.formatting import format_solution
 from ..utils.formatting import print_result_pretty
 from ..utils.numeric import solve_modulo_system_if_applicable
@@ -83,8 +83,10 @@ class REPL:
         except KeyboardInterrupt:
             self.handle_interrupt()
         except Exception as e:
+            import traceback
             logger.exception("Unexpected error in REPL loop")
             print(f"Error: {e}")
+            traceback.print_exc()  # DEBUG: Print full stack trace
 
     def handle_interrupt(self):
         if self.ctx.current_req_id:
@@ -97,6 +99,16 @@ class REPL:
     def process_input(self, text: str):
         """Dispatch input to specific handlers."""
         text = text.strip()
+        
+        # SANITIZATION: Strip common copy-paste artifacts for more forgiving parsing
+        # Remove backticks (from markdown code blocks)
+        text = text.strip('`')
+        # Replace smart quotes with regular quotes
+        text = text.replace('"', '"').replace('"', '"').replace(''', "'").replace(''', "'")
+        # Strip any remaining non-alphanumeric prefix characters (except special command chars)
+        while text and not text[0].isalnum() and text[0] not in '(-+.':
+            text = text[1:]
+        
         if not text or text.startswith("#"):
             return
 
@@ -251,6 +263,43 @@ class REPL:
                 text = re.sub(pattern, f"({val})", text)
         return text
 
+    def _detect_bound_variables(self, text: str) -> set[str]:
+        """
+        Identify variables that are bound by commands (diff, integrate, solve).
+        These should NOT be substituted with global values.
+        """
+        bound = set()
+        # Commands that bind variables as arguments (usually 2nd arg, or after comma)
+        # diff(y, x), integrate(y, x), solve(y, x), limit(y, x, c), plot(y, x)
+        binders = ["diff", "integrate", "limit", "solve", "plot"]
+        
+        # We perform a targeted check for each global variable to see if it is being bound.
+        # This is safer than trying to parse the complex grammar with regex.
+        for var in self.variables:
+            # Pattern: 
+            # 1. Binder function name
+            # 2. Open paren
+            # 3. Anything (the expression)
+            # 4. Comma
+            # 5. The variable name (surrounded by boundaries)
+            # 6. End paren or comma (to handle 3rd arg like limits or order)
+            
+            # Note: This is a robust heuristic. It might false positive on "f(diff(x), x)" 
+            # but that's acceptable (better to keep x symbolic than crash).
+            
+            pattern = (
+                r"\b(?:" + "|".join(binders) + r")\s*\("  # Binder start
+                r".*?"                                     # Non-greedy match of expression
+                r",\s*\b" + re.escape(var) + r"\b"         # , var
+                r"\s*(?:,|\))"                             # followed by , or )
+            )
+            
+            if re.search(pattern, text, re.DOTALL):
+                bound.add(var)
+                
+        return bound
+
+
     def _handle_multi_part_input(self, parts: list[str], raw_text: str):
         """
         Decide between System Solving and Chained Execution.
@@ -302,6 +351,51 @@ class REPL:
         # Force sequential if we detected a command (System solver can't handle commands)
         if has_command:
             is_sequential_list = True
+        
+        # SMART DEPENDENCY CHECK:
+        # If we think it's sequential, but an assignment uses a variable that is 
+        # NOT defined yet (globally) BUT is defined later in the chain, 
+        # then it's actually a System of Equations (e.g. "y=x+2, x=5").
+        if is_sequential_list:
+            defined_later = set()
+            # First pass: gather all LHS variables
+            for p in parts:
+                if "=" in p:
+                    lhs = p.split("=", 1)[0].strip()
+                    if VAR_NAME_RE.match(lhs):
+                        defined_later.add(lhs)
+            
+            # Second pass: check for forward references
+            defined_so_far = set()
+            for p in parts:
+                if "=" in p:
+                    lhs, rhs = p.split("=", 1)
+                    lhs = lhs.strip()
+                    rhs = rhs.strip()
+                    
+                    if VAR_NAME_RE.match(lhs):
+                        # identifying vars in RHS is tricky without full parse.
+                        # Simple Regex heuristic: \bvar\b
+                        # We specifically look for vars that are in 'defined_later' 
+                        # but NOT in 'defined_so_far' AND NOT in 'self.variables'.
+                        for potential_var in defined_later:
+                            if potential_var in defined_so_far:
+                                continue # Already defined in chain
+                            if potential_var in self.variables:
+                                continue # Defined globally
+                            
+                            # Check if valid usage in RHS
+                            # Avoid matching substring (use boundary)
+                            if re.search(r"\b" + re.escape(potential_var) + r"\b", rhs):
+                                # Found forward reference!
+                                # "y = x" where 'x' is defined later but unknown now.
+                                is_sequential_list = False
+                                break
+                        
+                        defined_so_far.add(lhs)
+                
+                if not is_sequential_list:
+                    break
 
         # Check for same-variable system (e.g. x=1 mod 2, x=2 mod 3)
         # Only if NOT a command chain
@@ -497,6 +591,12 @@ class REPL:
             return
 
         var_name = raw_part.split("=", 1)[0].strip()
+        
+        # Check for shadowing built-ins
+        if var_name in ALLOWED_SYMPY_NAMES:
+            self.results_buffer.append(f"Error: Cannot assign to reserved name '{var_name}'")
+            return
+
         # The RHS is what needs substitution
         rhs_subbed = subbed_part.split("=", 1)[1].strip()
 
@@ -563,6 +663,12 @@ class REPL:
             # Substitutions in body? Yes.
             if func_def:
                 name, params, body = func_def
+                
+                # Check for shadowing built-ins
+                if name in ALLOWED_SYMPY_NAMES:
+                    print(f"Error: Cannot redefine reserved function '{name}'")
+                    return
+
                 # We probably don't want to substitute in body for function definition?
                 # Or do we? "f(t) = x*t" -> "f(t) = 10*t"?
                 # Usually YES in simple REPLs (capture value).
@@ -585,6 +691,10 @@ class REPL:
             rhs = rhs.strip()
 
             if VAR_NAME_RE.match(lhs):
+                if lhs in ALLOWED_SYMPY_NAMES:
+                    print(f"Error: Cannot assign to reserved name '{lhs}'")
+                    return
+
                 # It is an assignment!
                 # Substitute RHS
                 rhs_subbed = self._substitute_variables(rhs)
@@ -604,7 +714,8 @@ class REPL:
                     return
 
         if any(op in text for op in ("<", ">", "<=", ">=")):
-            text_subbed = self._substitute_variables(text)
+            bound_vars = self._detect_bound_variables(text)
+            text_subbed = self._substitute_variables(text, exclude=bound_vars)
             allowed = self._get_allowed_functions(text)
             res = solve_single_equation(
                 text_subbed, None, allowed_functions=allowed
@@ -613,7 +724,8 @@ class REPL:
             return
 
         # 3. Default Solve/Eval
-        text_subbed = self._substitute_variables(text)
+        bound_vars = self._detect_bound_variables(text)
+        text_subbed = self._substitute_variables(text, exclude=bound_vars)
 
         if "=" in text_subbed or force_solve:
             allowed = self._get_allowed_functions(text)
