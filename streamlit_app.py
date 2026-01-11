@@ -89,6 +89,9 @@ with tab1:
                 y_list = []
                 
                 try:
+                    # Import robust parser
+                    from kalkulator_pkg.utils.parsing import eval_to_float
+                    
                     for part in parts:
                         # Regex: match name(args)=val
                         match = re.search(r"([a-zA-Z_][a-zA-Z0-9_]*)\s*\((.*?)\)\s*=\s*([^=]+)$", part)
@@ -96,9 +99,9 @@ with tab1:
                             args_str = match.group(2)
                             val_str = match.group(3)
                             
-                            # Parse args
-                            args = [float(a.strip()) for a in args_str.split(",")]
-                            val = float(val_str)
+                            # Parse args using robust eval
+                            args = [eval_to_float(a.strip()) for a in args_str.split(",")]
+                            val = eval_to_float(val_str)
                             
                             x_list.append(args)
                             y_list.append(val)
