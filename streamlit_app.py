@@ -264,12 +264,24 @@ with tab3:
                     prefill_match = re.search(r'\[PREFILL\](.*?)\[/PREFILL\]', full_response, re.DOTALL)
                     if prefill_match:
                         prefill_data = prefill_match.group(1).strip()
-                        st.session_state.suggested_prefill = prefill_data
-                        st.info(f"💡 Suggested data detected!")
+                        
+                        # Strip markers from displayed text, replace with code block
+                        clean_response = re.sub(
+                            r'\[PREFILL\](.*?)\[/PREFILL\]', 
+                            r'```\n\1\n```', 
+                            full_response, 
+                            flags=re.DOTALL
+                        )
+                        message_placeholder.markdown(clean_response)
+                        # Update stored message too
+                        st.session_state.messages[-1]["content"] = clean_response
+                        
+                        st.info(f"💡 **Suggested data:** `{prefill_data[:50]}...`")
                         if st.button("📋 Use this data in GUI Mode", key=f"prefill_{len(st.session_state.messages)}"):
                             st.session_state.prefill_for_gui = prefill_data
-                            st.success("Data ready! Go to 'GUI Mode' tab to see it.")
-                            st.rerun() # Force refresh to apply
+                            st.session_state.gui_input_text = prefill_data # Directly set the key
+                            st.toast("✅ Data loaded! Switch to 'GUI Mode' tab now.", icon="📋")
+                            st.balloons()
                     
                 except Exception as e:
                     st.error(f"AI Provider Error: {e}")
