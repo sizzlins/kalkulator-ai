@@ -2586,7 +2586,7 @@ def _detect_sub_epsilon_patterns(X, y, variable_names: list[str] = None, verbose
     
     # Check if residuals are tiny (sub-epsilon signal)
     max_residual = np.max(np.abs(residuals))
-    if max_residual < 1e-30 or max_residual > 1e-8:
+    if max_residual < 1e-30 or max_residual > 1e-5:
         # Not a sub-epsilon pattern (either zero or too large)
         return []
     
