@@ -179,12 +179,16 @@ with tab3:
 {context_str}
 
 **Your Job:**
-- If the user asks "how do I use this?", give SPECIFIC steps: "Go to 'GUI Mode', paste `f(1)=1, f(2)=4, f(3)=9`, click 'Evolve Function'."
+- If the user asks "how do I use this?", give SPECIFIC steps: "Go to 'GUI Mode', paste the example data, click 'Evolve Function'."
 - If they ask about a formula, explain its math simply.
-- If they seem confused, offer a COPY-PASTABLE example like:
-  `f(0)=0, f(1)=1, f(2)=8, f(3)=27` (this is x^3)
+- If they seem confused or ask for examples, OUTPUT DATA USING THIS SPECIAL FORMAT:
+  [PREFILL]f(0)=0, f(1)=1, f(2)=8, f(3)=27[/PREFILL]
+  This will create a button for the user to auto-fill that data into GUI Mode!
 - Be CONCISE. No long textbook explanations.
-- If user says "suggest something", give them example data for common functions (sin, x^2, etc.).
+- Example functions you can suggest:
+  - x^2: [PREFILL]f(0)=0, f(1)=1, f(2)=4, f(3)=9, f(4)=16[/PREFILL]
+  - sin(x): [PREFILL]f(0)=0, f(1.57)=1, f(3.14)=0, f(4.71)=-1[/PREFILL]
+  - x^3: [PREFILL]f(0)=0, f(1)=1, f(2)=8, f(3)=27[/PREFILL]
 """
 
                 try:
@@ -255,6 +259,18 @@ with tab3:
                     message_placeholder.markdown(full_response)
                     st.session_state.messages.append({"role": "assistant", "content": full_response})
                     
+                    # --- PREFILL DETECTION ---
+                    import re
+                    prefill_match = re.search(r'\[PREFILL\](.*?)\[/PREFILL\]', full_response, re.DOTALL)
+                    if prefill_match:
+                        prefill_data = prefill_match.group(1).strip()
+                        st.session_state.suggested_prefill = prefill_data
+                        st.info(f"💡 Suggested data detected!")
+                        if st.button("📋 Use this data in GUI Mode", key=f"prefill_{len(st.session_state.messages)}"):
+                            st.session_state.prefill_for_gui = prefill_data
+                            st.success("Data ready! Go to 'GUI Mode' tab to see it.")
+                            st.rerun() # Force refresh to apply
+                    
                 except Exception as e:
                     st.error(f"AI Provider Error: {e}")
 
@@ -271,7 +287,16 @@ with tab1:
         parsed_sucess = False
         
         if input_method == "Text Input":
-            default_text = "f(1) = 0.841470984807897, f(2) = 0.909297426825682, f(3) = 0.141120008059867, f(4) = -0.756802495307928, f(5) = -0.958924274663138, f(6) = -0.279415498198926" # sin(x)
+            # Check if AI Tutor suggested data
+            default_text = st.session_state.get('prefill_for_gui', 
+                "f(1) = 0.841470984807897, f(2) = 0.909297426825682, f(3) = 0.141120008059867, f(4) = -0.756802495307928, f(5) = -0.958924274663138, f(6) = -0.279415498198926") # sin(x)
+            
+            # Show indicator if using suggested data
+            if 'prefill_for_gui' in st.session_state:
+                st.success("✨ Using AI-suggested data! Click 'Evolve Function' to discover the formula.")
+                # Clear it after using (optional, keeps it for one use)
+                # del st.session_state.prefill_for_gui
+            
             user_input = st.text_area("Enter points (e.g., f(0)=1, f(1)=2)", default_text, height=150)
             
             if user_input:
