@@ -129,7 +129,9 @@ with tab3:
                         # --- GEMINI LOGIC ---
                         import google.generativeai as genai
                         genai.configure(api_key=provider_api_key)
-                        model = genai.GenerativeModel('gemini-pro')
+                        
+                        # Use newer model since 'gemini-pro' might be deprecated/region-locked
+                        model = genai.GenerativeModel('gemini-1.5-flash')
                         
                         # Gemini doesn't use "system" role in standard chat history cleanly yet,
                         # so we prepend context to the latset user prompt or use system instruction if available.
