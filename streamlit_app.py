@@ -58,39 +58,53 @@ with st.sidebar:
         
         provider_api_key = ""
         selected_model = ""
+
+        # Helper to find best model (defined here to be in scope)
+        def get_best_model(api_key):
+             if 'detected_auto_model' in st.session_state and st.session_state.detected_auto_model:
+                 return st.session_state.detected_auto_model
+             
+             try:
+                 from google import genai
+                 client = genai.Client(api_key=api_key)
+                 # Get all model names
+                 all_models = [m.name.split("/")[-1] for m in client.models.list() if hasattr(m, 'name')]
+                 
+                 # 1. Prefer Lite (High Quota, Fast)
+                 for m in all_models:
+                     if "flash-lite" in m: return m
+                 # 2. Prefer Flash 1.5 (Standard, High Quota)
+                 for m in all_models:
+                     if "gemini-1.5-flash" in m and "8b" not in m: return m
+                 # 3. Prefer Pro 1.5 (High Capability)
+                 for m in all_models:
+                     if "gemini-1.5-pro" in m: return m
+                 # 4. Legacy/Stable
+                 for m in all_models:
+                     if "gemini-1.0-pro" in m: return m
+                 # 5. Fallback
+                 geminis = [m for m in all_models if "gemini" in m.lower()]
+                 if geminis: return geminis[0]
+                 return "gemini-1.5-flash"
+             except:
+                 return "gemini-1.5-flash"
         
         if "Gemini" in llm_provider:
-             # Add specific model selector for Gemini users (especially Pro/Paid users)
-             model_choice = st.selectbox("Model", ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash", "Custom..."])
+             # Auto-selection feature
+             model_options = ["Auto (Best for Key)", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash", "Custom..."]
+             
+             model_choice = st.selectbox("Model", model_options)
              
              if model_choice == "Custom...":
                  selected_model = st.text_input("Enter Model Name (e.g. gemini-1.0-pro)", "gemini-1.5-flash")
+             elif model_choice == "Auto (Best for Key)":
+                 selected_model = "auto"
              else:
                  selected_model = model_choice
                  
-             provider_api_key = st.text_input("Gemini API Key", type="password", help="Required for Gemini. Note: 'Gemini Advanced' subscription does NOT cover API usage. API requires Google Cloud billing.")
-             
-             if st.button("🔍 Check Available Models"):
-                 if not provider_api_key:
-                     st.error("Please enter a key first.")
-                 else:
-                     try:
-                         from google import genai
-                         # Use a temporary client to check models
-                         tmp_client = genai.Client(api_key=provider_api_key)
-                         models = [m.name.split("/")[-1] for m in tmp_client.models.list() if hasattr(m, 'name')]
-                         gemini_only = [m for m in models if "gemini" in m.lower()]
-                         if gemini_only:
-                             st.success(f"Found {len(gemini_only)} Gemini models!")
-                             st.code(", ".join(gemini_only))
-                             st.info("Copy one of the above into the 'Custom...' field.")
-                         else:
-                             st.warning("No 'gemini' models found. Key might be invalid or region-locked.")
-                             st.write("All specific models:", models)
-                     except Exception as e:
-                         st.error(f"Error checking models: {str(e)}")
-
+             provider_api_key = st.text_input("Gemini API Key", type="password", help="Required. 'Auto' will pick the best available model.")
              st.caption("Get a free key at aistudio.google.com")
+             
         else:
              selected_model = "gpt-4o"
              provider_api_key = st.text_input("OpenAI API Key", type="password", help="Required for OpenAI.")
@@ -160,13 +174,28 @@ with tab3:
                     if "Gemini" in llm_provider:
                         # --- GEMINI LOGIC (New SDK: google-genai) ---
                         from google import genai
+                        
+                        # Resolve Auto Model
+                        final_model_name = selected_model
+                        if selected_model == "auto":
+                             # We assume get_best_model is defined from sidebar scope
+                             # Use status spinner for feedback
+                             with st.status("🔍 Auto-detecting best model...", expanded=False) as status:
+                                 try:
+                                     final_model_name = get_best_model(provider_api_key)
+                                     st.session_state.detected_auto_model = final_model_name # Cache
+                                     status.update(label=f"Selected: {final_model_name}", state="complete")
+                                 except Exception as e:
+                                     st.error(f"Auto-detect failed: {e}")
+                                     final_model_name = "gemini-1.5-flash"
+
                         client = genai.Client(api_key=provider_api_key)
                         
                         combined_prompt = f"{system_prompt}\n\nUser Question: {prompt}"
                         
                         try:
-                             # Use the user-selected model
-                            chat = client.chats.create(model=selected_model)
+                             # Use the resolved model
+                            chat = client.chats.create(model=final_model_name)
                             response_stream = chat.send_message_stream(combined_prompt)
                             
                             for chunk in response_stream:
@@ -177,12 +206,12 @@ with tab3:
                         except Exception as inner_e:
                              err_str = str(inner_e)
                              if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                                 st.error(f"⚠️ Rate Limit Hit for {selected_model}.")
+                                 st.error(f"⚠️ Rate Limit Hit for {final_model_name}.")
                                  st.info("Tip: 'gemini-1.5-flash' usually has higher rate limits than Pro or 2.0-Flash.")
                                  st.caption(f"Details: {err_str}")
                              elif "404" in err_str or "NOT_FOUND" in err_str:
-                                 st.error(f"⚠️ Model '{selected_model}' not found for your API Key.")
-                                 st.caption("Check if your API Key supports this model or if the model name is correct.")
+                                 st.error(f"⚠️ Model '{final_model_name}' not found for your API Key.")
+                                 st.caption("Auto-detect might have picked a region-locked model. Try custom input.")
                              else:
                                  raise inner_e
                                 
