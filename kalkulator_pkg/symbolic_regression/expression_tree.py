@@ -1164,9 +1164,9 @@ class ExpressionTree:
         """
 
         def _convert_node(node) -> ExpressionNode:
-            # Handle Imaginary Unit I -> treat as 0.0 to strip complex parts from seeds
+            # Handle Imaginary Unit I → preserve as complex 1j
             if node == sp.I:
-                 return ExpressionNode(NodeType.CONSTANT, 0.0)
+                 return ExpressionNode(NodeType.CONSTANT, 1j)
 
             # 1. Constant
             if node.is_Number:
