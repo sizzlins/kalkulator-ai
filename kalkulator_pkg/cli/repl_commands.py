@@ -720,8 +720,13 @@ def generate_pattern_seeds(X, y, variable_names, verbose=False):
 
     # 9. Fractal Cosine/Fourier Series Detection (e.g., Weierstrass)
     fractal_patterns = _detect_fractal_cosine_patterns(X, y, verbose=verbose)
-    if fractal_patterns:
-        seeds.extend(fractal_patterns)
+    seeds.extend(fractal_patterns)
+
+    # 9b. Chirp / Frequency Accelerator Pattern (sin(x^2))
+    # Detects patterns where zeros occur at sqrt(n*pi)
+    chirp_patterns = _detect_chirp_patterns(X, y, variable_names=variable_names, verbose=verbose)
+    if chirp_patterns:
+        seeds.extend(chirp_patterns)
 
     # 10. Complex Data Seeds (when data has ACTUAL complex values)
     # Seed with I*x and related expressions to help find functions like f(x) = i*x
@@ -2746,6 +2751,73 @@ def _detect_signum_patterns(X, y, variable_names: list[str] = None, verbose: boo
             print(f"   Signum Analysis: Detected -sign(x) pattern (Magnitude 1, Direction Inverted)")
         seeds.append(f"-sign({var_name})")
         seeds.append(f"-{var_name}/abs({var_name})")
+        
+    return seeds
+
+
+def _detect_chirp_patterns(X, y, variable_names: list[str] = None, verbose: bool = False) -> list[str]:
+    """Detect Chirp (frequency accelerator) patterns: f(x) = sin(x^2)
+    
+    Algorithm:
+    1. Map Zeros: Find x values where y ≈ 0
+    2. Linearization: Check if x^2 values are multiples of π (0, π, 2π...)
+    3. Reconstruction: Seed sin(x^2)
+    """
+    seeds = []
+    
+    # Needs valid 1D input
+    if X.ndim != 1 and (X.ndim != 2 or X.shape[1] != 1):
+        return []
+        
+    x_col = X.flatten().real if np.iscomplexobj(X) else X.flatten()
+    y_vals = np.array(y).real if np.iscomplexobj(y) else np.array(y)
+    
+    # Filter non-finites
+    valid_mask = np.isfinite(x_col) & np.isfinite(y_vals)
+    x_clean = x_col[valid_mask]
+    y_clean = y_vals[valid_mask]
+    
+    # 1. Map Zeros
+    # Find points where |y| is very small
+    zero_mask = np.abs(y_clean) < 1e-4
+    zeros_x = x_clean[zero_mask]
+    
+    # Need at least 3 zeros to establish a pattern (e.g. 0, sqrt(pi), sqrt(2pi))
+    if len(zeros_x) < 3:
+        return []
+        
+    # Sort zeros
+    zeros_x = np.sort(zeros_x)
+    
+    # 2. Linearization: Check if x^2 / pi are integers
+    # We test x^2
+    x_sq = zeros_x ** 2
+    
+    # Normalize by PI
+    ratios = x_sq / np.pi
+    
+    # Check if close to integers
+    ratios_rounded = np.round(ratios)
+    residuals = np.abs(ratios - ratios_rounded)
+    
+    # Logic: Most zeros should match the pattern
+    # We allow some noise, but mean residual should be tiny
+    is_chirp = np.mean(residuals) < 0.05
+    
+    # Also check linearity of the integers (0, 1, 2, 3...)
+    # They don't HAVE to be consecutive (data could be sparse), but they should be integers.
+    
+    if is_chirp:
+        # Get variable name
+        var_name = "x"
+        if variable_names and len(variable_names) >= 1:
+            var_name = variable_names[0]
+            
+        if verbose:
+            print(f"   Chirp Analysis: Detected sin({var_name}^2) pattern (Zeros at sqrt(n*π))")
+        
+        seeds.append(f"sin({var_name}**2)")
+        seeds.append(f"cos({var_name}**2)") # Just in case phase shift
         
     return seeds
 
