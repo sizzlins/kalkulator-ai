@@ -717,9 +717,13 @@ def generate_pattern_seeds(X, y, variable_names, verbose=False):
     if fractal_patterns:
         seeds.extend(fractal_patterns)
 
-    # 10. Complex Data Seeds (when data has complex values)
+    # 10. Complex Data Seeds (when data has ACTUAL complex values)
     # Seed with I*x and related expressions to help find functions like f(x) = i*x
-    has_complex = np.iscomplexobj(X) or np.iscomplexobj(y)
+    def _has_actual_complex(arr):
+        if not np.iscomplexobj(arr):
+            return False
+        return np.any(np.abs(np.imag(arr)) > 1e-10)
+    has_complex = _has_actual_complex(X) or _has_actual_complex(y)
     if has_complex:
         complex_seeds = [
             "I*x",           # f(x) = i*x (most common)
@@ -4063,8 +4067,14 @@ def _handle_evolve(text, variables=None):
                     x_vals = tuple(X[i]) if X.ndim > 1 else (X[i],)
                     find_data_points.append((x_vals, y[i]))
 
-                # Check if data has complex values - find() doesn't support complex
-                has_complex_data = np.iscomplexobj(X) or np.iscomplexobj(y)
+                # Check if data has ACTUAL complex values (non-zero imaginary parts)
+                # Note: np.iscomplexobj only checks dtype, not actual values!
+                # sqrt(pi) is real but may be stored in complex128 array
+                def has_actual_complex(arr):
+                    if not np.iscomplexobj(arr):
+                        return False
+                    return np.any(np.abs(np.imag(arr)) > 1e-10)
+                has_complex_data = has_actual_complex(X) or has_actual_complex(y)
                 success = False
                 func_str = None
                 if has_complex_data:
