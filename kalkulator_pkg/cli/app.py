@@ -215,10 +215,10 @@ MATH
   factor(y)      Factor
   expand(y)      Expand
   solve <eq>     Solve equation
-  plot <expr>    Plot function
+  plot <expr>    Plot function (web supported)
 
 DISCOVERY
-  f(1)=1, f(2)=4...       Find function from data points
+  f(1)=1, f(pi)=0...      Find function from data points (supports symbolic constants)
     --auto-evolve         Auto-switch to evolve if exact finding fails
   evolve f(x) from...     Genetic algorithm discovery
     --hybrid              Seed with find() result

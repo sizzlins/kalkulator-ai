@@ -12,6 +12,8 @@
 ## Capabilities
 
 - **Symbolic Regression**: Identifies exact equations (`y = 5*x^2`) from raw data.
+- **Symbolic Constants**: Supports finding functions with `pi`, `e`, etc. (e.g., `f(pi)=0`).
+- **Native Plotting**: Visualize functions directly in the Terminal or Web Interface (`plot sin(x)`).
 - **Physics Discovery**: Patterns include inverse square laws, exp/log, and trigonometric series.
 - **SINDy**: Discovers differential equations (`dx/dt`) from time-series.
 - **Genetic Programming**: Evolves complex functional forms via mutation/crossover.
