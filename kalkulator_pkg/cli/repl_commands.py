@@ -3811,18 +3811,19 @@ def _handle_evolve(text, variables=None):
             else:
                 print(f"Smart seeding: detected {len(auto_seeds)} pattern-based seeds")
 
-        # --- FILTER: Remove inf/nan/complex from data BEFORE seeding/evolution ---
-        # Robust cleanup: Ensure data is strictly real float
+        # --- FILTER: Remove inf/nan/zoo from data BEFORE seeding/evolution ---
+        # Robust cleanup: Handle potential 'zoo' strings or SymPy objects
+        # NOTE: Complex values ARE supported and should NOT be filtered
         try:
-            # Convert purely to handle potential 'zoo' strings or SymPy objects
-            # Vectorized convert is safer
-            def safe_float(val):
+            def safe_convert(val):
+                # Handle complex values - KEEP them (they're supported!)
+                if isinstance(val, complex) or (hasattr(val, 'imag') and abs(val.imag) > 1e-10):
+                    return val  # Keep complex values
+                
                 # Handle numpy complex128/complex
                 if hasattr(val, 'imag') and hasattr(val, 'real'):
                     if abs(val.imag) < 1e-10:
-                        val = val.real  # Extract real part
-                    else:
-                        return np.nan  # DISCARD complex values
+                        val = val.real  # Extract real part for near-real values
                 
                 s = str(val).lower()
                 if "zoo" in s or "inf" in s:
@@ -3832,16 +3833,25 @@ def _handle_evolve(text, variables=None):
                 except (ValueError, TypeError):
                     return np.nan
 
-            vector_float = np.vectorize(safe_float, otypes=[object])
-            y = vector_float(y)
-            X = vector_float(X)
+            vector_convert = np.vectorize(safe_convert, otypes=[object])
+            y = vector_convert(y)
+            X = vector_convert(X)
 
-            # Force to float64, anything else is invalid
-            try:
-                y = y.astype(np.float64)
-                X = X.astype(np.float64)
-            except (ValueError, TypeError):
-                pass
+            # Convert to complex64 if any complex values, else float64
+            has_complex = any(isinstance(v, complex) for v in y.flatten()) or \
+                          any(isinstance(v, complex) for v in X.flatten())
+            if has_complex:
+                try:
+                    y = y.astype(np.complex128)
+                    X = X.astype(np.complex128)
+                except (ValueError, TypeError):
+                    pass
+            else:
+                try:
+                    y = y.astype(np.float64)
+                    X = X.astype(np.float64)
+                except (ValueError, TypeError):
+                    pass
 
         except Exception:
             pass
