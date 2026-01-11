@@ -328,6 +328,7 @@ with tab2:
                    fig = plt.gcf()
                    if fig.get_axes(): # Only if axes were drawn
                        captured_fig = fig # Store for history
+                       fig.set_size_inches(8, 4) # Resize for web (smaller than default 10x6)
                        # st.pyplot(fig) # Removed to avoid duplicate (handled by history loop)
                        pass 
                 
@@ -343,6 +344,7 @@ with tab2:
         st.session_state.cli_vars = repl_instance.variables
         
         # Store in history: 3-tuple (cmd, out, fig)
+        # Note: fig object is mutated (resized), so history will use new size
         st.session_state.cli_history.append((cli_input, output, captured_fig))
         
     # Display History
@@ -358,6 +360,6 @@ with tab2:
             
         st.markdown(f"**> {cmd}**")
         if fig:
-            st.pyplot(fig, use_container_width=True)
+            st.pyplot(fig, use_container_width=False)
         st.code(out)
 
