@@ -69,6 +69,27 @@ with st.sidebar:
                  selected_model = model_choice
                  
              provider_api_key = st.text_input("Gemini API Key", type="password", help="Required for Gemini. Note: 'Gemini Advanced' subscription does NOT cover API usage. API requires Google Cloud billing.")
+             
+             if st.button("🔍 Check Available Models"):
+                 if not provider_api_key:
+                     st.error("Please enter a key first.")
+                 else:
+                     try:
+                         from google import genai
+                         # Use a temporary client to check models
+                         tmp_client = genai.Client(api_key=provider_api_key)
+                         models = [m.name.split("/")[-1] for m in tmp_client.models.list() if hasattr(m, 'name')]
+                         gemini_only = [m for m in models if "gemini" in m.lower()]
+                         if gemini_only:
+                             st.success(f"Found {len(gemini_only)} Gemini models!")
+                             st.code(", ".join(gemini_only))
+                             st.info("Copy one of the above into the 'Custom...' field.")
+                         else:
+                             st.warning("No 'gemini' models found. Key might be invalid or region-locked.")
+                             st.write("All specific models:", models)
+                     except Exception as e:
+                         st.error(f"Error checking models: {str(e)}")
+
              st.caption("Get a free key at aistudio.google.com")
         else:
              selected_model = "gpt-4o"

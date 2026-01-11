@@ -1,0 +1,46 @@
+"""Test with degree-5 polynomial to force polyfit path."""
+import sys
+sys.path.insert(0, r'C:\Users\LOQ\PycharmProjects\kalkulator-ai')
+
+from kalkulator_pkg.function_manager import find_function_from_data
+
+# Test case: 3x^5 - 5x^3 + 2x (requires degree 5 polyfit)
+# Generate data points for this function
+data_points = []
+for x in range(-5, 6):
+    y = 3*x**5 - 5*x**3 + 2*x
+    data_points.append(([x], y))
+
+print("Testing polyfit R² with degree-5 polynomial...")
+print("Function: 3x^5 - 5x^3 + 2x")
+print("="*70)
+
+success, func_str, factored, confidence_note = find_function_from_data(
+    data_points, ['x']
+)
+
+print(f"\nResult:")
+print(f"  Success: {success}")
+print(f"  Function: {func_str}")
+print(f"  Factored: {factored}")
+print(f"  Confidence: {repr(confidence_note)}")
+print()
+
+if confidence_note and "R²=" in str(confidence_note):
+    print("✅ SUCCESS: R² is now included in confidence note!")
+    print(f"   Confidence note: {confidence_note}")
+    
+    # Extract R²
+    import re
+    r2_match = re.search(r"R²=([\d.]+)", str(confidence_note))
+    if r2_match:
+        r_squared = float(r2_match.group(1))
+        print(f"   Extracted R²: {r_squared}")
+        
+        if r_squared > 0.7:
+            print(f"   ✅ R² > 0.7: Seed would be ACCEPTED by hybrid mode!")
+        else:
+            print(f"   ❌ R² <= 0.7: Seed would be rejected")
+else:
+    print("❌ FAIL: R² not found in confidence note")
+    print(f"   Confidence note: {repr(confidence_note)}")
