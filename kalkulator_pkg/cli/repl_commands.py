@@ -1194,8 +1194,11 @@ def _detect_clamp_patterns(X, y, verbose: bool = False):
         return []
         
     try:
-        x_flat = X.flatten().astype(float)
-        y_flat = np.array(y, dtype=float)
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", np.ComplexWarning)
+            x_flat = X.flatten().astype(float)
+            y_flat = np.array(y, dtype=float)
     except:
         return []
     
@@ -1268,8 +1271,11 @@ def _detect_pulse_patterns(X, y, verbose: bool = False):
         return []
         
     try:
-        x_flat = X.flatten().astype(float)
-        y_flat = np.array(y, dtype=float)
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", np.ComplexWarning)
+            x_flat = X.flatten().astype(float)
+            y_flat = np.array(y, dtype=float)
     except:
         return []
     
