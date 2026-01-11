@@ -70,12 +70,14 @@ with st.sidebar:
                  # Get all model names
                  all_models = [m.name.split("/")[-1] for m in client.models.list() if hasattr(m, 'name')]
                  
-                 # PRIORITY 1: Stable Flash 1.5 (Aliases)
-                 # These are the reliable free-tier workhorses
-                 prefers = ["gemini-1.5-flash", "gemini-flash-latest", "gemini-1.5-flash-002", "gemini-1.5-flash-001"]
+                 # PRIORITY 0: gemini-1.0-pro (best free tier limits)
+                 for m in all_models:
+                     if m == "gemini-1.0-pro" or m == "gemini-pro": return m
+                 
+                 # PRIORITY 1: Versioned Flash (less rate-limited than *-latest)
+                 prefers = ["gemini-1.5-flash-002", "gemini-1.5-flash-001", "gemini-1.5-flash"]
                  for p in prefers:
-                     for m in all_models:
-                         if p == m: return m # Exact match preference
+                     if p in all_models: return p
                  
                  # PRIORITY 2: Flash Lite (Newer, usually good but failed recently)
                  for m in all_models:
