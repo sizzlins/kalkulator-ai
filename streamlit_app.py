@@ -266,9 +266,15 @@ with tab2:
         st.session_state.cli_vars = {}
         
     # Input
-    cli_input = st.text_input("Command >", key="cli_cmd")
+    # Input Form
+    with st.form("terminal_form", clear_on_submit=True):
+        col_in, col_btn = st.columns([6, 1])
+        with col_in:
+            cli_input = st.text_input("Command >", placeholder="Type help, 1+1, or f(x)=...")
+        with col_btn:
+            submitted = st.form_submit_button("Run")
     
-    if st.button("Run Command") and cli_input:
+    if submitted and cli_input:
         # Import the full REPL core
         from kalkulator_pkg.cli.repl_core import REPL
         
