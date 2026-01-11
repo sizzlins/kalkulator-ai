@@ -328,16 +328,7 @@ with tab2:
                    fig = plt.gcf()
                    if fig.get_axes(): # Only if axes were drawn
                        captured_fig = fig # Store for history
-                       st.pyplot(fig, use_container_width=True) # Show immediately
-                       # plt.close(fig) # Do NOT close if we want to reuse it? 
-                       # Actually, Streamlit copies the figure object? No, matplotlib figures are stateful.
-                       # If we close it, can we show it again? st.pyplot converts it to image.
-                       # So we probably can't re-render 'fig' later if closed.
-                       # We should rely on Streamlit's caching or just not close it yet?
-                       # Or better: don't store the Figure object (memory leak), store the image?
-                       # No, simpler: Streamlit reruns the script.
-                       # Wait, we can't persist Figure objects easily across reruns without serialization issues?
-                       # Actually, Session State holds objects in memory. It should be fine.
+                       # st.pyplot(fig) # Removed to avoid duplicate (handled by history loop)
                        pass 
                 
                 # Restore original show
