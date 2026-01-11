@@ -115,6 +115,18 @@ with st.sidebar:
              provider_api_key = st.text_input("Gemini API Key", type="password", help="Required. 'Auto' will pick the best available model.")
              st.caption("Get a free key at aistudio.google.com")
              
+             # Check Available Models button
+             if provider_api_key and st.button("🔍 Check Available Models"):
+                 try:
+                     from google import genai
+                     client = genai.Client(api_key=provider_api_key)
+                     models = [m.name for m in client.models.list() if hasattr(m, 'name')]
+                     gemini_models = [m for m in models if "gemini" in m.lower()]
+                     st.success(f"Found {len(gemini_models)} Gemini models:")
+                     st.code("\n".join(gemini_models[:15]))  # Show first 15
+                 except Exception as e:
+                     st.error(f"Error: {e}")
+             
         else:
              selected_model = "gpt-4o"
              provider_api_key = st.text_input("OpenAI API Key", type="password", help="Required for OpenAI.")
