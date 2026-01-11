@@ -56,8 +56,18 @@ pip install pandas openpyxl
 Legacy CLI:
 
 ```bash
-python kalkulator.py
+python kalkulator_pkg/cli.py
 ```
+
+### Web Application (GUI)
+
+Kalkulator now includes a modern web interface with interactive plotting and "Terminal Mode".
+
+```bash
+streamlit run streamlit_app.py
+```
+
+Visit `http://localhost:8501` (or the URL displayed) to access the GUI.
 
 Or
 
