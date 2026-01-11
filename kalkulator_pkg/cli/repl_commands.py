@@ -733,6 +733,12 @@ def generate_pattern_seeds(X, y, variable_names, verbose=False):
             print(f"   Complex Analysis: Seeding with imaginary unit expressions")
         seeds.extend(complex_seeds)
 
+    # 11. Sub-Epsilon Pattern Detection (Residual Amplifier Algorithm)
+    # Detects patterns hidden at machine epsilon precision: f(x) = baseline + x*10^-N
+    sub_epsilon_patterns = _detect_sub_epsilon_patterns(X, y, variable_names=variable_names, verbose=verbose)
+    if sub_epsilon_patterns:
+        seeds.extend(sub_epsilon_patterns)
+
     # =========================================================================
     # PRIORITY 2: Exploratory / Combinatorial Patterns
     # These produce many seeds (Singularities, Rationals, Compositions).
@@ -2530,6 +2536,141 @@ def _detect_rosenbrock_patterns(X, y, variable_names: list[str] | None = None, v
     
     seeds.append(f"({a_estimate} - {var_x})**2 + {b_estimate}*({var_y} - {var_x}**2)**2")
     seeds.append(f"(1 - {var_x})**2 + 100*({var_y} - {var_x}**2)**2")  # Classic Rosenbrock
+    
+    return seeds
+
+
+def _detect_sub_epsilon_patterns(X, y, variable_names: list[str] = None, verbose: bool = False) -> list[str]:
+    """Detect patterns hidden at machine epsilon precision.
+    
+    Uses the 'Residual Amplifier Algorithm':
+    1. Baseline Subtraction: Remove mean from y-values
+    2. Normalization/Zoom: Scale residuals to integer range
+    3. Integer Match: Find linear/polynomial pattern in scaled residuals
+    4. Reconstruction: Build formula with correct magnitude
+    
+    Example: f(1)=1.0000000000000001, f(2)=1.0000000000000002, f(3)=1.0000000000000003
+    → Discovers f(x) = 1 + x * 10^-16
+    """
+    seeds = []
+    
+    # Need at least 3 points
+    if len(y) < 3:
+        return []
+    
+    # Only handle 1D input for now
+    if X.ndim != 1 and (X.ndim != 2 or X.shape[1] != 1):
+        return []
+    
+    x_col = X.flatten().real if np.iscomplexobj(X) else X.flatten()
+    y_vals = np.array(y).real if np.iscomplexobj(y) else np.array(y)
+    
+    # Filter out non-finite values
+    valid_mask = np.isfinite(x_col) & np.isfinite(y_vals)
+    if np.sum(valid_mask) < 3:
+        return []
+    
+    x_clean = x_col[valid_mask]
+    y_clean = y_vals[valid_mask]
+    
+    # Get variable name
+    var_name = "x"
+    if variable_names and len(variable_names) >= 1:
+        var_name = variable_names[0]
+    
+    # =========================================================================
+    # Step A: Baseline Subtraction
+    # =========================================================================
+    baseline = np.mean(y_clean)
+    residuals = y_clean - baseline
+    
+    # Check if residuals are tiny (sub-epsilon signal)
+    max_residual = np.max(np.abs(residuals))
+    if max_residual < 1e-30 or max_residual > 1e-8:
+        # Not a sub-epsilon pattern (either zero or too large)
+        return []
+    
+    # =========================================================================
+    # Step B: Normalization/Zoom - Detect magnitude and scale
+    # =========================================================================
+    # Find the order of magnitude
+    magnitude = -int(np.floor(np.log10(max_residual)))
+    scale_factor = 10 ** magnitude
+    
+    # Scale residuals to visible range
+    scaled_residuals = residuals * scale_factor
+    
+    # =========================================================================
+    # Step C: Integer Match - Look for linear pattern
+    # =========================================================================
+    # Check if scaled residuals form a linear relationship with x
+    # Fit linear: scaled_residual = a * x + b
+    try:
+        coeffs = np.polyfit(x_clean, scaled_residuals, 1)
+        slope = coeffs[0]
+        intercept = coeffs[1]
+        
+        # Predict and check fit quality
+        predicted = slope * x_clean + intercept
+        ss_res = np.sum((scaled_residuals - predicted) ** 2)
+        ss_tot = np.sum((scaled_residuals - np.mean(scaled_residuals)) ** 2)
+        
+        if ss_tot < 1e-30:
+            return []
+        
+        r_squared = 1 - (ss_res / ss_tot)
+        
+        if r_squared < 0.99:
+            # Not a good linear fit
+            return []
+        
+        # Check if slope is close to an integer
+        slope_rounded = round(slope)
+        if abs(slope - slope_rounded) > 0.01:
+            # Not a clean integer slope
+            return []
+        
+        # Check if intercept is close to zero or an integer
+        intercept_rounded = round(intercept)
+        if abs(intercept) < 0.01:
+            intercept_rounded = 0
+        elif abs(intercept - intercept_rounded) > 0.01:
+            return []
+        
+    except Exception:
+        return []
+    
+    # =========================================================================
+    # Step D: Reconstruction - Build the formula
+    # =========================================================================
+    # Round baseline to closest simple value
+    baseline_rounded = round(baseline)
+    if abs(baseline - baseline_rounded) > 1e-10:
+        baseline_rounded = baseline  # Keep exact if not close to integer
+    
+    # Build the seed expression
+    if intercept_rounded == 0:
+        # f(x) = baseline + slope * x * 10^-magnitude
+        if slope_rounded == 1:
+            seed = f"{baseline_rounded} + {var_name}/10**{magnitude}"
+        else:
+            seed = f"{baseline_rounded} + {slope_rounded}*{var_name}/10**{magnitude}"
+    else:
+        # f(x) = baseline + (slope * x + intercept) * 10^-magnitude
+        seed = f"{baseline_rounded} + ({slope_rounded}*{var_name} + {intercept_rounded})/10**{magnitude}"
+    
+    if verbose:
+        print(f"   Sub-Epsilon Analysis: Detected signal at 10^-{magnitude} precision")
+        print(f"      → Baseline: {baseline_rounded}")
+        print(f"      → Pattern: {slope_rounded}*{var_name} + {intercept_rounded}")
+        print(f"      → Formula: {seed}")
+    
+    seeds.append(seed)
+    
+    # Also add alternative representations
+    seeds.append(f"{baseline_rounded} + {var_name}*10**(-{magnitude})")
+    if slope_rounded != 1:
+        seeds.append(f"{baseline_rounded} + {slope_rounded}*{var_name}*10**(-{magnitude})")
     
     return seeds
 
