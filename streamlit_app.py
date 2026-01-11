@@ -281,7 +281,7 @@ with tab3:
                             st.session_state.prefill_for_gui = prefill_data
                             st.session_state.gui_input_text = prefill_data # Directly set the key
                             st.toast("✅ Data loaded! Switch to 'GUI Mode' tab now.", icon="📋")
-                            st.balloons()
+                            st.rerun() # Force page refresh to apply changes
                     
                 except Exception as e:
                     st.error(f"AI Provider Error: {e}")
