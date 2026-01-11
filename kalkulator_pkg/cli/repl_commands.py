@@ -728,6 +728,12 @@ def generate_pattern_seeds(X, y, variable_names, verbose=False):
     if chirp_patterns:
         seeds.extend(chirp_patterns)
 
+    # 9c. Newton's Polynomial / Exact Integer Sequence Fit
+    # Detects patterns for integer sequences (primes, factorials) using finite differences
+    newton_patterns = _detect_newton_polynomial(X, y, variable_names=variable_names, verbose=verbose)
+    if newton_patterns:
+        seeds.extend(newton_patterns)
+
     # 10. Complex Data Seeds (when data has ACTUAL complex values)
     # Seed with I*x and related expressions to help find functions like f(x) = i*x
     def _has_actual_complex(arr):
@@ -2819,6 +2825,172 @@ def _detect_chirp_patterns(X, y, variable_names: list[str] = None, verbose: bool
         seeds.append(f"sin({var_name}**2)")
         seeds.append(f"cos({var_name}**2)") # Just in case phase shift
         
+    return seeds
+
+
+def _detect_newton_polynomial(X, y, variable_names: list[str] = None, verbose: bool = False) -> list[str]:
+    """Detect Exact Polynomials via Newton's Forward Difference Method.
+    
+    Useful for integer sequences (e.g. primes) where a high-degree polynomial
+    can perfectly fit the data, even if it doesn't generalize.
+    
+    Algorithm:
+    1. Check for Integer Sequence: Inputs must be consecutive integers (or equally spaced)
+    2. Difference Table: Calculate successive differences until constant
+    3. Reconstruction: Build polynomial using Newton form:
+       P(x) = C0 + C1*Bin(x-x0, 1) + ... + Cn*Bin(x-x0, n)
+    """
+    seeds = []
+    
+    # Needs valid 1D input
+    if X.ndim != 1 and (X.ndim != 2 or X.shape[1] != 1):
+        return []
+        
+    x_col = X.flatten().real if np.iscomplexobj(X) else X.flatten()
+    y_vals = np.array(y).real if np.iscomplexobj(y) else np.array(y)
+    
+    # Filter non-finites
+    valid_mask = np.isfinite(x_col) & np.isfinite(y_vals)
+    x_clean = x_col[valid_mask]
+    y_clean = y_vals[valid_mask]
+    
+    if len(x_clean) < 3: # Need at least 3 points for meaningful diffs
+        return []
+        
+    # Check for integer inputs
+    if not np.all(np.abs(x_clean - np.round(x_clean)) < 1e-9):
+        # Allow non-integers, but they must be equally spaced for this simple implementation
+        pass
+        
+    # Check spacing
+    dx = np.diff(x_clean)
+    if not np.all(np.abs(dx - dx[0]) < 1e-9):
+        # Spacing not constant, can't use simple forward diff
+        return []
+        
+    step_size = dx[0]
+    
+    # Build Difference Table
+    # Max degree = len(points) - 1
+    # We stop if differences become zero (or close to zero)
+    
+    # y lines
+    diffs = [y_clean] 
+    
+    current_diff = y_clean
+    leading_diffs = [current_diff[0]]
+    
+    # Calculate differences
+    for i in range(len(y_clean) - 1):
+        next_diff = np.diff(current_diff)
+        
+        # Check if all zero (converged)
+        if np.all(np.abs(next_diff) < 1e-9):
+            break
+            
+        current_diff = next_diff
+        leading_diffs.append(current_diff[0])
+        diffs.append(current_diff)
+        
+    # Construct Polynomial String
+    # P(x) = sum( C_k * Binomial( (x-x0)/h, k ) )
+    # where C_k = leading_diffs[k]
+    # Binomial(n, k) = n(n-1)...(n-k+1) / k!
+    
+    x0 = x_clean[0]
+    
+    # Variable name
+    var_name = "x"
+    if variable_names and len(variable_names) >= 1:
+        var_name = variable_names[0]
+    
+    # Binomial term builder
+    # Term k: C_k / k! * product( (x-x0)/h - j ) for j=0..k-1
+    
+    terms = []
+    
+    import math
+    
+    for k, coeff in enumerate(leading_diffs):
+        if abs(coeff) < 1e-9:
+            continue
+            
+        term_coeff = coeff / math.factorial(k)
+        
+        # Round if close to simple decimal/integer for cleaner readout
+        term_coeff_rounded = round(term_coeff, 6)
+        if abs(term_coeff - term_coeff_rounded) < 1e-9:
+            # Check if integer
+            if abs(term_coeff_rounded - round(term_coeff_rounded)) < 1e-9:
+                coeff_str = str(int(round(term_coeff_rounded)))
+            else:
+                coeff_str = str(term_coeff_rounded)
+        else:
+            coeff_str = f"{term_coeff:.6f}"
+            
+        if k == 0:
+            terms.append(coeff_str)
+        else:
+            # Build product term: (x-x0)/h * ((x-x0)/h - 1) ...
+            # Let u = (x-x0)/h
+            # Term is u*(u-1)*(u-2)...
+            
+            # Optimization: If x0=0, h=1 -> x*(x-1)*(x-2)... (Standard)
+            # If x0=1, h=1 -> (x-1)*(x-2)...
+            
+            product_parts = []
+            for j in range(k):
+                # (x - x0)/h - j
+                # = (x - (x0 + j*h)) / h
+                shift = x0 + j * step_size
+                
+                # Format (x - shift)
+                if abs(shift) < 1e-9:
+                    sub_term = f"{var_name}"
+                elif shift > 0:
+                    sub_term = f"({var_name} - {shift:g})"
+                else:
+                    sub_term = f"({var_name} + {-shift:g})"
+                    
+                product_parts.append(sub_term)
+            
+            product_str = "*".join(product_parts)
+            
+            # Add 1/h^k factor to coefficient if h != 1
+            # Actually, the logic above: (u)*(u-1) is correct for forward diff
+            # but we need to verify simple scaling.
+            # Standard formula: f(x) = sum [ Delta^k[0]/k! * product(i=0 to k-1) (u - i) ]
+            # where u = (x - x0) / h
+            # So (u-i) = (x - x0)/h - i = (x - x0 - i*h)/h
+            # So product is (1/h^k) * product(x - (x0 + i*h))
+            
+            # Let's adjust coeff for h
+            if abs(step_size - 1.0) > 1e-9:
+                 term_coeff /= (step_size ** k)
+                 # Re-format coeff
+                 term_coeff_rounded = round(term_coeff, 6)
+                 if abs(term_coeff - term_coeff_rounded) < 1e-9:
+                     if abs(term_coeff_rounded - round(term_coeff_rounded)) < 1e-9:
+                         coeff_str = str(int(round(term_coeff_rounded)))
+                     else:
+                         coeff_str = str(term_coeff_rounded)
+                 else:
+                     coeff_str = f"{term_coeff:.6f}"
+            
+            if coeff_str == "1":
+                 terms.append(product_str)
+            elif coeff_str == "-1":
+                 terms.append(f"-{product_str}")
+            else:
+                 terms.append(f"{coeff_str}*{product_str}")
+                 
+    polynomial_seed = " + ".join(terms).replace("+ -", "- ")
+    
+    if verbose:
+        print(f"   Newton Analysis: Constructed degree-{len(leading_diffs)-1} polynomial")
+    
+    seeds.append(polynomial_seed)
+    
     return seeds
 
 
