@@ -510,6 +510,18 @@ For true arbitrary precision, consider using SymPy's `Rational` or Python's `dec
 - **Solvers**: Hybrid Sparse Regression (Lasso/OMP) + Genetic Programming + SINDy.
 - **Safety**: Bounded execution, sandboxed evaluation.
 
+## 🚀 Deployment (Web App)
+
+You can easily deploy this app for free using **Streamlit Community Cloud** so your friends and family can use it.
+
+1.  **Sign up** for [Streamlit Community Cloud](https://streamlit.io/cloud) using your GitHub account.
+2.  Click **"New app"**.
+3.  Select your repository: `sizzlins/kalkulator-ai`.
+4.  Set the **Main file path** to `streamlit_app.py`.
+5.  Click **"Deploy!"**.
+
+That's it! Streamlit will install the dependencies from `requirements.txt` and launch your app. You'll get a URL (e.g., `https://kalkulator-ai.streamlit.app`) to share.
+
 ## License
 
 MIT License
