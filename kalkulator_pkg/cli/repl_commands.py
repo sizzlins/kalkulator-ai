@@ -707,6 +707,12 @@ def generate_pattern_seeds(X, y, variable_names, verbose=False):
     if odd_patterns:
         seeds.extend(odd_patterns)
 
+    # 7b. Signum Function Detection (sign(x) = x/|x|)
+    # Detects when all |y|≈1 and sign(y) matches sign(x)
+    signum_patterns = _detect_signum_patterns(X, y, variable_names=variable_names, verbose=verbose)
+    if signum_patterns:
+        seeds.extend(signum_patterns)
+
     # 8. Rosenbrock/Valley Function Detection (2-variable optimization benchmarks)
     rosenbrock_patterns = _detect_rosenbrock_patterns(X, y, variable_names=variable_names, verbose=verbose)
     if rosenbrock_patterns:
@@ -2676,6 +2682,71 @@ def _detect_sub_epsilon_patterns(X, y, variable_names: list[str] = None, verbose
     if slope_rounded != 1:
         seeds.append(f"{baseline_rounded} + {slope_rounded}*{var_name}*10**(-{magnitude})")
     
+    return seeds
+
+
+def _detect_signum_patterns(X, y, variable_names: list[str] = None, verbose: bool = False) -> list[str]:
+    """Detect Signum (sign) function patterns: f(x) = x/|x|
+    
+    Algorithm:
+    1. Magnitude Scan: Check if all outputs have magnitude ≈ 1 (invariant)
+    2. Direction Scan: Check if output sign matches input sign (or inverted)
+    3. Reconstruction: f(x) = sign(x) or -sign(x)
+    """
+    seeds = []
+    
+    if X.ndim != 1 and (X.ndim != 2 or X.shape[1] != 1):
+        return []
+        
+    x_col = X.flatten().real if np.iscomplexobj(X) else X.flatten()
+    y_vals = np.array(y).real if np.iscomplexobj(y) else np.array(y)
+    
+    # Filter out zeros from X to avoid division by zero issues in sign(x)
+    # Also filter non-finites
+    valid_mask = np.isfinite(x_col) & np.isfinite(y_vals) & (np.abs(x_col) > 1e-10)
+    
+    if np.sum(valid_mask) < 2:
+        return []
+        
+    x_clean = x_col[valid_mask]
+    y_clean = y_vals[valid_mask]
+    
+    # 1. Magnitude Scan: Are all |y| ≈ 1?
+    magnitudes = np.abs(y_clean)
+    # Allow small error for approx 1
+    is_magnitude_one = np.all(np.abs(magnitudes - 1.0) < 1e-3)
+    
+    if not is_magnitude_one:
+        return []
+        
+    # 2. Direction Scan: Check sign correlation
+    # sign(x) returns -1, 0, 1
+    x_signs = np.sign(x_clean)
+    y_signs = np.sign(y_clean)
+    
+    # Check for direct match: sign(y) == sign(x)
+    matches_sign = np.all(x_signs == y_signs)
+    
+    # Check for inverted match: sign(y) == -sign(x)
+    matches_inverted = np.all(x_signs == -y_signs)
+    
+    # Get variable name
+    var_name = "x"
+    if variable_names and len(variable_names) >= 1:
+        var_name = variable_names[0]
+        
+    if matches_sign:
+        if verbose:
+            print(f"   Signum Analysis: Detected sign(x) pattern (Magnitude 1, Direction Preserved)")
+        seeds.append(f"sign({var_name})")
+        seeds.append(f"{var_name}/abs({var_name})") # Manual definition
+        
+    elif matches_inverted:
+        if verbose:
+            print(f"   Signum Analysis: Detected -sign(x) pattern (Magnitude 1, Direction Inverted)")
+        seeds.append(f"-sign({var_name})")
+        seeds.append(f"-{var_name}/abs({var_name})")
+        
     return seeds
 
 
