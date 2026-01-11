@@ -51,7 +51,8 @@ with st.sidebar:
     patience = st.slider("Patience (Early Stop)", 5, 50, 10)
     
     st.markdown("---")
-    st.markdown("Created by **Kalkulator Team**")
+    st.markdown("Created by **Syahbana**")
+    st.markdown("[https://github.com/sizzlins/kalkulator-ai](https://github.com/sizzlins/kalkulator-ai)")
 
 # --- MAIN ---
 
