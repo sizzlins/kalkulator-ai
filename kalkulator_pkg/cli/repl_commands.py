@@ -4444,9 +4444,10 @@ def _handle_evolve(text, variables=None):
                                 for i in range(len(input_vars))
                             }
                             try:
-                                pred = float(discovered_expr.subs(subs_dict).evalf())
+                                pred_val = discovered_expr.subs(subs_dict).evalf()
+                                pred = float(complex(pred_val).real)
                                 y_pred.append(pred)
-                                y_true.append(float(output))
+                                y_true.append(float(complex(output).real))
                             except Exception:
                                 continue
                         
