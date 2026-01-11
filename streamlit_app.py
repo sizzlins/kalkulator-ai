@@ -307,12 +307,32 @@ with tab2:
         
         import io
         import contextlib
+        import matplotlib.pyplot as plt
         
         f = io.StringIO()
         with contextlib.redirect_stdout(f):
             try:
+                # Monkey-patch plt.show to avoid popping windows on server
+                original_show = plt.show
+                plt.show = lambda: None
+                
+                # Check for plot command
+                is_plot = cli_input.strip().lower().startswith("plot")
+                
                 # process_input handles commands, help, AND math expressions
                 repl_instance.process_input(cli_input)
+                
+                # If command was plot, check for active figure
+                if is_plot:
+                   fig = plt.gcf()
+                   if fig.get_axes(): # Only if axes were drawn
+                       st.pyplot(fig)
+                       plt.close(fig) # Cleanup
+                
+                # Restore original show (though session persistence might mean it stays patched? 
+                # Better to just leave it if we control the environment)
+                plt.show = original_show
+                
             except Exception as e:
                 print(f"Error: {e}")
                 
