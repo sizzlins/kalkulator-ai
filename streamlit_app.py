@@ -124,6 +124,17 @@ with st.sidebar:
 
 # --- MAIN ---
 
+# --- GLOBAL PREFILL PROCESSING (runs before tabs) ---
+# This ensures prefill data is processed on the rerun triggered by the button
+if 'prefill_for_gui' in st.session_state:
+    if 'textarea_version' not in st.session_state:
+        st.session_state.textarea_version = 0
+    st.session_state.textarea_version += 1
+    new_key = f"gui_input_v{st.session_state.textarea_version}"
+    st.session_state[new_key] = st.session_state.prefill_for_gui
+    del st.session_state.prefill_for_gui
+    st.session_state.prefill_applied = True  # Flag to show success message
+
 # --- TABS ---
 tab1, tab2, tab3 = st.tabs(["🖥️ GUI Mode", "⌨️ Terminal Mode", "🤖 AI Tutor"])
 
@@ -305,13 +316,10 @@ with tab1:
             
             textarea_key = f"gui_input_v{st.session_state.textarea_version}"
             
-            # Check if AI Tutor suggested data - if so, bump version and set new key
-            if 'prefill_for_gui' in st.session_state:
-                st.session_state.textarea_version += 1
-                textarea_key = f"gui_input_v{st.session_state.textarea_version}"
-                st.session_state[textarea_key] = st.session_state.prefill_for_gui
-                del st.session_state.prefill_for_gui
+            # Show success message if prefill was just applied (flag set in global processing)
+            if st.session_state.get('prefill_applied'):
                 st.success("✨ AI-suggested data loaded! Click 'Evolve Function' to discover the formula.")
+                del st.session_state.prefill_applied
             
             # Initialize default if this version's key doesn't exist
             if textarea_key not in st.session_state:
