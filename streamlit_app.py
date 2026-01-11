@@ -54,8 +54,15 @@ with st.sidebar:
     
     # LLM Settings
     with st.expander("🤖 AI Tutor Settings"):
-        openai_api_key = st.text_input("OpenAI API Key", type="password", help="Required for the Tutor tab.")
-        st.caption("Your key is not stored permanently.")
+        llm_provider = st.selectbox("Provider", ["Gemini (Free)", "OpenAI (GPT-4)"])
+        
+        provider_api_key = ""
+        if "Gemini" in llm_provider:
+             provider_api_key = st.text_input("Gemini API Key", type="password", help="Required for Gemini.")
+             st.caption("Get a free key at aistudio.google.com")
+        else:
+             provider_api_key = st.text_input("OpenAI API Key", type="password", help="Required for OpenAI.")
+             st.caption("Your key is not stored permanently.")
 
     st.markdown("---")
     st.markdown("Created by **Syahbana**")
@@ -89,9 +96,9 @@ with tab3:
             st.markdown(prompt)
             
         # Check API Key
-        if not openai_api_key:
+        if not provider_api_key:
             with st.chat_message("assistant"):
-                st.error("Please enter your OpenAI API Key in the sidebar settings to continue.")
+                st.error(f"Please enter your {llm_provider.split()[0]} API Key in the sidebar settings to continue.")
         else:
             with st.chat_message("assistant"):
                 message_placeholder = st.empty()
@@ -107,39 +114,70 @@ with tab3:
                      Original Data: {st.session_state.get('last_input_data', 'N/A')}
                      """
                 
+                system_prompt = f"""You are a friendly mathematician and tutor. 
+                The user has used a Symbolic Regression AI to find a formula from data.
+                Here is the context of their latest run:
+                {context_str}
+                
+                Explain the math simply. If they ask 'Is this correct?', analyze the formula vs the data.
+                If the formula has weird terms like 'primepi' or 'floor', explain why the AI might have chosen them (e.g. overfitting vs genuine pattern).
+                Be concise and encouraging.
+                """
+
                 try:
-                    import openai
-                    client = openai.OpenAI(api_key=openai_api_key)
+                    if "Gemini" in llm_provider:
+                        # --- GEMINI LOGIC ---
+                        import google.generativeai as genai
+                        genai.configure(api_key=provider_api_key)
+                        model = genai.GenerativeModel('gemini-pro')
+                        
+                        # Gemini doesn't use "system" role in standard chat history cleanly yet,
+                        # so we prepend context to the latset user prompt or use system instruction if available.
+                        # Simple approach: Prepend context to the prompt sent to API
+                        
+                        combined_prompt = f"{system_prompt}\n\nUser Question: {prompt}"
+                        
+                        # We use a fresh chat session for each turn to simplify history mgmt with Streamlit's state
+                        # Or better: Construct history from st.session_state
+                        
+                        gemini_history = []
+                        for msg in st.session_state.messages[:-1]: # Exclude the just-added user prompt
+                             role = "user" if msg["role"] == "user" else "model"
+                             gemini_history.append({"role": role, "parts": [msg["content"]]})
+                        
+                        chat = model.start_chat(history=gemini_history)
+                        response_stream = chat.send_message(combined_prompt, stream=True)
+                        
+                        for chunk in response_stream:
+                            if chunk.text:
+                                full_response += chunk.text
+                                message_placeholder.markdown(full_response + "▌")
+                                
+                    else:
+                        # --- OPENAI LOGIC ---
+                        import openai
+                        client = openai.OpenAI(api_key=provider_api_key)
+                        
+                        stream = client.chat.completions.create(
+                            model="gpt-4o", # Or gpt-3.5-turbo
+                            messages=[
+                                {"role": "system", "content": system_prompt},
+                                *st.session_state.messages
+                            ],
+                            stream=True,
+                        )
+                        
+                        for chunk in stream:
+                             if chunk.choices[0].delta.content is not None:
+                                full_response += chunk.choices[0].delta.content
+                                message_placeholder.markdown(full_response + "▌")
                     
-                    system_prompt = f"""You are a friendly mathematician and tutor. 
-                    The user has used a Symbolic Regression AI to find a formula from data.
-                    Here is the context of their latest run:
-                    {context_str}
-                    
-                    Explain the math simply. If they ask 'Is this correct?', analyze the formula vs the data.
-                    If the formula has weird terms like 'primepi' or 'floor', explain why the AI might have chosen them (e.g. overfitting vs genuine pattern).
-                    Be concise and encouraging.
-                    """
-                    
-                    stream = client.chat.completions.create(
-                        model="gpt-4o", # Or gpt-3.5-turbo
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            *st.session_state.messages
-                        ],
-                        stream=True,
-                    )
-                    
-                    for chunk in stream:
-                        if chunk.choices[0].delta.content is not None:
-                            full_response += chunk.choices[0].delta.content
-                            message_placeholder.markdown(full_response + "▌")
-                            
+                    # Finalize
                     message_placeholder.markdown(full_response)
                     st.session_state.messages.append({"role": "assistant", "content": full_response})
                     
                 except Exception as e:
-                    st.error(f"LLM Error: {e}")
+                    st.error(f"AI Provider Error: {e}")
 
 with tab1:
     col1, col2 = st.columns([1, 1])

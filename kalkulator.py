@@ -6,7 +6,7 @@ Main entry point for the Kalkulator: Symbolic Regression & Science Engine applic
 This file serves as a thin wrapper that delegates all functionality
 to the kalkulator_pkg package.
 
-Copyright (c) 2025 Syahbanam
+Copyright (c) 2026 Syahbana
 All rights reserved.
 
 Usage:
@@ -16,6 +16,9 @@ Usage:
 
 Terminal command to create an .EXE file using PyInstaller:
     pyinstaller --onefile --console --collect-all sympy kalkulator.py
+
+Terminal command for Streamlit:
+    streamlit run streamlit_app.py
 """
 
 from __future__ import annotations
