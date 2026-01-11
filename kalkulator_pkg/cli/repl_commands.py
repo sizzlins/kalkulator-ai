@@ -3850,10 +3850,19 @@ def _handle_evolve(text, variables=None):
         original_len = len(y)
         
         def is_finite_safe(arr):
+            # Handle complex arrays - check both real and imaginary parts
+            if np.iscomplexobj(arr):
+                return np.isfinite(arr.real) & np.isfinite(arr.imag)
             if arr.dtype.kind == 'f':
-                 return np.isfinite(arr)
-            # Fallback
-            return np.array([np.isfinite(x) if isinstance(x, (float, int, np.number)) else False for x in arr.flatten()]).reshape(arr.shape)
+                return np.isfinite(arr)
+            # Fallback for mixed types
+            def check_item(x):
+                if isinstance(x, complex):
+                    return np.isfinite(x.real) and np.isfinite(x.imag)
+                elif isinstance(x, (float, int, np.number)):
+                    return np.isfinite(x)
+                return False
+            return np.array([check_item(x) for x in arr.flatten()]).reshape(arr.shape)
 
         y_finite = is_finite_safe(y)
         if X.ndim > 1:
