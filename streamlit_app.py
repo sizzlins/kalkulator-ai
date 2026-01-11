@@ -54,13 +54,18 @@ with st.sidebar:
     
     # LLM Settings
     with st.expander("🤖 AI Tutor Settings"):
-        llm_provider = st.selectbox("Provider", ["Gemini (Free)", "OpenAI (GPT-4)"])
+        llm_provider = st.selectbox("Provider", ["Google Gemini", "OpenAI (GPT-4)"])
         
         provider_api_key = ""
+        selected_model = ""
+        
         if "Gemini" in llm_provider:
-             provider_api_key = st.text_input("Gemini API Key", type="password", help="Required for Gemini.")
+             # Add specific model selector for Gemini users (especially Pro/Paid users)
+             selected_model = st.selectbox("Model", ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash"])
+             provider_api_key = st.text_input("Gemini API Key", type="password", help="Required for Gemini. Link billing in AI Studio for higher limits.")
              st.caption("Get a free key at aistudio.google.com")
         else:
+             selected_model = "gpt-4o"
              provider_api_key = st.text_input("OpenAI API Key", type="password", help="Required for OpenAI.")
              st.caption("Your key is not stored permanently.")
 
@@ -133,8 +138,8 @@ with tab3:
                         combined_prompt = f"{system_prompt}\n\nUser Question: {prompt}"
                         
                         try:
-                            # Try Gemini 2.0 Flash (Fast & Capable)
-                            chat = client.chats.create(model='gemini-2.0-flash')
+                             # Use the user-selected model
+                            chat = client.chats.create(model=selected_model)
                             response_stream = chat.send_message_stream(combined_prompt)
                             
                             for chunk in response_stream:
@@ -143,36 +148,16 @@ with tab3:
                                     message_placeholder.markdown(full_response + "▌")
                                     
                         except Exception as inner_e:
-                             # Silent fallback to any available model if 2.0 fails
-                            if "404" in str(inner_e) or "NOT_FOUND" in str(inner_e):
-                                try:
-                                    available = []
-                                    for m in client.models.list():
-                                        if hasattr(m, 'name'):
-                                            available.append(m.name.split("/")[-1])
-                                    
-                                    # Prefer gemini-2.0, then 1.5, then any gemini
-                                    fallback = None
-                                    if available:
-                                        # intelligent fallback sort
-                                        geminis = [x for x in available if 'gemini' in x.lower()]
-                                        if geminis:
-                                            # Pick the newest one blindly or just the first
-                                            fallback = geminis[0]
-                                    
-                                    if fallback:
-                                        chat = client.chats.create(model=fallback)
-                                        response_stream = chat.send_message_stream(combined_prompt)
-                                        for chunk in response_stream:
-                                            if chunk.text:
-                                                full_response += chunk.text
-                                                message_placeholder.markdown(full_response + "▌")
-                                    else:
-                                        raise inner_e
-                                except:
-                                    raise inner_e
-                            else:
-                                raise inner_e
+                             err_str = str(inner_e)
+                             if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                                 st.error(f"⚠️ Rate Limit Hit for {selected_model}.")
+                                 st.info("Tip: 'gemini-1.5-flash' usually has higher rate limits than Pro or 2.0-Flash.")
+                                 st.caption(f"Details: {err_str}")
+                             elif "404" in err_str or "NOT_FOUND" in err_str:
+                                 st.error(f"⚠️ Model '{selected_model}' not found for your API Key.")
+                                 st.caption("Check if your API Key supports this model or if the model name is correct.")
+                             else:
+                                 raise inner_e
                                 
                     else:
                         # --- OPENAI LOGIC ---
