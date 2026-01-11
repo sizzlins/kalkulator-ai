@@ -51,13 +51,95 @@ with st.sidebar:
     patience = st.slider("Patience (Early Stop)", 5, 50, 10)
     
     st.markdown("---")
+    
+    # LLM Settings
+    with st.expander("🤖 AI Tutor Settings"):
+        openai_api_key = st.text_input("OpenAI API Key", type="password", help="Required for the Tutor tab.")
+        st.caption("Your key is not stored permanently.")
+
+    st.markdown("---")
     st.markdown("Created by **Syahbana**")
     st.markdown("[https://github.com/sizzlins/kalkulator-ai](https://github.com/sizzlins/kalkulator-ai)")
 
 # --- MAIN ---
 
 # --- TABS ---
-tab1, tab2 = st.tabs(["🖥️ GUI Mode", "⌨️ Terminal Mode"])
+tab1, tab2, tab3 = st.tabs(["🖥️ GUI Mode", "⌨️ Terminal Mode", "🤖 AI Tutor"])
+
+# Global Session State for Chat
+if "messages" not in st.session_state:
+    st.session_state.messages = [
+        {"role": "assistant", "content": "Hello! I'm your math tutor. Run an evolution first, then ask me about the results!"}
+    ]
+
+with tab3:
+    st.markdown("### 🤖 Math Tutor")
+    st.caption("Powered by OpenAI via LangChain (requires API Key)")
+    
+    # Display chat messages
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+            
+    # Chat Input
+    if prompt := st.chat_input("Ask about your function..."):
+        # Add user message
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+            
+        # Check API Key
+        if not openai_api_key:
+            with st.chat_message("assistant"):
+                st.error("Please enter your OpenAI API Key in the sidebar settings to continue.")
+        else:
+            with st.chat_message("assistant"):
+                message_placeholder = st.empty()
+                full_response = ""
+                
+                # Construct Context from Session State (if exists)
+                context_str = "No specific result yet."
+                if 'last_result_model' in st.session_state:
+                     context_str = f"""
+                     User has discovered this model: {st.session_state.last_result_model}
+                     Error (MSE): {st.session_state.get('last_result_mse', 'N/A')}
+                     Complexity: {st.session_state.get('last_result_complexity', 'N/A')}
+                     Original Data: {st.session_state.get('last_input_data', 'N/A')}
+                     """
+                
+                try:
+                    import openai
+                    client = openai.OpenAI(api_key=openai_api_key)
+                    
+                    system_prompt = f"""You are a friendly mathematician and tutor. 
+                    The user has used a Symbolic Regression AI to find a formula from data.
+                    Here is the context of their latest run:
+                    {context_str}
+                    
+                    Explain the math simply. If they ask 'Is this correct?', analyze the formula vs the data.
+                    If the formula has weird terms like 'primepi' or 'floor', explain why the AI might have chosen them (e.g. overfitting vs genuine pattern).
+                    Be concise and encouraging.
+                    """
+                    
+                    stream = client.chat.completions.create(
+                        model="gpt-4o", # Or gpt-3.5-turbo
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            *st.session_state.messages
+                        ],
+                        stream=True,
+                    )
+                    
+                    for chunk in stream:
+                        if chunk.choices[0].delta.content is not None:
+                            full_response += chunk.choices[0].delta.content
+                            message_placeholder.markdown(full_response + "▌")
+                            
+                    message_placeholder.markdown(full_response)
+                    st.session_state.messages.append({"role": "assistant", "content": full_response})
+                    
+                except Exception as e:
+                    st.error(f"LLM Error: {e}")
 
 with tab1:
     col1, col2 = st.columns([1, 1])
@@ -208,6 +290,14 @@ with tab1:
                     
                     if best_sol:
                         st.balloons()
+                        
+                        # Save Context for AI Tutor
+                        st.session_state.last_result_model = best_sol.expression
+                        st.session_state.last_result_mse = f"{best_sol.mse:.2e}"
+                        st.session_state.last_result_complexity = best_sol.complexity
+                        st.session_state.last_input_data = user_input if input_method == "Text Input" else "Uploaded CSV data"
+                        
+                        st.toast("Result found! Go to the 'AI Tutor' tab to ask questions about it ->", icon="🤖")
                         
                         # Show Result
                         with col2:

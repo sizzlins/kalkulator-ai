@@ -12,6 +12,9 @@ numpy>=1.24.0
 streamlit>=1.30.0
 matplotlib>=3.8.0
 
+# AI / LLM
+openai>=1.0.0
+
 # Data Manipulation
 pandas>=2.0.0
 
