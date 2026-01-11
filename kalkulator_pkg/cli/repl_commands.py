@@ -717,6 +717,22 @@ def generate_pattern_seeds(X, y, variable_names, verbose=False):
     if fractal_patterns:
         seeds.extend(fractal_patterns)
 
+    # 10. Complex Data Seeds (when data has complex values)
+    # Seed with I*x and related expressions to help find functions like f(x) = i*x
+    has_complex = np.iscomplexobj(X) or np.iscomplexobj(y)
+    if has_complex:
+        complex_seeds = [
+            "I*x",           # f(x) = i*x (most common)
+            "x*I",           # same, different order
+            "I*x + 1",       # with offset
+            "I*x**2",        # quadratic version
+            "exp(I*x)",      # complex exponential (Euler)
+            "I",             # constant i
+        ]
+        if verbose:
+            print(f"   Complex Analysis: Seeding with imaginary unit expressions")
+        seeds.extend(complex_seeds)
+
     # =========================================================================
     # PRIORITY 2: Exploratory / Combinatorial Patterns
     # These produce many seeds (Singularities, Rationals, Compositions).
