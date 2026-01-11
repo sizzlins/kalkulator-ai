@@ -146,6 +146,20 @@ with tab1:
                 def write(self, message):
                     # Filter out purely empty newlines to save space if needed
                     # but keeping format is better.
+                    
+                    # Optional: Standardize notation in logs too
+                    if 'X_data' in locals() or 'X_data' in globals():
+                         # We are inside the function where X_data is defined, 
+                         # but to be safe we can just blindly replace if we know it's 1D context.
+                         # Actually, simpler: create StreamlitLogger with 'is_1d' flag.
+                         pass
+
+                    # Just hard replace x0 with x for now in logs if it looks like math?
+                    # Or rely on scope.
+                    # Since this class is defined inside the block where X_data exists:
+                    if X_data is not None and len(X_data.shape) > 1 and X_data.shape[1] == 1:
+                        message = message.replace("x0", "x")
+
                     self.log_history.append(message)
                     # Show last 30 lines to keep UI snappy
                     full_text = "".join(self.log_history)
