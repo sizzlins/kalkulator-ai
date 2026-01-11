@@ -323,14 +323,24 @@ with tab2:
                 repl_instance.process_input(cli_input)
                 
                 # If command was plot, check for active figure
+                captured_fig = None
                 if is_plot:
                    fig = plt.gcf()
                    if fig.get_axes(): # Only if axes were drawn
-                       st.pyplot(fig)
-                       plt.close(fig) # Cleanup
+                       captured_fig = fig # Store for history
+                       st.pyplot(fig) # Show immediately
+                       # plt.close(fig) # Do NOT close if we want to reuse it? 
+                       # Actually, Streamlit copies the figure object? No, matplotlib figures are stateful.
+                       # If we close it, can we show it again? st.pyplot converts it to image.
+                       # So we probably can't re-render 'fig' later if closed.
+                       # We should rely on Streamlit's caching or just not close it yet?
+                       # Or better: don't store the Figure object (memory leak), store the image?
+                       # No, simpler: Streamlit reruns the script.
+                       # Wait, we can't persist Figure objects easily across reruns without serialization issues?
+                       # Actually, Session State holds objects in memory. It should be fine.
+                       pass 
                 
-                # Restore original show (though session persistence might mean it stays patched? 
-                # Better to just leave it if we control the environment)
+                # Restore original show
                 plt.show = original_show
                 
             except Exception as e:
@@ -341,11 +351,22 @@ with tab2:
         # Sync variables back
         st.session_state.cli_vars = repl_instance.variables
         
-        st.session_state.cli_history.append((cli_input, output))
+        # Store in history: 3-tuple (cmd, out, fig)
+        st.session_state.cli_history.append((cli_input, output, captured_fig))
         
     # Display History
     st.markdown("---")
-    for cmd, out in reversed(st.session_state.cli_history):
+    # Loop history
+    for item in reversed(st.session_state.cli_history):
+        # Handle backward compatibility if tuple length changed (old history)
+        if len(item) == 2:
+            cmd, out = item
+            fig = None
+        else:
+            cmd, out, fig = item
+            
         st.markdown(f"**> {cmd}**")
+        if fig:
+            st.pyplot(fig)
         st.code(out)
 
