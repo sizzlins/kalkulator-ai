@@ -131,7 +131,35 @@ with tab1:
 
     with col1: # Put button below input
         if parsed_sucess and st.button("🧬 Evolve Function", use_container_width=True):
-            with st.spinner("Evolving... (This may take a moment)"):
+            
+            # Create a placeholder for logs
+            st.markdown("### 📜 Execution Logs")
+            log_container = st.empty()
+            
+            # Custom Logger to redirect stdout to Streamlit
+            class StreamlitLogger(object):
+                def __init__(self, elem):
+                    self.elem = elem
+                    self.log_history = []
+                    
+                def write(self, message):
+                    # Filter out purely empty newlines to save space if needed
+                    # but keeping format is better.
+                    self.log_history.append(message)
+                    # Show last 30 lines to keep UI snappy
+                    full_text = "".join(self.log_history)
+                    # Use code block for monospaced log look
+                    self.elem.code(full_text[-3000:], language="text")
+                    
+                    # Also write to original stdout
+                    import sys
+                    sys.__stdout__.write(message)
+                    
+                def flush(self):
+                    import sys
+                    sys.__stdout__.flush()
+
+            with st.spinner("Evolving... (See logs below)"):
                 try:
                     # Configure engine
                     config = GeneticConfig(
@@ -143,14 +171,19 @@ with tab1:
                     
                     regressor = GeneticSymbolicRegressor(config)
                     
-                    # Status placeholder
-                    status_text = st.empty()
-                    status_text.text("Initializing population...")
+                    # Redirect stdout
+                    import sys
+                    original_stdout = sys.stdout
+                    sys.stdout = StreamlitLogger(log_container)
                     
-                    # Capture stdout? Hard in streamlit. Just run it.
-                    pareto = regressor.fit(X_data, y_data)
+                    try:
+                        # Run fit
+                        pareto = regressor.fit(X_data, y_data)
+                    finally:
+                        # Restore stdout
+                        sys.stdout = original_stdout
                     
-                    status_text.text("Evolution complete!")
+                    st.success("Evolution complete!")
                     
                     # Get best
                     best_sol = pareto.get_best()
@@ -215,6 +248,9 @@ with tab1:
                         st.error("No solution found.")
                         
                 except Exception as e:
+                    # Restore stdout in case of error
+                    import sys
+                    sys.stdout = sys.__stdout__
                     st.error(f"Engine Error: {e}")
                     st.exception(e)
 
