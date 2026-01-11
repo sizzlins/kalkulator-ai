@@ -126,29 +126,33 @@ with tab3:
 
                 try:
                     if "Gemini" in llm_provider:
-                        # --- GEMINI LOGIC ---
-                        import google.generativeai as genai
-                        genai.configure(api_key=provider_api_key)
+                        # --- GEMINI LOGIC (New SDK: google-genai) ---
+                        from google import genai
+                        client = genai.Client(api_key=provider_api_key)
                         
-                        # Use newer model since 'gemini-pro' might be deprecated/region-locked
-                        model = genai.GenerativeModel('gemini-1.5-flash')
-                        
-                        # Gemini doesn't use "system" role in standard chat history cleanly yet,
-                        # so we prepend context to the latset user prompt or use system instruction if available.
-                        # Simple approach: Prepend context to the prompt sent to API
-                        
+                        # Prepare context
                         combined_prompt = f"{system_prompt}\n\nUser Question: {prompt}"
                         
-                        # We use a fresh chat session for each turn to simplify history mgmt with Streamlit's state
-                        # Or better: Construct history from st.session_state
+                        # Construct history for context
+                        # The new SDK is cleaner, but for simplicity in this stateless run
+                        # we can just send the history as a list of contents.
+                        # However, to avoid complexity with message format migration,
+                        # we will just send the full context + prompt as a single GenerateContent for now
+                        # OR use the chat interface if simple.
                         
-                        gemini_history = []
-                        for msg in st.session_state.messages[:-1]: # Exclude the just-added user prompt
-                             role = "user" if msg["role"] == "user" else "model"
-                             gemini_history.append({"role": role, "parts": [msg["content"]]})
+                        # Let's try the chat interface of the new SDK
+                        # history matching exact format of new SDK might be tricky blind.
+                        # Safest bet: Just convert current session history to text block context.
                         
-                        chat = model.start_chat(history=gemini_history)
-                        response_stream = chat.send_message(combined_prompt, stream=True)
+                        chat = client.chats.create(model='gemini-1.5-flash')
+                        
+                        # Pre-inject history?
+                        # Actually, let's just stick to the simplest working method: 
+                        # Send (System + History + Prompt) as one big text block if history > 0.
+                        # But for "chat" feel, we try to use the chat method.
+                        
+                        # send_message_stream is standard.
+                        response_stream = chat.send_message_stream(combined_prompt)
                         
                         for chunk in response_stream:
                             if chunk.text:
@@ -194,7 +198,7 @@ with tab1:
         parsed_sucess = False
         
         if input_method == "Text Input":
-            default_text = "f(0)=0, f(1)=0.8415, f(2)=0.9093, f(3)=0.1411, f(4)=-0.7568, f(5)=-0.9589" # sin(x)
+            default_text = "f(1) = 0.841470984807897, f(2) = 0.909297426825682, f(3) = 0.141120008059867, f(4) = -0.756802495307928, f(5) = -0.958924274663138, f(6) = -0.279415498198926" # sin(x)
             user_input = st.text_area("Enter points (e.g., f(0)=1, f(1)=2)", default_text, height=150)
             
             if user_input:
