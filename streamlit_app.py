@@ -41,6 +41,26 @@ st.markdown("""
 st.title("🧠 Kalkulator AI")
 st.markdown("### Symbolic Regression Engine")
 
+# --- BROADCAST BANNER ---
+import os
+import json
+from datetime import datetime
+import uuid
+
+broadcast_file = os.path.join(os.path.dirname(__file__), "broadcast.txt")
+if os.path.exists(broadcast_file):
+    try:
+        with open(broadcast_file, "r") as f:
+            broadcast_msg = f.read().strip()
+        if broadcast_msg:
+            st.warning(f"📢 **Admin Notice:** {broadcast_msg}")
+    except:
+        pass
+
+# --- SESSION ID FOR PRESENCE ---
+if 'session_id' not in st.session_state:
+    st.session_state.session_id = str(uuid.uuid4())[:8]
+
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("Settings")
@@ -135,6 +155,41 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("Created by **Syahbana**")
     st.markdown("[https://github.com/sizzlins/kalkulator-ai](https://github.com/sizzlins/kalkulator-ai)")
+    
+    st.markdown("---")
+    
+    # --- REPORT ISSUE ---
+    with st.expander("📝 Report Issue / Feedback"):
+        report_text = st.text_area("Describe the issue or feedback:", height=100, key="report_text")
+        report_email = st.text_input("Your email (optional):", key="report_email")
+        
+        if st.button("Submit Report", key="submit_report"):
+            if report_text.strip():
+                try:
+                    reports_file = os.path.join(os.path.dirname(__file__), "reports.json")
+                    reports = []
+                    if os.path.exists(reports_file):
+                        with open(reports_file, "r") as f:
+                            reports = json.load(f)
+                    
+                    reports.append({
+                        "timestamp": datetime.now().isoformat(),
+                        "session_id": st.session_state.session_id,
+                        "message": report_text.strip(),
+                        "email": report_email.strip() if report_email else None
+                    })
+                    
+                    with open(reports_file, "w") as f:
+                        json.dump(reports, f, indent=2)
+                    
+                    st.success("✅ Report submitted! Thank you for your feedback.")
+                except Exception as e:
+                    st.error(f"Failed to submit: {e}")
+            else:
+                st.warning("Please enter a message.")
+    
+    # --- PRESENCE INDICATOR ---
+    st.caption(f"Session: `{st.session_state.session_id}`")
 
 # --- MAIN ---
 
