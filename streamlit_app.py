@@ -299,17 +299,25 @@ with tab1:
         parsed_sucess = False
         
         if input_method == "Text Input":
-            # Initialize text area key if not exists
-            if 'gui_input_text' not in st.session_state:
-                st.session_state.gui_input_text = "f(1) = 0.841470984807897, f(2) = 0.909297426825682, f(3) = 0.141120008059867, f(4) = -0.756802495307928, f(5) = -0.958924274663138, f(6) = -0.279415498198926" # sin(x)
+            # Dynamic key versioning: Changing the key forces Streamlit to create fresh widget
+            if 'textarea_version' not in st.session_state:
+                st.session_state.textarea_version = 0
             
-            # Check if AI Tutor suggested data
+            textarea_key = f"gui_input_v{st.session_state.textarea_version}"
+            
+            # Check if AI Tutor suggested data - if so, bump version and set new key
             if 'prefill_for_gui' in st.session_state:
-                st.session_state.gui_input_text = st.session_state.prefill_for_gui
+                st.session_state.textarea_version += 1
+                textarea_key = f"gui_input_v{st.session_state.textarea_version}"
+                st.session_state[textarea_key] = st.session_state.prefill_for_gui
+                del st.session_state.prefill_for_gui
                 st.success("✨ AI-suggested data loaded! Click 'Evolve Function' to discover the formula.")
-                del st.session_state.prefill_for_gui # Clear after use
             
-            user_input = st.text_area("Enter points (e.g., f(0)=1, f(1)=2)", key="gui_input_text", height=150)
+            # Initialize default if this version's key doesn't exist
+            if textarea_key not in st.session_state:
+                st.session_state[textarea_key] = "f(1) = 0.841470984807897, f(2) = 0.909297426825682, f(3) = 0.141120008059867, f(4) = -0.756802495307928, f(5) = -0.958924274663138, f(6) = -0.279415498198926"
+            
+            user_input = st.text_area("Enter points (e.g., f(0)=1, f(1)=2)", key=textarea_key, height=150)
             
             if user_input:
                 # Parse regex like CLI
