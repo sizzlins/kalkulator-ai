@@ -61,8 +61,14 @@ with st.sidebar:
         
         if "Gemini" in llm_provider:
              # Add specific model selector for Gemini users (especially Pro/Paid users)
-             selected_model = st.selectbox("Model", ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash"])
-             provider_api_key = st.text_input("Gemini API Key", type="password", help="Required for Gemini. Link billing in AI Studio for higher limits.")
+             model_choice = st.selectbox("Model", ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash", "Custom..."])
+             
+             if model_choice == "Custom...":
+                 selected_model = st.text_input("Enter Model Name (e.g. gemini-1.0-pro)", "gemini-1.5-flash")
+             else:
+                 selected_model = model_choice
+                 
+             provider_api_key = st.text_input("Gemini API Key", type="password", help="Required for Gemini. Note: 'Gemini Advanced' subscription does NOT cover API usage. API requires Google Cloud billing.")
              st.caption("Get a free key at aistudio.google.com")
         else:
              selected_model = "gpt-4o"
