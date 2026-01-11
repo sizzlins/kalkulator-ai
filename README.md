@@ -67,7 +67,7 @@ Kalkulator now includes a modern web interface with interactive plotting and "Te
 streamlit run streamlit_app.py
 ```
 
-Visit `http://localhost:8501` (or the URL displayed) to access the GUI.
+Visit `https://kalkulator-ai-kizuhr2wsgshcy4jbjw8zt.streamlit.app` (or the URL displayed) to access the GUI.
 
 Or
 
