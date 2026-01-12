@@ -50,7 +50,8 @@ import uuid
 broadcast_file = os.path.join(os.path.dirname(__file__), "broadcast.txt")
 if os.path.exists(broadcast_file):
     try:
-        with open(broadcast_file, "r", encoding="utf-8") as f:
+        # Use utf-8-sig to handle BOM from Windows PowerShell
+        with open(broadcast_file, "r", encoding="utf-8-sig") as f:
             broadcast_msg = f.read().strip()
         if broadcast_msg and not broadcast_msg.startswith("#"):  # Ignore comments
             st.warning(f"📢 **Admin Notice:** {broadcast_msg}")
