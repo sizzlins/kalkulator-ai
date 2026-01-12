@@ -6,8 +6,7 @@ import re
 import matplotlib.pyplot as plt
 from kalkulator_pkg.symbolic_regression.genetic_engine import GeneticSymbolicRegressor, GeneticConfig
 
-# Import REPL at module level (once at startup, not per-command)
-from kalkulator_pkg.cli.repl_core import REPL
+# Note: REPL is imported lazily inside Terminal tab to reduce startup memory
 
 # Page config
 st.set_page_config(
@@ -668,7 +667,9 @@ with tab2:
             submitted = st.form_submit_button("Run")
     
     if submitted and cli_input:
-        # REPL is imported at module level to avoid repeated heavy imports
+        # Lazy import REPL only when Terminal is actually used
+        from kalkulator_pkg.cli.repl_core import REPL
+        
         # Initialize REPL with session variables
         repl_instance = REPL()
         repl_instance.variables = st.session_state.cli_vars
