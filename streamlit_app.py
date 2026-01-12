@@ -520,7 +520,11 @@ with tab1:
             with st.spinner("Evolving... (See logs below)"):
                 try:
                     # Lazy import to reduce startup memory
+                    # Lazy import to reduce startup memory
                     from kalkulator_pkg.symbolic_regression.genetic_engine import GeneticSymbolicRegressor, GeneticConfig
+                    from kalkulator_pkg.symbolic_regression.pareto_front import ParetoFront, ParetoSolution 
+                    from kalkulator_pkg.function_manager import find_function_from_data
+                    import sympy as sp
                     from kalkulator_pkg.function_manager import find_function_from_data
                     # Import our new Forensic Analysis module
                     from kalkulator_pkg.symbolic_regression.forensic_analysis import generate_pattern_seeds
@@ -604,7 +608,38 @@ with tab1:
                             X_train = X_data
                             y_train = y_data
                             
-                        pareto = regressor.fit(X_train, y_train)
+                            X_train = X_data
+                            y_train = y_data
+                            
+                        # ENABLE MULTI-SPACE EVOLUTION (Matches 'alt' command)
+                        # This tries evolving in Direct, Log, and Inverse spaces simultaneously
+                        st.info("🌌 Multi-Space Mode: Evolving in Direct, Log, and Inverse spaces...")
+                        best_expr, best_mse, best_space = regressor.fit_with_transformations(X_train, y_train, input_vars)
+                        
+                        # Manually construct ParetoFront from best result (fit_with_transformations returns tuple)
+                        pareto = ParetoFront()
+                        if best_expr:
+                            # Calculate complexity
+                            try:
+                                from kalkulator_pkg.symbolic_regression.expression_tree import ExpressionTree
+                                symbols = {v: sp.Symbol(v) for v in input_vars}
+                                sympy_expr = sp.sympify(best_expr, locals=symbols)
+                                tree = ExpressionTree.from_sympy(sympy_expr, input_vars)
+                                complexity = tree.complexity()
+                            except:
+                                complexity = 10.0 # Fallback
+                                
+                            solution = ParetoSolution(
+                                expression=best_expr,
+                                mse=best_mse,
+                                complexity=complexity,
+                                r2=0.0 # Not calculated here but fine
+                            )
+                            pareto.add(solution)
+                            
+                            # Show which space won
+                            if best_space != "direct":
+                                st.success(f"🚀 Solution found in transformed space: {best_space.upper()}")
                     finally:
                         # Restore stdout
                         sys.stdout = original_stdout
