@@ -54,8 +54,8 @@ def weighted_mse(y_true, y_pred, weights=None):
 class GeneticConfig:
     """Configuration for Genetic Symbolic Regression."""
 
-    population_size: int = 500
-    n_islands: int = 4
+    population_size: int = 200  # Reduced from 500 for cloud memory
+    n_islands: int = 2  # Reduced from 4 for cloud memory
     generations: int = 100
     tournament_size: int = 5
     crossover_rate: float = 0.7
