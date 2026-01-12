@@ -592,27 +592,48 @@ with tab1:
                                     
                                     # Create dataframe for Altair/Streamlit
                                     # It's easier to use matplotlib for explicit control
-                                    fig, ax = plt.subplots(figsize=(10, 5))
-                                    ax.scatter(X_data, y_data, color='red', label='Data Points', zorder=5)
-                                    ax.plot(x_plot, y_pred_plot, color='blue', label='Discovered: ' + display_expr[:30] + '...', linewidth=2)
-                                    ax.grid(True, alpha=0.3)
-                                    ax.legend()
-                                    ax.set_title("Data vs Model")
+                                    import plotly.graph_objects as go
                                     
-                                    # Style
-                                    ax.set_facecolor('#0e1117')
-                                    fig.patch.set_facecolor('#0e1117')
-                                    ax.tick_params(colors='white')
-                                    ax.xaxis.label.set_color('white')
-                                    ax.yaxis.label.set_color('white')
-                                    ax.spines['top'].set_color('white')
-                                    ax.spines['bottom'].set_color('white')
-                                    ax.spines['left'].set_color('white')
-                                    ax.spines['right'].set_color('white')
-                                    # Legend text
-                                    plt.setp(ax.get_legend().get_texts(), color='black') # Matplotlib legend is usually white bg
+                                    # Create interactive plot
+                                    fig = go.Figure()
                                     
-                                    st.pyplot(fig)
+                                    # 1. Scatter Plot for Data (Red Balls)
+                                    fig.add_trace(go.Scatter(
+                                        x=X_data.flatten(), 
+                                        y=y_data,
+                                        mode='markers',
+                                        name='Data Points',
+                                        marker=dict(size=12, color='#ff2b2b', line=dict(width=2, color='white')),
+                                        hovertemplate="<b>Input (x):</b> %{x}<br><b>Target (y):</b> %{y}<extra></extra>"
+                                    ))
+                                    
+                                    # 2. Line Plot for Discovered Function (Blue Line)
+                                    fig.add_trace(go.Scatter(
+                                        x=x_plot.flatten(),
+                                        y=y_pred_plot,
+                                        mode='lines',
+                                        name=f"Function: {display_expr[:30]}..." if len(display_expr) > 30 else f"f(x) = {display_expr}",
+                                        line=dict(color='#0068c9', width=4),
+                                        hovertemplate="<b>Prediction:</b> %{y:.4f}<extra></extra>"
+                                    ))
+
+                                    # Layout styling for Dark Mode & "Premium Fee"
+                                    fig.update_layout(
+                                        title=dict(text="Data vs Discovered Model", font=dict(size=20, color='white')),
+                                        xaxis=dict(title="Input (x)", showgrid=True, gridcolor='#333', zerolinecolor='#666'),
+                                        yaxis=dict(title="Output (y)", showgrid=True, gridcolor='#333', zerolinecolor='#666'),
+                                        paper_bgcolor='rgba(0,0,0,0)',  # Transparent background
+                                        plot_bgcolor='rgba(0,0,0,0)',
+                                        font=dict(color='white'),
+                                        hovermode="x unified",  # Nice comparison on hover
+                                        legend=dict(
+                                            yanchor="top", y=0.99, xanchor="left", x=0.01,
+                                            bgcolor="rgba(0,0,0,0.5)"
+                                        ),
+                                        margin=dict(l=40, r=40, t=40, b=40)
+                                    )
+                                    
+                                    st.plotly_chart(fig, use_container_width=True)
                                     
                                 except Exception as e:
                                     st.error(f"Plotting error: {e}")
