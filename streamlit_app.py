@@ -656,8 +656,26 @@ with tab2:
         st.session_state.cli_history = []
     if 'cli_vars' not in st.session_state:
         st.session_state.cli_vars = {}
+    if 'terminal_mode' not in st.session_state:
+        st.session_state.terminal_mode = "lite"  # Default to lite mode
+    
+    # Mode toggle
+    col_mode, col_info = st.columns([1, 3])
+    with col_mode:
+        terminal_mode = st.radio(
+            "Mode",
+            ["lite", "full"],
+            index=0 if st.session_state.terminal_mode == "lite" else 1,
+            horizontal=True,
+            help="Lite = fast, Full = heavy (may crash on cloud)"
+        )
+        st.session_state.terminal_mode = terminal_mode
+    with col_info:
+        if terminal_mode == "lite":
+            st.caption("🚀 **Lite Mode**: Fast sympy-based evaluator")
+        else:
+            st.caption("⚠️ **Full Mode**: Uses heavy REPL (may cause MemoryError on cloud)")
         
-    # Input
     # Input Form
     with st.form("terminal_form", clear_on_submit=True):
         col_in, col_btn = st.columns([6, 1])
@@ -674,12 +692,45 @@ with tab2:
         output = ""
         captured_fig = None
         
-        try:
-            # Check for special commands first
-            cmd_lower = cli_input.strip().lower()
+        # Check if FULL mode is enabled - use the heavy REPL
+        if st.session_state.terminal_mode == "full":
+            try:
+                from kalkulator_pkg.cli.repl_core import REPL
+                
+                repl_instance = REPL()
+                repl_instance.variables = st.session_state.cli_vars
+                
+                f = io.StringIO()
+                with contextlib.redirect_stdout(f):
+                    # Monkey-patch plt.show
+                    original_show = plt.show
+                    plt.show = lambda: None
+                    
+                    is_plot = cli_input.strip().lower().startswith("plot")
+                    repl_instance.process_input(cli_input)
+                    
+                    if is_plot:
+                        fig = plt.gcf()
+                        if fig.get_axes():
+                            captured_fig = fig
+                            fig.set_size_inches(8, 4)
+                    
+                    plt.show = original_show
+                
+                output = f.getvalue()
+                st.session_state.cli_vars = repl_instance.variables
+            except MemoryError:
+                output = "❌ MemoryError: Switch to Lite Mode or reduce settings."
+            except Exception as e:
+                output = f"Error: {e}"
+        else:
+            # LITE MODE - lightweight sympy evaluator
+            try:
+                # Check for special commands first
+                cmd_lower = cli_input.strip().lower()
             
-            if cmd_lower == "help":
-                output = """Kalkulator AI v1.5.0 (Terminal Mode)
+                if cmd_lower == "help":
+                    output = """Kalkulator AI v1.5.0 (Terminal Mode)
 
 BASIC MATH
   1+1, 2*3, sin(pi/2)     Evaluate expressions
@@ -698,168 +749,168 @@ FUNCTION DISCOVERY
 PLOTTING
   plot sin(x)             Plot a function
 """
-            # Handle FIND command - function discovery
-            elif cmd_lower.startswith("find "):
-                data_str = cli_input[5:].strip()
-                # Parse f(x)=y pairs
-                import re
-                pairs = re.findall(r'f\(([^)]+)\)\s*=\s*([^\s,]+)', data_str)
-                if pairs:
-                    X_data = np.array([[float(x)] for x, y in pairs])
-                    y_data = np.array([float(y) for x, y in pairs])
-                    
-                    config = GeneticConfig(
-                        population_size=pop_size,
-                        generations=generations,
-                        patience=patience
-                    )
-                    regressor = GeneticSymbolicRegressor(config)
-                    
-                    # Capture output
-                    import io, contextlib
-                    f = io.StringIO()
-                    with contextlib.redirect_stdout(f):
-                        front = regressor.fit(X_data, y_data, variables=["x"])
-                    
-                    if front and front.solutions:
-                        best = front.get_best()
-                        output = f"Found: f(x) = {best.expression}\nMSE: {best.mse:.6e}"
-                    else:
-                        output = "No function found."
-                else:
-                    output = "Usage: find f(1)=1, f(2)=4, f(3)=9"
-                    
-            # Handle PLOT command
-            elif cmd_lower.startswith("plot "):
-                expr_str = cli_input[5:].strip()
-                try:
-                    expr = sp.sympify(expr_str)
-                    x_sym = sp.Symbol('x')
-                    f_lambda = sp.lambdify(x_sym, expr, modules=['numpy'])
-                    
-                    x_vals = np.linspace(-10, 10, 200)
-                    y_vals = f_lambda(x_vals)
-                    
-                    fig, ax = plt.subplots(figsize=(8, 4))
-                    ax.plot(x_vals, y_vals, 'b-', linewidth=2)
-                    ax.grid(True, alpha=0.3)
-                    ax.set_title(f"y = {expr_str}")
-                    ax.set_xlabel("x")
-                    ax.set_ylabel("y")
-                    
-                    # Dark theme
-                    ax.set_facecolor('#0e1117')
-                    fig.patch.set_facecolor('#0e1117')
-                    ax.tick_params(colors='white')
-                    ax.xaxis.label.set_color('white')
-                    ax.yaxis.label.set_color('white')
-                    ax.title.set_color('white')
-                    for spine in ax.spines.values():
-                        spine.set_color('white')
-                    
-                    captured_fig = fig
-                    output = f"Plotted: y = {expr_str}"
-                except Exception as e:
-                    output = f"Plot error: {e}"
-            elif "=" in cli_input and not cli_input.strip().startswith("="):
-                # Check if it's an equation to solve (lhs = number or lhs = 0)
-                parts = cli_input.split("=", 1)
-                lhs = parts[0].strip()
-                rhs = parts[1].strip()
-                
-                import re
-                
-                # Check if function definition: f(x) = ...
-                func_match = re.match(r'(\w+)\(([^)]+)\)', lhs)
-                if func_match:
-                    name = func_match.group(1)
-                    args = func_match.group(2)
-                    st.session_state.cli_vars[name] = {"args": args, "expr": rhs}
-                    output = f"Function '{name}' defined."
-                # Check if equation solving: expr = 0 or expr = number
-                elif rhs == "0" or re.match(r'^-?\d+\.?\d*$', rhs):
-                    # This is an equation to solve
-                    try:
-                        # Move rhs to lhs: lhs - rhs = 0
-                        if rhs != "0":
-                            equation = f"({lhs}) - ({rhs})"
-                        else:
-                            equation = lhs
+                # Handle FIND command - function discovery
+                elif cmd_lower.startswith("find "):
+                    data_str = cli_input[5:].strip()
+                    # Parse f(x)=y pairs
+                    import re
+                    pairs = re.findall(r'f\(([^)]+)\)\s*=\s*([^\s,]+)', data_str)
+                    if pairs:
+                        X_data = np.array([[float(x)] for x, y in pairs])
+                        y_data = np.array([float(y) for x, y in pairs])
                         
-                        expr = sp.sympify(equation)
-                        # Find all free symbols (variables)
-                        symbols = list(expr.free_symbols)
-                        if symbols:
-                            solutions = sp.solve(expr, symbols[0])
-                            if solutions:
-                                sol_str = ", ".join([str(s) for s in solutions])
-                                output = f"{symbols[0]} = {sol_str}"
-                            else:
-                                output = "No solution found."
+                        config = GeneticConfig(
+                            population_size=pop_size,
+                            generations=generations,
+                            patience=patience
+                        )
+                        regressor = GeneticSymbolicRegressor(config)
+                        
+                        # Capture output
+                        import io, contextlib
+                        f = io.StringIO()
+                        with contextlib.redirect_stdout(f):
+                            front = regressor.fit(X_data, y_data, variables=["x"])
+                        
+                        if front and front.solutions:
+                            best = front.get_best()
+                            output = f"Found: f(x) = {best.expression}\nMSE: {best.mse:.6e}"
                         else:
-                            output = "No variable to solve for."
-                    except Exception as e:
-                        output = f"Solve error: {e}"
-                else:
-                    # Variable assignment
+                            output = "No function found."
+                    else:
+                        output = "Usage: find f(1)=1, f(2)=4, f(3)=9"
+                    
+                # Handle PLOT command
+                elif cmd_lower.startswith("plot "):
+                    expr_str = cli_input[5:].strip()
                     try:
-                        val = sp.sympify(rhs).evalf()
-                        st.session_state.cli_vars[lhs] = float(val)
-                        output = f"{lhs} = {val}"
-                    except:
-                        output = f"Error parsing: {rhs}"
-            else:
-                # Expression evaluation
-                import re
-                
-                # Helper function to evaluate a single expression
-                def eval_single_expr(expr_str):
-                    # Substitute function calls: f(1) -> evaluate the stored function
-                    def eval_func_call(match):
-                        fname = match.group(1)
-                        fargs = match.group(2)
-                        if fname in st.session_state.cli_vars:
-                            func_def = st.session_state.cli_vars[fname]
-                            if isinstance(func_def, dict) and "args" in func_def:
-                                # It's a function - substitute args into expr
-                                param_names = [p.strip() for p in func_def["args"].split(",")]
-                                arg_vals = [a.strip() for a in fargs.split(",")]
-                                func_expr = func_def["expr"]
-                                for pname, aval in zip(param_names, arg_vals):
-                                    func_expr = re.sub(rf'\b{pname}\b', f'({aval})', func_expr)
-                                return f"({func_expr})"
-                        return match.group(0)  # Return unchanged if not found
+                        expr = sp.sympify(expr_str)
+                        x_sym = sp.Symbol('x')
+                        f_lambda = sp.lambdify(x_sym, expr, modules=['numpy'])
+                        
+                        x_vals = np.linspace(-10, 10, 200)
+                        y_vals = f_lambda(x_vals)
+                        
+                        fig, ax = plt.subplots(figsize=(8, 4))
+                        ax.plot(x_vals, y_vals, 'b-', linewidth=2)
+                        ax.grid(True, alpha=0.3)
+                        ax.set_title(f"y = {expr_str}")
+                        ax.set_xlabel("x")
+                        ax.set_ylabel("y")
+                        
+                        # Dark theme
+                        ax.set_facecolor('#0e1117')
+                        fig.patch.set_facecolor('#0e1117')
+                        ax.tick_params(colors='white')
+                        ax.xaxis.label.set_color('white')
+                        ax.yaxis.label.set_color('white')
+                        ax.title.set_color('white')
+                        for spine in ax.spines.values():
+                            spine.set_color('white')
+                        
+                        captured_fig = fig
+                        output = f"Plotted: y = {expr_str}"
+                    except Exception as e:
+                        output = f"Plot error: {e}"
+                elif "=" in cli_input and not cli_input.strip().startswith("="):
+                    # Check if it's an equation to solve (lhs = number or lhs = 0)
+                    parts = cli_input.split("=", 1)
+                    lhs = parts[0].strip()
+                    rhs = parts[1].strip()
                     
-                    # Find all function calls like f(1) or g(2, 3)
-                    expr_str = re.sub(r'(\w+)\(([^)]+)\)', eval_func_call, expr_str)
+                    import re
                     
-                    # Substitute numeric variables
-                    for var, val in st.session_state.cli_vars.items():
-                        if isinstance(val, (int, float)):
-                            expr_str = re.sub(rf'\b{var}\b', str(val), expr_str)
-                    
-                    return sp.sympify(expr_str).evalf()
-                
-                # Split by commas NOT inside parentheses (top-level commas only)
-                # Simple approach: split by ", " (comma-space pattern for chains)
-                parts = [p.strip() for p in re.split(r',\s*(?![^()]*\))', cli_input)]
-                
-                if len(parts) > 1:
-                    # Multiple expressions - evaluate each
-                    results = []
-                    for part in parts:
+                    # Check if function definition: f(x) = ...
+                    func_match = re.match(r'(\w+)\(([^)]+)\)', lhs)
+                    if func_match:
+                        name = func_match.group(1)
+                        args = func_match.group(2)
+                        st.session_state.cli_vars[name] = {"args": args, "expr": rhs}
+                        output = f"Function '{name}' defined."
+                    # Check if equation solving: expr = 0 or expr = number
+                    elif rhs == "0" or re.match(r'^-?\d+\.?\d*$', rhs):
+                        # This is an equation to solve
                         try:
-                            results.append(str(eval_single_expr(part)))
+                            # Move rhs to lhs: lhs - rhs = 0
+                            if rhs != "0":
+                                equation = f"({lhs}) - ({rhs})"
+                            else:
+                                equation = lhs
+                            
+                            expr = sp.sympify(equation)
+                            # Find all free symbols (variables)
+                            symbols = list(expr.free_symbols)
+                            if symbols:
+                                solutions = sp.solve(expr, symbols[0])
+                                if solutions:
+                                    sol_str = ", ".join([str(s) for s in solutions])
+                                    output = f"{symbols[0]} = {sol_str}"
+                                else:
+                                    output = "No solution found."
+                            else:
+                                output = "No variable to solve for."
                         except Exception as e:
-                            results.append(f"Error: {e}")
-                    output = ", ".join(results)
+                            output = f"Solve error: {e}"
+                    else:
+                        # Variable assignment
+                        try:
+                            val = sp.sympify(rhs).evalf()
+                            st.session_state.cli_vars[lhs] = float(val)
+                            output = f"{lhs} = {val}"
+                        except:
+                            output = f"Error parsing: {rhs}"
                 else:
-                    # Single expression
-                    result = eval_single_expr(cli_input)
-                    output = str(result)
-                
-        except Exception as e:
-            output = f"Error: {e}"
+                    # Expression evaluation
+                    import re
+                    
+                    # Helper function to evaluate a single expression
+                    def eval_single_expr(expr_str):
+                        # Substitute function calls: f(1) -> evaluate the stored function
+                        def eval_func_call(match):
+                            fname = match.group(1)
+                            fargs = match.group(2)
+                            if fname in st.session_state.cli_vars:
+                                func_def = st.session_state.cli_vars[fname]
+                                if isinstance(func_def, dict) and "args" in func_def:
+                                    # It's a function - substitute args into expr
+                                    param_names = [p.strip() for p in func_def["args"].split(",")]
+                                    arg_vals = [a.strip() for a in fargs.split(",")]
+                                    func_expr = func_def["expr"]
+                                    for pname, aval in zip(param_names, arg_vals):
+                                        func_expr = re.sub(rf'\b{pname}\b', f'({aval})', func_expr)
+                                    return f"({func_expr})"
+                            return match.group(0)  # Return unchanged if not found
+                        
+                        # Find all function calls like f(1) or g(2, 3)
+                        expr_str = re.sub(r'(\w+)\(([^)]+)\)', eval_func_call, expr_str)
+                        
+                        # Substitute numeric variables
+                        for var, val in st.session_state.cli_vars.items():
+                            if isinstance(val, (int, float)):
+                                expr_str = re.sub(rf'\b{var}\b', str(val), expr_str)
+                        
+                        return sp.sympify(expr_str).evalf()
+                    
+                    # Split by commas NOT inside parentheses (top-level commas only)
+                    # Simple approach: split by ", " (comma-space pattern for chains)
+                    parts = [p.strip() for p in re.split(r',\s*(?![^()]*\))', cli_input)]
+                    
+                    if len(parts) > 1:
+                        # Multiple expressions - evaluate each
+                        results = []
+                        for part in parts:
+                            try:
+                                results.append(str(eval_single_expr(part)))
+                            except Exception as e:
+                                results.append(f"Error: {e}")
+                        output = ", ".join(results)
+                    else:
+                        # Single expression
+                        result = eval_single_expr(cli_input)
+                        output = str(result)
+                    
+            except Exception as e:
+                output = f"Error: {e}"
         
         # Variables are already in st.session_state.cli_vars - no need to sync
         
