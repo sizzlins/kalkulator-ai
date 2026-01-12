@@ -6,6 +6,9 @@ import re
 import matplotlib.pyplot as plt
 from kalkulator_pkg.symbolic_regression.genetic_engine import GeneticSymbolicRegressor, GeneticConfig
 
+# Import REPL at module level (once at startup, not per-command)
+from kalkulator_pkg.cli.repl_core import REPL
+
 # Page config
 st.set_page_config(
     page_title="Kalkulator AI",
@@ -665,9 +668,7 @@ with tab2:
             submitted = st.form_submit_button("Run")
     
     if submitted and cli_input:
-        # Import the full REPL core
-        from kalkulator_pkg.cli.repl_core import REPL
-        
+        # REPL is imported at module level to avoid repeated heavy imports
         # Initialize REPL with session variables
         repl_instance = REPL()
         repl_instance.variables = st.session_state.cli_vars
