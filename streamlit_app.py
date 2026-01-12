@@ -652,7 +652,9 @@ with tab1:
                                 expression=best_expr,
                                 mse=best_mse,
                                 complexity=complexity,
-                                r2=0.0 # Not calculated here but fine
+                                # r2=0.0  <- REMOVED: ParetoSolution does not take this arg
+                                sympy_expr=sympy_expr,  # Added missing required arg
+                                tree=tree               # Added missing required arg
                             )
                             pareto.add(solution)
                             
