@@ -409,7 +409,8 @@ with tab3:
                         st.info(f"💡 **Suggested data:** `{prefill_data[:50]}...`")
                         if st.button("📋 Use this data in GUI Mode", key=f"prefill_{len(st.session_state.messages)}"):
                             st.session_state.prefill_for_gui = prefill_data
-                            st.session_state.gui_input_text = prefill_data # Directly set the key
+                            st.session_state.gui_input_data = prefill_data
+                            st.session_state["gui_textarea_widget"] = prefill_data # Update actual widget key
                             st.toast("✅ Data loaded! Switch to 'GUI Mode' tab now.", icon="📋")
                             st.rerun() # Force page refresh to apply changes
                     
@@ -781,10 +782,14 @@ with tab2:
                                  clean_lines.append(line.strip())
                         
                         if clean_lines:
-                             st.session_state.gui_input_data = ", ".join(clean_lines)
+                             data_to_send = ", ".join(clean_lines)
+                             st.session_state.gui_input_data = data_to_send
+                             st.session_state["gui_textarea_widget"] = data_to_send
                              st.toast("✅ Data sent to GUI Mode! Switch tabs to evolve.", icon="🚀")
                         else:
-                             st.session_state.gui_input_data = str(last_out).strip()
+                             data_to_send = str(last_out).strip()
+                             st.session_state.gui_input_data = data_to_send
+                             st.session_state["gui_textarea_widget"] = data_to_send
                              st.toast("✅ Output sent to GUI Mode! Switch tabs to evolve.", icon="🚀")
     # Loop history
     for item in reversed(st.session_state.cli_history):
