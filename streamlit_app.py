@@ -4,9 +4,9 @@ import numpy as np
 import pandas as pd
 import re
 import matplotlib.pyplot as plt
-from kalkulator_pkg.symbolic_regression.genetic_engine import GeneticSymbolicRegressor, GeneticConfig
 
-# Note: REPL is imported lazily inside Terminal tab to reduce startup memory
+# Note: Both genetic_engine and REPL are imported lazily to reduce startup memory
+# This allows the app to load on Streamlit Cloud's limited memory (~1GB)
 
 # Page config
 st.set_page_config(
@@ -540,6 +540,9 @@ with tab1:
 
             with st.spinner("Evolving... (See logs below)"):
                 try:
+                    # Lazy import to reduce startup memory
+                    from kalkulator_pkg.symbolic_regression.genetic_engine import GeneticSymbolicRegressor, GeneticConfig
+                    
                     # Configure engine
                     config = GeneticConfig(
                         population_size=pop_size,
@@ -756,6 +759,9 @@ PLOTTING
                     import re
                     pairs = re.findall(r'f\(([^)]+)\)\s*=\s*([^\s,]+)', data_str)
                     if pairs:
+                        # Lazy import to reduce startup memory
+                        from kalkulator_pkg.symbolic_regression.genetic_engine import GeneticSymbolicRegressor, GeneticConfig
+                        
                         X_data = np.array([[float(x)] for x, y in pairs])
                         y_data = np.array([float(y) for x, y in pairs])
                         
