@@ -531,10 +531,19 @@ with tab1:
                     seeds = []
                     try:
                         # Build data list for find(): [(x1,y1), (x2,y2)...]
+                        # CRITICAL: Filter out non-finite values (Inf/NaN) for find(), otherwise rational fit fails!
                         find_data = []
                         if X_data is not None and y_data is not None:
                             for i in range(len(y_data)):
+                                # Skip Inf/NaN/Complex for find() (Rational Analysis)
+                                if not np.isfinite(y_data[i]) or np.iscomplex(y_data[i]):
+                                    continue
+                                    
                                 x_row = tuple(X_data[i]) if X_data.ndim > 1 else (X_data[i],)
+                                # Also check inputs
+                                if not all(np.isfinite(x) for x in x_row):
+                                    continue
+                                    
                                 find_data.append((x_row, y_data[i]))
                                 
                         # Use generic variable names for finding
