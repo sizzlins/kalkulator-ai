@@ -625,7 +625,7 @@ with tab1:
                                         paper_bgcolor='rgba(0,0,0,0)',  # Transparent background
                                         plot_bgcolor='rgba(0,0,0,0)',
                                         font=dict(color='white'),
-                                        hovermode="x unified",  # Nice comparison on hover
+                                        hovermode="closest",  # Focus on the specific point hovered
                                         legend=dict(
                                             yanchor="top", y=0.99, xanchor="left", x=0.01,
                                             bgcolor="rgba(0,0,0,0.5)"
