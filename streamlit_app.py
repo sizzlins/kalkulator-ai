@@ -740,7 +740,9 @@ with tab2:
                 st.session_state.cli_vars = repl_instance.variables.copy()
 
             except MemoryError:
-                output = "❌ MemoryError: Switch to Lite Mode or reduce settings."
+                import psutil
+                mem = psutil.virtual_memory()
+                output = f"❌ MemoryError: Available: {mem.available/1024/1024:.0f}MB / Total: {mem.total/1024/1024:.0f}MB. Switch to Lite Mode."
             except Exception as e:
                 output = f"Error: {e}"
         else:
