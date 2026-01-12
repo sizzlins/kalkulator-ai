@@ -50,12 +50,12 @@ import uuid
 broadcast_file = os.path.join(os.path.dirname(__file__), "broadcast.txt")
 if os.path.exists(broadcast_file):
     try:
-        with open(broadcast_file, "r") as f:
+        with open(broadcast_file, "r", encoding="utf-8") as f:
             broadcast_msg = f.read().strip()
-        if broadcast_msg:
+        if broadcast_msg and not broadcast_msg.startswith("#"):  # Ignore comments
             st.warning(f"📢 **Admin Notice:** {broadcast_msg}")
-    except:
-        pass
+    except Exception as e:
+        st.error(f"Broadcast error: {e}")
 
 # --- SESSION ID FOR PRESENCE ---
 if 'session_id' not in st.session_state:
