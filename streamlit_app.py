@@ -522,6 +522,9 @@ with tab1:
                     # Lazy import to reduce startup memory
                     from kalkulator_pkg.symbolic_regression.genetic_engine import GeneticSymbolicRegressor, GeneticConfig
                     from kalkulator_pkg.function_manager import find_function_from_data
+                    # Import our new Forensic Analysis module
+                    from kalkulator_pkg.symbolic_regression.forensic_analysis import generate_pattern_seeds
+
                     
                     # --- HYBRID MODE: SEEDING ---
                     # Run "Rational Analysis" (find) to get high-quality seeds for rational functions
@@ -543,9 +546,22 @@ with tab1:
                         
                         if success and func_str:
                             seeds.append(func_str)
-                            st.info(f"🌱 Seed injected: {func_str}")
+                            st.info(f"🌱 Rational Seed: {func_str}")
+                            
+                        # --- PATTERN ANALYSIS (FORENSIC) ---
+                        # This enables "Sherlock Mode" for integer patterns like (x-1)/(x+1)
+                        st.info("🔍 Forensic Mode: Analyzing patterns (Singularities, Integers)...")
+                        pattern_seeds = generate_pattern_seeds(X_data, y_data, variable_names=input_vars, verbose=True)
+                        if pattern_seeds:
+                            seeds.extend(pattern_seeds)
+                            # Show first few seeds in UI
+                            display_seeds = pattern_seeds[:3]
+                            suffix = f" + {len(pattern_seeds)-3} more" if len(pattern_seeds) > 3 else ""
+                            st.info(f"🧬 Forensic Seeds detected: {', '.join(display_seeds)}{suffix}")
+                            
                     except Exception as e:
                         print(f"Hybrid seeding failed: {e}")
+
                     
                     # Configure engine with Hybrid Power
                     config = GeneticConfig(
