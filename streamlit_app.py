@@ -689,19 +689,44 @@ FUNCTION DEFINITION
 NOTE: Full CLI commands require local installation.
 """
             elif "=" in cli_input and not cli_input.strip().startswith("="):
-                # Variable/function definition
+                # Check if it's an equation to solve (lhs = number or lhs = 0)
                 parts = cli_input.split("=", 1)
                 lhs = parts[0].strip()
                 rhs = parts[1].strip()
                 
-                # Check if function definition: f(x) = ...
                 import re
+                
+                # Check if function definition: f(x) = ...
                 func_match = re.match(r'(\w+)\(([^)]+)\)', lhs)
                 if func_match:
                     name = func_match.group(1)
                     args = func_match.group(2)
                     st.session_state.cli_vars[name] = {"args": args, "expr": rhs}
                     output = f"Function '{name}' defined."
+                # Check if equation solving: expr = 0 or expr = number
+                elif rhs == "0" or re.match(r'^-?\d+\.?\d*$', rhs):
+                    # This is an equation to solve
+                    try:
+                        # Move rhs to lhs: lhs - rhs = 0
+                        if rhs != "0":
+                            equation = f"({lhs}) - ({rhs})"
+                        else:
+                            equation = lhs
+                        
+                        expr = sp.sympify(equation)
+                        # Find all free symbols (variables)
+                        symbols = list(expr.free_symbols)
+                        if symbols:
+                            solutions = sp.solve(expr, symbols[0])
+                            if solutions:
+                                sol_str = ", ".join([str(s) for s in solutions])
+                                output = f"{symbols[0]} = {sol_str}"
+                            else:
+                                output = "No solution found."
+                        else:
+                            output = "No variable to solve for."
+                    except Exception as e:
+                        output = f"Solve error: {e}"
                 else:
                     # Variable assignment
                     try:
