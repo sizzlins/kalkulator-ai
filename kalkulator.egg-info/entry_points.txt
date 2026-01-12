@@ -1,0 +1,2 @@
+[console_scripts]
+kalkulator = kalkulator_pkg.cli:main_entry

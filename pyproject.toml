@@ -1,0 +1,191 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kalkulator"
+version = "1.4.0"
+description = "Research-grade symbolic regression CLI for discovering mathematical formulas, ODEs, and causal relationships from data"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "Kalkulator Contributors"}
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Education",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "sympy>=1.12,<2.0",
+    "mpmath>=1.3.0",
+    "numpy>=1.21.0",
+    "scipy>=1.7.0",
+    "scikit-learn>=1.0.0",
+]
+
+[project.optional-dependencies]
+plotting = [
+    "matplotlib>=3.5.0",
+]
+causal = [
+    "networkx>=2.6.0",
+]
+
+[project.scripts]
+kalkulator = "kalkulator_pkg.cli:main_entry"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["kalkulator_pkg*"]
+
+[tool.black]
+line-length = 88
+target-version = ["py38", "py39", "py310", "py311"]
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | venv
+  | _build
+  | buck-out
+  | build
+  | dist
+  | __pycache__
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 88
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+force_single_line = true
+use_parentheses = true
+ensure_newline_before_comments = true
+skip = ["venv", ".venv", "__pycache__", ".git", ".mypy_cache", "build", "dist"]
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = true
+disallow_untyped_decorators = false
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+show_error_codes = true
+
+[[tool.mypy.overrides]]
+module = [
+    "sympy.*",
+    "matplotlib.*",
+    "numpy.*",
+    "mpmath.*",
+]
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 88
+target-version = "py38"
+exclude = [
+    ".git",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".mypy_cache",
+    "build",
+    "dist",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled by black)
+    "E402",  # module level import not at top (intentional for circular import avoidance)
+    "E741",  # ambiguous variable name (I is standard for current in physics)
+    "B007",  # loop control variable not used (intentional: enumerate for position tracking)
+    "B008",  # do not perform function calls in argument defaults
+    "B025",  # duplicate exception in try-except (intentional for explicit handling)
+    "C901",  # too complex
+    "F811",  # redefinition of unused (intentional for fallback/override patterns)
+    "I001",  # import block unsorted (handled by isort directly, force_single_line=true conflicts with ruff)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501", "S101"]  # Allow longer lines and assert in tests
+"kalkulator_pkg/cli/*" = ["F401"]  # Unused imports are often intentional re-exports
+"kalkulator_pkg/cli/commands/*" = ["F401"]  # Module re-exports
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--cov=kalkulator_pkg",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+    "--cov-report=xml",
+    "--cov-fail-under=0",
+]
+norecursedirs = [".*", "build", "dist", "venv", ".venv", "__pycache__"]
+testpaths = ["tests"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+]
+
+[tool.coverage.run]
+source = ["kalkulator_pkg"]
+omit = [
+    "*/tests/*",
+    "*/test_*.py",
+    "*/__pycache__/*",
+    "*/venv/*",
+    "*/.venv/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "@abstractmethod",
+]
+

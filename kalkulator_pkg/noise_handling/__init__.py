@@ -1,0 +1,35 @@
+"""Noise Handling Module.
+
+Provides robust regression and uncertainty quantification for
+handling real-world noisy data with outliers.
+
+Components:
+    - robust_regression: Huber, RANSAC, IRLS methods
+    - uncertainty: Confidence intervals, p-values, error propagation
+"""
+
+from .robust_regression import detect_outliers
+from .robust_regression import huber_loss_regression
+from .robust_regression import iteratively_reweighted_lst_sq
+from .robust_regression import ransac_regression
+from .robust_regression import robust_fit
+from .uncertainty import bootstrap_confidence_interval
+from .uncertainty import coefficient_significance
+from .uncertainty import format_with_uncertainty
+from .uncertainty import monte_carlo_uncertainty
+from .uncertainty import prediction_interval
+
+__all__ = [
+    # Robust Regression
+    "huber_loss_regression",
+    "ransac_regression",
+    "iteratively_reweighted_lst_sq",
+    "detect_outliers",
+    "robust_fit",
+    # Uncertainty Quantification
+    "bootstrap_confidence_interval",
+    "prediction_interval",
+    "coefficient_significance",
+    "monte_carlo_uncertainty",
+    "format_with_uncertainty",
+]
