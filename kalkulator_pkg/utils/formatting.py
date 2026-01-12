@@ -27,14 +27,18 @@ def format_number_no_trailing_zeros(num_str: str) -> str:
 
 
 def format_inverse_solutions(
-    result: dict, func_name: str, param_names: list, target_value: str
+    result: dict,
+    func_name: str,
+    param_names: list,
+    target_value: str,
+    printer: Any = print,
 ) -> None:
     """Format and print inverse solutions with proper domain classification."""
     if not result.get("ok"):
-        print(f"Error: {result.get('error')}")
+        printer(f"Error: {result.get('error')}")
         return
 
-    print(
+    printer(
         f"\nInverse solutions for {func_name}({', '.join(param_names)}) = {target_value}:"
     )
     domains = result.get("domains", {})
@@ -50,20 +54,20 @@ def format_inverse_solutions(
     rat_count = len(rationals) if rationals else 0
     real_count = len(reals) if reals else 0
 
-    print("\n  Summary:")
-    print(f"    Integer solutions: {int_count if int_count else 'None'}")
-    print(f"    Rational solutions: {rat_count if rat_count else 'None'}")
+    printer("\n  Summary:")
+    printer(f"    Integer solutions: {int_count if int_count else 'None'}")
+    printer(f"    Rational solutions: {rat_count if rat_count else 'None'}")
     if parametric:
-        print("    Real solutions: continuous (see parametric form)")
+        printer("    Real solutions: continuous (see parametric form)")
     elif real_count:
-        print(f"    Real solutions: {real_count}")
+        printer(f"    Real solutions: {real_count}")
     else:
-        print("    Real solutions: None")
+        printer("    Real solutions: None")
 
     # 1. Integer solutions (2 per line for compactness)
     if isinstance(integers, dict) and int_count > 0:
         sols = integers.get("solutions", [])
-        print(f"\n  Integers (exact) [{int_count} solutions]:")
+        printer(f"\n  Integers (exact) [{int_count} solutions]:")
         if len(param_names) == 2:
             # Format pairs as (x, y) - 2 per line
             pairs = [(s.get("x", "?"), s.get("y", "?")) for s in sols]
@@ -72,41 +76,41 @@ def format_inverse_solutions(
                 row = "    " + lines[i]
                 if i + 1 < len(lines):
                     row += "   " + lines[i + 1]
-                print(row)
+                printer(row)
         else:
             for sol in sols:
-                print(f"    x = {sol.get('x', '?')}")
+                printer(f"    x = {sol.get('x', '?')}")
     else:
-        print("\n  Integers: None")
+        printer("\n  Integers: None")
 
     # 2. Rational solutions
     if rationals:
-        print("\n  Rationals (exact):")
+        printer("\n  Rationals (exact):")
         for sol in rationals:
             exact = sol.get("exact", "?")
             numeric = sol.get("numeric")
             if numeric:
-                print(f"    x = {exact}  ≈ {numeric}")
+                printer(f"    x = {exact}  ≈ {numeric}")
             else:
-                print(f"    x = {exact}")
+                printer(f"    x = {exact}")
     else:
-        print("\n  Rationals: None")
+        printer("\n  Rationals: None")
 
     # 3. Real solutions (irrational) - skip if parametric covers it for 2-var
     if reals and len(param_names) == 1:
-        print("\n  Reals (exact):")
+        printer("\n  Reals (exact):")
         for sol in reals:
             exact = sol.get("exact", "?")
             numeric = sol.get("numeric")
             if numeric:
-                print(f"    x = {exact}  ≈ {numeric}")
+                printer(f"    x = {exact}  ≈ {numeric}")
             else:
-                print(f"    x = {exact}")
+                printer(f"    x = {exact}")
 
     # 4. Parametric form (for 2-variable) - primary real representation
     if parametric:
-        print("\n  Reals (parametric):")
-        print(f"    {parametric.get('form', '')},  {parametric.get('parameter', '')}")
+        printer("\n  Reals (parametric):")
+        printer(f"    {parametric.get('form', '')},  {parametric.get('parameter', '')}")
 
     # 5. Algebraic form (only for 2-variable, combined with general)
     general = domains.get("general")
@@ -114,7 +118,7 @@ def format_inverse_solutions(
         forms = general.get("forms", [])
         note = general.get("note", "")
         if forms:
-            print("\n  Reals (algebraic):")
+            printer("\n  Reals (algebraic):")
             # Combine ± forms
             if len(forms) == 2 and "sqrt" in forms[0] and "sqrt" in forms[1]:
                 # Extract the sqrt expression
@@ -124,26 +128,26 @@ def format_inverse_solutions(
                 if match:
                     inner = match.group(1)
                     sym = param_names[0]
-                    print(f"    {sym} = ±sqrt({inner})")
+                    printer(f"    {sym} = ±sqrt({inner})")
                 else:
                     for form in forms:
-                        print(f"    {form}")
+                        printer(f"    {form}")
             else:
                 for form in forms:
-                    print(f"    {form}")
+                    printer(f"    {form}")
             if note:
-                print(f"    ({note})")
+                printer(f"    ({note})")
 
     # 6. Complex solutions (only show if different from reals)
     if complex_sols and len(param_names) == 1:
-        print("\n  Complex:")
+        printer("\n  Complex:")
         for sol in complex_sols:
             exact = sol.get("exact", "?")
             numeric = sol.get("numeric")
             if numeric:
-                print(f"    x = {exact}  ≈ {numeric}")
+                printer(f"    x = {exact}  ≈ {numeric}")
             else:
-                print(f"    x = {exact}")
+                printer(f"    x = {exact}")
 
 
 def find_pi_fraction_form(
@@ -319,7 +323,10 @@ def pretty_print_expression(expr: str) -> str:
 
 
 def print_result_pretty(
-    res: dict[str, Any], output_format: str = "human", expression: str | None = None
+    res: dict[str, Any],
+    output_format: str = "human",
+    expression: str | None = None,
+    printer: Any = print,
 ) -> None:
     """Print result in specified format.
 
@@ -327,12 +334,13 @@ def print_result_pretty(
         res: Result dictionary with 'ok', 'type', 'result' keys
         output_format: 'human' or 'json'
         expression: Optional original expression to display alongside result
+        printer: Function to use for printing (defaults to built-in print)
     """
     if output_format == "json":
-        print(json.dumps(res, indent=2, ensure_ascii=False))
+        printer(json.dumps(res, indent=2, ensure_ascii=False))
         return
     if not res.get("ok"):
-        print("Error:", res.get("error"))
+        printer(f"Error: {res.get('error')}")
         return
     typ = res.get("type", "value")
     if typ == "equation":
@@ -406,7 +414,7 @@ def print_result_pretty(
             label = "Exact" if all_are_exact else "Decimal"
             
             try:
-                print(f"{label}:", ", ".join(exact_formatted))
+                printer(f"{label}: {', '.join(exact_formatted)}")
             except UnicodeEncodeError:
                 # Fallback: print without Unicode characters
                 exact_formatted_safe = []
@@ -419,7 +427,7 @@ def print_result_pretty(
                         # Replace Unicode characters with ASCII equivalents
                         safe_item = item.replace("π", "pi").replace("≈", "approx")
                         exact_formatted_safe.append(safe_item)
-                print(f"{label}:", ", ".join(exact_formatted_safe))
+                printer(f"{label}: {', '.join(exact_formatted_safe)}")
 
         # Show Approx only when result contains symbols (π, √, i, /)
         # - Hide for purely numeric results (Decimal: 12.345...) - Approx adds no value
@@ -435,7 +443,7 @@ def print_result_pretty(
                 if approx_val is not None
             )
             if approx_display:
-                print("Approx:", approx_display)
+                printer(f"Approx: {approx_display}")
     elif typ == "multi_isolate":
         sols = res.get("solutions", {})
         approx = res.get("approx", {})
@@ -446,7 +454,7 @@ def print_result_pretty(
                 )
             else:
                 formatted = format_solution(sol_list)
-            print(f"{var} = {formatted}")
+            printer(f"{var} = {formatted}")
             approx_list = approx.get(var)
             if approx_list:
                 approx_display = ", ".join(
@@ -455,36 +463,36 @@ def print_result_pretty(
                     if approx_val is not None
                 )
                 if approx_display:
-                    print(f"  Decimal: {approx_display}")
+                    printer(f"  Decimal: {approx_display}")
     elif typ == "inequality":
         for k, v in res.get("solutions", {}).items():
             formatted_v = format_inequality_solution(str(v))
-            print(f"Solution for {k}: {formatted_v}")
+            printer(f"Solution for {k}: {formatted_v}")
     elif typ == "pell":
         solution_str = res.get("solution", "")
         # Handle Unicode characters for Windows console compatibility
         try:
-            print(f"Solution: {solution_str}")
+            printer(f"Solution: {solution_str}")
         except UnicodeEncodeError:
             safe_sol = solution_str.replace("π", "pi").replace("≈", "approx")
-            print(f"Solution: {safe_sol}")
+            printer(f"Solution: {safe_sol}")
 
         # Show specific solutions if available
         if "first_solutions" in res:
-            print("First few solutions (x, y):")
+            printer("First few solutions (x, y):")
             for sol in res["first_solutions"]:
-                print(f"  ({sol[0]}, {sol[1]})")
+                printer(f"  ({sol[0]}, {sol[1]})")
     elif typ == "congruence_system":
         # Handled inside the solver logic really, but here for completeness
-        print(f"Solution: {res.get('solution')}")
+        printer(f"Solution: {res.get('solution')}")
     elif typ == "system":
         solutions = res.get("solutions", [])
         if not solutions:
-            print("No solutions found.")
+            printer("No solutions found.")
         else:
             for idx, sol in enumerate(solutions):
                 if len(solutions) > 1:
-                    print(f"\nSolution {idx + 1}:")
+                    printer(f"\nSolution {idx + 1}:")
 
                 # Format each variable assignment in the solution
                 # sol is a dict like {'x': '6', 'y': '4'}
@@ -492,24 +500,24 @@ def print_result_pretty(
                 for var, val in sol.items():
                     formatted = format_solution(str(val))
                     parts.append(f"{var} = {formatted}")
-                print(", ".join(parts))
+                printer(", ".join(parts))
     else:
         # Default value handling
         formatted_val = format_solution(str(res.get("result", "")))
         try:
             if expression:
                 pretty_expr = pretty_print_expression(expression)
-                print(f"Result: {pretty_expr} = {formatted_val}")
+                printer(f"Result: {pretty_expr} = {formatted_val}")
             else:
-                print(f"Result: {formatted_val}")
+                printer(f"Result: {formatted_val}")
         except UnicodeEncodeError:
             if expression:
                 pretty_expr = pretty_print_expression(expression)
-                print(
+                printer(
                     f"Result: {pretty_expr} = {formatted_val.encode('ascii', 'replace').decode()}"
                 )
             else:
-                print(f"Result: {formatted_val.encode('ascii', 'replace').decode()}")
+                printer(f"Result: {formatted_val.encode('ascii', 'replace').decode()}")
 
 
 def format_solution(val: Any) -> str:
