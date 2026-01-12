@@ -2000,6 +2000,37 @@ def find_function_from_data(
     # For sparse single-variable data, regression often prefers linear if boost is high.
     if n_params == 1:
         try:
+            # --- RATIONAL ANALYSIS SVD (Poles Robust) ---
+            # Try to solve P(x)/Q(x) = y using SVD on linearized form.
+            # This handles poles like (x^2+10)/(x^2-10) correctly.
+            from .function_finder_advanced import solve_rational_function_svd
+
+            X_data_svd = [
+                (
+                    [eval_to_float(p[0][0])]
+                    if isinstance(p[0], (list, tuple))
+                    else [eval_to_float(p[0])]
+                )
+                for p in data_points
+            ]
+            y_data_svd = [eval_to_float(p[1]) for p in data_points]
+            
+            # Try Degree 4/4 Rational to support cubic+ composite rational functions
+            # E.g. ((x^3-1)/(x^3+1))/x -> Degree 3/4
+            # We use 4/4 which has 10 coefficients. Requires at least 11 data points for safety.
+            max_deg = 4 if len(data_points) >= 12 else 2
+            
+            success_svd, func_svd, mse_svd = solve_rational_function_svd(
+                X_data_svd, y_data_svd, param_names, max_numerator_degree=max_deg, max_denominator_degree=max_deg
+            )
+            
+            if success_svd and mse_svd < 1e-9:
+                 return (True, func_svd, None, f"RationalSVD (MSE={mse_svd:.2e})")
+
+        except Exception:
+            pass
+            
+        try:
             X_vals = [
                 (
                     eval_to_float(p[0][0])

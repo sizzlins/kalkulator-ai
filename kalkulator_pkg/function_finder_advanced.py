@@ -1957,3 +1957,202 @@ def _add_transcendental_interactions(
                         feature_names.append(new_name)
                         count += 1
 
+
+def solve_rational_function_svd(
+    X_data: list[list[float]],
+    y_data: list[float],
+    param_names: list[str],
+    max_numerator_degree: int = 2,
+    max_denominator_degree: int = 2,
+) -> tuple[bool, str, float]:
+    """
+    Solves for a rational function P(x)/Q(x) = y using SVD on the linearized equation:
+    P(x) - y * Q(x) = 0
+    
+    This avoids division by zero errors near poles during fitting.
+    """
+    try:
+        import numpy as np
+
+        if not X_data or not y_data:
+            return False, "", 1e9
+
+        X_arr = np.array(X_data, dtype=float)
+        y_arr = np.array(y_data, dtype=float)
+        
+        # Ensure X is 2D
+        if X_arr.ndim == 1:
+            X_arr = X_arr.reshape(-1, 1)
+
+        n_samples, n_features = X_arr.shape
+        
+        # 1. Generate terms for P(x) and Q(x)
+        # We'll use simple monomials for now: 1, x, x^2
+        p_terms = [] # List of (term_name, lambda func)
+        q_terms = [] 
+        
+        # Helper to generate powers for single variable
+        # TODO: Generalized multi-variable generation if needed later
+        # For now, restrict to single variable for robust pole detection
+        if n_features == 1:
+            for d in range(max_numerator_degree + 1):
+                name = f"{param_names[0]}^{d}" if d > 1 else (param_names[0] if d == 1 else "1")
+                p_terms.append( (name, lambda x, d=d: x[0]**d) )
+            
+            for d in range(max_denominator_degree + 1):
+                name = f"{param_names[0]}^{d}" if d > 1 else (param_names[0] if d == 1 else "1")
+                q_terms.append( (name, lambda x, d=d: x[0]**d) )
+        else:
+            return False, "", 1e9
+
+        n_p = len(p_terms)
+        n_q = len(q_terms)
+        n_coeffs = n_p + n_q
+        
+        if n_samples < n_coeffs:
+             return False, "", 1e9
+
+        # 2. Build the homogeneous system matrix A
+        # Equation: p0*P0 + p1*P1 + ... - y*q0*Q0 - y*q1*Q1 ... = 0
+        A = np.zeros((n_samples, n_coeffs))
+        
+        for i in range(n_samples):
+            x_val = X_arr[i]
+            y_val = y_arr[i]
+            
+            # Fill P parts (positive)
+            for j in range(n_p):
+                A[i, j] = p_terms[j][1](x_val)
+                
+            # Fill Q parts (negative, scaled by y)
+            for j in range(n_q):
+                val = q_terms[j][1](x_val)
+                A[i, n_p + j] = -y_val * val
+                
+        # 3. Solve A * c = 0 using SVD
+        # The solution is the right singular vector corresponding to the smallest singular value
+        try:
+            U, S, Vt = np.linalg.svd(A)
+            c = Vt[-1] # Last row of Vt is the eigenvector for smallest eigenvalue
+        except np.linalg.LinAlgError:
+            return False, "", 1e9
+        
+        # 4. Extract coefficients
+        p_coeffs = c[:n_p]
+        q_coeffs = c[n_p:]
+        
+        # Check if Q is zero (trivial solution P=0, Q=0)
+        if np.max(np.abs(q_coeffs)) < 1e-6:
+             return False, "", 1e9
+
+        # 5. Symbolic Cleanup & Normalization
+        # Normalize by the largest coefficient magnitude
+        max_abs = np.max(np.abs(c))
+        c_norm = c / max_abs
+        
+        # Try to snap to integers
+        # This is a heuristic: divide by every non-zero coefficient to see if it normalizes the rest
+        best_c = c_norm
+        best_score = 1e9
+        
+        # Try dividing by every non-zero coefficient to see if it normalizes the rest
+        candidates = [val for val in c_norm if abs(val) > 0.01]
+        
+        # Optimization: Limit search if too many candidates
+        if len(candidates) > 10:
+             # Sort by magnitude and pick top 10
+             candidates.sort(key=abs, reverse=True)
+             candidates = candidates[:10]
+             
+        for ref_c in candidates:
+            candidate = c_norm / ref_c
+            # Check how close to integers
+            dist = np.sum(np.abs(candidate - np.round(candidate)))
+            if dist < best_score:
+                best_score = dist
+                best_c = candidate
+                
+        if best_score < 1e-3:
+            c_final = np.round(best_c)
+        else:
+            c_final = best_c
+            
+        p_coeffs_final = c_final[:n_p]
+        q_coeffs_final = c_final[n_p:]
+        
+        # 6. Build String
+        def build_poly(coeffs, terms):
+            parts = []
+            for i, coeff in enumerate(coeffs):
+                if abs(coeff) < 1e-6: continue
+                term_name = terms[i][0]
+                
+                # Clean coefficient
+                if abs(coeff - 1.0) < 1e-6 and term_name != "1":
+                    s = term_name
+                elif abs(coeff + 1.0) < 1e-6 and term_name != "1":
+                    s = f"-{term_name}"
+                elif term_name == "1":
+                    s = f"{int(round(coeff)) if abs(coeff-round(coeff))<1e-6 else f'{coeff:.4g}'}"
+                else:
+                    val_str = f"{int(round(coeff)) if abs(coeff-round(coeff))<1e-6 else f'{coeff:.4g}'}"
+                    s = f"{val_str}*{term_name}"
+                
+                if parts:
+                    if s.startswith("-"):
+                        parts.append(f"- {s[1:]}")
+                    else:
+                        parts.append(f"+ {s}")
+                else:
+                    parts.append(s)
+            return " ".join(parts).replace("+ -", "- ") if parts else "0"
+
+        p_str = build_poly(p_coeffs_final, p_terms)
+        q_str = build_poly(q_coeffs_final, q_terms)
+        
+        if q_str == "0":
+             return False, "Undefined", 1e9
+        
+        if q_str == "1":
+            func_str = p_str
+        elif q_str == "-1":
+             # Flip signs if denominator is -1
+             func_str = f"-({p_str})"
+        else:
+            func_str = f"({p_str})/({q_str})"
+            
+        # 7. Validation (MSE)
+        # Recalculate MSE on ORIGINAL data to verify fit
+        total_error = 0
+        valid_count = 0
+        
+        # Use simple string evaluation for speed, fallback to sympy
+        local_ns = {"x": 0.0} # Dummy
+        
+        try:
+            # Pre-compile for speed? Only needed for large N
+            import sympy as sp
+            x_sym = sp.Symbol(param_names[0])
+            expr = sp.sympify(func_str)
+            
+            for i in range(n_samples):
+                try:
+                    val = float(expr.subs(x_sym, X_arr[i][0]))
+                    total_error += (val - y_arr[i])**2
+                    valid_count += 1
+                except Exception:
+                    # Pole or other error
+                    pass
+        except:
+             return False, "EvalError", 1e9
+             
+        mse = total_error / valid_count if valid_count > 0 else 1e9
+        
+        # Penalize complexity if MSE is similar? 
+        # SVD finds Best Rational approximation anyway.
+        
+        return True, func_str, mse
+
+    except Exception:
+        return False, "", 1e9
+

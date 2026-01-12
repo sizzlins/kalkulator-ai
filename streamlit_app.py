@@ -584,10 +584,16 @@ with tab1:
                     from kalkulator_pkg.symbolic_regression.pareto_front import ParetoFront, ParetoSolution 
                     from kalkulator_pkg.function_manager import find_function_from_data
                     import sympy as sp
-                    from kalkulator_pkg.function_manager import find_function_from_data
                     # Import our new Forensic Analysis module
                     from kalkulator_pkg.symbolic_regression.forensic_analysis import generate_pattern_seeds
-
+                    
+                    # Force reload modules to ensure updates are picked up in long-running Streamlit process
+                    import importlib
+                    import kalkulator_pkg.function_manager
+                    import kalkulator_pkg.function_finder_advanced
+                    importlib.reload(kalkulator_pkg.function_finder_advanced)
+                    importlib.reload(kalkulator_pkg.function_manager)
+                    from kalkulator_pkg.function_manager import find_function_from_data
                     
                     # --- HYBRID MODE: SEEDING ---
                     # Run "Rational Analysis" (find) to get high-quality seeds for rational functions
@@ -614,11 +620,14 @@ with tab1:
                         input_vars = [param_chars[i] if i < len(param_chars) else f"x{i+1}" for i in range(X_data.shape[1])]
                         
                         st.info("🧠 Hybrid Mode: Running rational analysis optimization...")
-                        success, func_str, _, _ = find_function_from_data(find_data, input_vars)
+                        success, func_str, _, note = find_function_from_data(find_data, input_vars)
                         
                         if success and func_str:
                             seeds.append(func_str)
-                            st.info(f"🌱 Rational Seed: {func_str}")
+                            if note and "RationalSVD" in str(note):
+                                st.success(f"⚡ Rational SVD Discovery: {func_str} ({note})")
+                            else:
+                                st.info(f"🌱 Rational Seed: {func_str}")
                             
                         # --- PATTERN ANALYSIS (FORENSIC) ---
                         # This enables "Sherlock Mode" for integer patterns like (x-1)/(x+1)
