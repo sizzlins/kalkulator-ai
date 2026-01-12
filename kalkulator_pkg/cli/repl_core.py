@@ -17,7 +17,23 @@ from ..utils.numeric import solve_modulo_system_if_applicable
 from ..worker import evaluate_safely
 from .context import ReplContext
 
+import sys
+import contextlib
+import io
 logger = logging.getLogger(__name__)
+
+
+class StreamToCallback:
+    """Redirects writes to a callback function."""
+    def __init__(self, callback):
+        self.callback = callback
+
+    def write(self, buf):
+        if self.callback:
+            self.callback(buf)
+
+    def flush(self):
+        pass
 
 
 class REPL:
@@ -109,8 +125,26 @@ class REPL:
             self.print("\n[Press Ctrl+C again to exit]")
 
     def process_input(self, text: str):
-        """Dispatch input to specific handlers."""
+        """
+        Process a single line of input command.
+        """
         text = text.strip()
+        if not text:
+            return
+            
+        ctx_mgr = (
+            contextlib.redirect_stdout(StreamToCallback(self.output_callback))
+            if self.output_callback
+            else contextlib.nullcontext()
+        )
+
+        with ctx_mgr:
+            self._process_input_internal(text)
+
+    def _process_input_internal(self, text: str):
+        """Dispatch input to specific handlers."""
+        # text already stripped by wrapper
+
         
         # SANITIZATION: Strip common copy-paste artifacts for more forgiving parsing
         # Remove backticks (from markdown code blocks)
