@@ -185,25 +185,46 @@ with st.sidebar:
         if st.button("Submit Report", key="submit_report"):
             if report_text.strip():
                 try:
-                    reports_file = os.path.join(os.path.dirname(__file__), "reports.json")
-                    reports = []
-                    if os.path.exists(reports_file):
-                        with open(reports_file, "r") as f:
-                            reports = json.load(f)
+                    # Try to send email if SMTP secrets are configured
+                    smtp_configured = False
+                    if hasattr(st, 'secrets'):
+                        smtp_email = st.secrets.get("SMTP_EMAIL", "")
+                        smtp_password = st.secrets.get("SMTP_PASSWORD", "")
+                        admin_email = st.secrets.get("ADMIN_EMAIL", smtp_email)
+                        smtp_configured = bool(smtp_email and smtp_password)
                     
-                    reports.append({
-                        "timestamp": datetime.now().isoformat(),
-                        "session_id": st.session_state.session_id,
-                        "message": report_text.strip(),
-                        "email": report_email.strip() if report_email else None
-                    })
-                    
-                    with open(reports_file, "w") as f:
-                        json.dump(reports, f, indent=2)
-                    
-                    st.success("✅ Report submitted! Thank you for your feedback.")
+                    if smtp_configured:
+                        import smtplib
+                        from email.mime.text import MIMEText
+                        
+                        subject = f"[Kalkulator AI] Report from {st.session_state.session_id}"
+                        body = f"""
+New Report from Kalkulator AI
+=============================
+Session ID: {st.session_state.session_id}
+Timestamp: {datetime.now().isoformat()}
+User Email: {report_email.strip() if report_email else 'Not provided'}
+
+Message:
+{report_text.strip()}
+"""
+                        msg = MIMEText(body)
+                        msg['Subject'] = subject
+                        msg['From'] = smtp_email
+                        msg['To'] = admin_email
+                        
+                        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+                            server.login(smtp_email, smtp_password)
+                            server.sendmail(smtp_email, admin_email, msg.as_string())
+                        
+                        st.success("✅ Report sent! Thank you for your feedback.")
+                    else:
+                        # Fallback: show the report for manual copy
+                        st.success("✅ Report received! (Email not configured)")
+                        st.code(f"Session: {st.session_state.session_id}\nMessage: {report_text.strip()}")
+                        
                 except Exception as e:
-                    st.error(f"Failed to submit: {e}")
+                    st.error(f"Failed to send: {e}")
             else:
                 st.warning("Please enter a message.")
     
