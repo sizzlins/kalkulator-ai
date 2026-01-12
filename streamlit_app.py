@@ -136,13 +136,17 @@ with st.sidebar:
                  selected_model = model_choice
              
              # Use secret as default if available
-             default_gemini_key = st.secrets.get("GEMINI_API_KEY", "") if hasattr(st, 'secrets') else ""
-             provider_api_key = st.text_input(
-                 "Gemini API Key", 
-                 value=default_gemini_key,
-                 type="password", 
-                 help="Required. Set in Streamlit secrets or enter manually."
-             )
+            try:
+                default_gemini_key = st.secrets.get("GEMINI_API_KEY", "")
+            except (FileNotFoundError, Exception):
+                default_gemini_key = ""
+
+            provider_api_key = st.text_input(
+                "Gemini API Key", 
+                value=default_gemini_key,
+                type="password", 
+                help="Required. Set in Streamlit secrets or enter manually."
+            )
              if default_gemini_key:
                  st.caption("✅ Using key from Streamlit secrets")
              else:
