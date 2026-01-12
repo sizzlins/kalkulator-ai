@@ -757,23 +757,29 @@ with tab2:
             if re.search(r"f\([^)]+\)\s*=\s*", str(last_out)):
                 col_hist_info, col_send_btn = st.columns([3, 1])
                 with col_send_btn:
-                     if st.button("📋 Send Last Output to GUI", key="send_last_to_gui", help="Copy this data to the GUI Mode input box"):
-                        # Clean up: lines that look like data
+                    # Callback to safely update session state before rerun
+                    def send_to_gui_callback(output_text):
                         clean_lines = []
-                        for line in str(last_out).split('\n'):
-                             if "=" in line and "(" in line:
-                                 clean_lines.append(line.strip())
+                        for line in str(output_text).split('\n'):
+                            if "=" in line and "(" in line:
+                                clean_lines.append(line.strip())
                         
                         if clean_lines:
-                             data_to_send = ", ".join(clean_lines)
-                             st.session_state.gui_input_data = data_to_send
-                             st.session_state["gui_textarea_widget"] = data_to_send
-                             st.toast("✅ Data sent to GUI Mode! Switch tabs to evolve.", icon="🚀")
+                            data = ", ".join(clean_lines)
                         else:
-                             data_to_send = str(last_out).strip()
-                             st.session_state.gui_input_data = data_to_send
-                             st.session_state["gui_textarea_widget"] = data_to_send
-                             st.toast("✅ Output sent to GUI Mode! Switch tabs to evolve.", icon="🚀")
+                            data = str(output_text).strip()
+                        
+                        st.session_state.gui_input_data = data
+                        st.session_state["gui_textarea_widget"] = data
+                        st.toast("✅ Data sent to GUI Mode! Switch tabs to evolve.", icon="🚀")
+
+                    st.button(
+                        "📋 Send Last Output to GUI", 
+                        key="send_last_to_gui", 
+                        help="Copy this data to the GUI Mode input box",
+                        on_click=send_to_gui_callback,
+                        args=(last_out,)
+                    )
     # Loop history
     for item in reversed(st.session_state.cli_history):
         # Handle backward compatibility if tuple length changed (old history)
