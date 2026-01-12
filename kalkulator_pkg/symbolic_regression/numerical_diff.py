@@ -61,8 +61,15 @@ def compute_derivatives(
     Raises:
         ValueError: If data is not evenly spaced or insufficient points
     """
-    x = np.asarray(x, dtype=float)
-    y = np.asarray(y, dtype=float)
+    # Handle complex inputs by taking real part (ODE discovery assumes real dynamics)
+    if np.iscomplexobj(x) or np.iscomplexobj(y):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            x = np.asarray(x).real.astype(float)
+            y = np.asarray(y).real.astype(float)
+    else:
+        x = np.asarray(x, dtype=float)
+        y = np.asarray(y, dtype=float)
     
     if len(x) != len(y):
         raise ValueError(f"x and y must have same length, got {len(x)} and {len(y)}")

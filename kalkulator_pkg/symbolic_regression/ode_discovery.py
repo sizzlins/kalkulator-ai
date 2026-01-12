@@ -232,8 +232,15 @@ class ODEDiscoveryEngine:
         from .operators import point_mutation, crossover
         import random
         
-        x = np.asarray(x, dtype=float)
-        y = np.asarray(y, dtype=float)
+        # Handle complex inputs by taking real part
+        if np.iscomplexobj(x) or np.iscomplexobj(y):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                x = np.asarray(x).real.astype(float)
+                y = np.asarray(y).real.astype(float)
+        else:
+            x = np.asarray(x, dtype=float)
+            y = np.asarray(y, dtype=float)
         
         # Check/resample for even spacing
         is_even, _ = check_even_spacing(x)
@@ -357,8 +364,14 @@ class ODEDiscoveryEngine:
         """
         from .genetic_engine import GeneticSymbolicRegressor, GeneticConfig
         
-        x = np.asarray(x, dtype=float)
-        y = np.asarray(y, dtype=float)
+        if np.iscomplexobj(x) or np.iscomplexobj(y):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                x = np.asarray(x).real.astype(float)
+                y = np.asarray(y).real.astype(float)
+        else:
+            x = np.asarray(x, dtype=float)
+            y = np.asarray(y, dtype=float)
         
         # Resample if needed
         is_even, _ = check_even_spacing(x)

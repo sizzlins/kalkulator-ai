@@ -151,8 +151,11 @@ def generate_pattern_seeds(X, y, variable_names=None, verbose=False):
         if y_min > -1.01 and y_max < 1.01:
              # Try Arcsin
              try:
-                 # Avoid domain errors at edges
-                 z_arcsin = np.arcsin(np.clip(y, -0.99999, 0.99999))
+                 with warnings.catch_warnings():
+                     warnings.simplefilter("ignore")
+                     # Avoid domain errors at edges
+                     z_arcsin = np.arcsin(np.clip(y, -0.99999, 0.99999))
+                 
                  int_patterns_asin = _detect_integer_patterns(X, z_arcsin)
                  if int_patterns_asin:
                      if verbose: print(f"   Composition Analysis: Found sin({int_patterns_asin[0]})")
@@ -166,7 +169,10 @@ def generate_pattern_seeds(X, y, variable_names=None, verbose=False):
         # Try Log peeling if positive
         if y_min > 0:
              try:
-                 z_log = np.log(y)
+                 with warnings.catch_warnings():
+                     warnings.simplefilter("ignore")
+                     z_log = np.log(y)
+                 
                  int_patterns_log = _detect_integer_patterns(X, z_log)
                  if int_patterns_log:
                      if verbose: print(f"   Composition Analysis: Found exp({int_patterns_log[0]})")
@@ -177,8 +183,11 @@ def generate_pattern_seeds(X, y, variable_names=None, verbose=False):
         # Try Atanh peeling if in range (-1, 1) and looks like tanh
         if y_min > -1.01 and y_max < 1.01:
              try:
-                 # Clip slightly inside to avoid infinity
-                 z_atanh = np.arctanh(np.clip(y, -0.99999, 0.99999))
+                 with warnings.catch_warnings():
+                     warnings.simplefilter("ignore")
+                     # Clip slightly inside to avoid infinity
+                     z_atanh = np.arctanh(np.clip(y, -0.99999, 0.99999))
+                 
                  int_patterns_atanh = _detect_integer_patterns(X, z_atanh)
                  if int_patterns_atanh:
                      if verbose: print(f"   Composition Analysis: Found tanh({int_patterns_atanh[0]})")
