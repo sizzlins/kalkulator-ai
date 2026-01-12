@@ -681,21 +681,11 @@ with tab2:
         st.session_state.terminal_mode = "lite"  # Default to lite mode
     
     # Mode toggle
-    col_mode, col_info = st.columns([1, 3])
-    with col_mode:
-        terminal_mode = st.radio(
-            "Mode",
-            ["lite", "full"],
-            index=0 if st.session_state.terminal_mode == "lite" else 1,
-            horizontal=True,
-            help="Lite = fast, Full = heavy (may crash on cloud)"
-        )
-        st.session_state.terminal_mode = terminal_mode
-    with col_info:
-        if terminal_mode == "lite":
-            st.caption("🚀 **Lite Mode**: Fast sympy-based evaluator")
-        else:
-            st.caption("⚠️ **Full Mode**: Uses heavy REPL (may cause MemoryError on cloud)")
+    st.caption("Enter commands below. Supports math, function finding, and plotting.")
+    
+    # Init Full Mode defaults
+    if 'terminal_mode' in st.session_state:
+        del st.session_state.terminal_mode
         
     # Input Form
     with st.form("terminal_form", clear_on_submit=True):
@@ -713,267 +703,89 @@ with tab2:
         output = ""
         captured_fig = None
         
-        # Check if FULL mode is enabled - use the heavy REPL
-        if st.session_state.terminal_mode == "full":
-            try:
-                # Optimized: Singleton REPL instance in session state
-                if 'repl_instance' not in st.session_state:
-                    from kalkulator_pkg.cli.repl_core import REPL
-                    st.session_state.repl_instance = REPL()
-                    # Restore variables if any exists in vars backup
-                    if 'cli_vars' in st.session_state and st.session_state.cli_vars:
-                         st.session_state.repl_instance.variables = st.session_state.cli_vars.copy()
+        # FULL MODE (Standard)
+        try:
+            # Optimized: Singleton REPL instance in session state
+            if 'repl_instance' not in st.session_state:
+                from kalkulator_pkg.cli.repl_core import REPL
+                st.session_state.repl_instance = REPL()
+                # Restore variables if any exists in vars backup
+                if 'cli_vars' in st.session_state and st.session_state.cli_vars:
+                        st.session_state.repl_instance.variables = st.session_state.cli_vars.copy()
 
-                repl_instance = st.session_state.repl_instance
-                # Sync variables from UI override if needed (though usually REPL drives UI)
-                # repl_instance.variables.update(st.session_state.cli_vars) 
-                
-                # Output buffer
-                output_buffer = []
-                def capture_output(text):
-                    output_buffer.append(text)
-
-                # Initialize REPL with callback if not already set or correct it
-                if 'repl_instance' not in st.session_state:
-                    from kalkulator_pkg.cli.repl_core import REPL
-                    st.session_state.repl_instance = REPL(output_callback=capture_output)
-                    if 'cli_vars' in st.session_state and st.session_state.cli_vars:
-                         st.session_state.repl_instance.variables = st.session_state.cli_vars.copy()
-                
-                repl_instance = st.session_state.repl_instance
-                # Ensure callback is current (in case of page reload/re-instantiation issues)
-                repl_instance.output_callback = capture_output
-
-                # Monkey-patch plt.show just to block popups (allow figure capture via gcf)
-                original_show = plt.show
-                plt.show = lambda: None
-                
-                is_plot = cli_input.strip().lower().startswith("plot")
-                
-                # Clean up previous plots
-                plt.close('all')
-                
-                # Run command - output goes to output_buffer via callback
-                repl_instance.process_input(cli_input)
-                
-                if is_plot:
-                    fig = plt.gcf()
-                    if fig.get_axes():
-                        captured_fig = fig
-                        fig.set_size_inches(8, 4)
-                
-                plt.show = original_show
-                
-                output = "".join(output_buffer)
-                # Sync back vars
-                st.session_state.cli_vars = repl_instance.variables.copy()
-
-            except MemoryError:
-                import psutil
-                mem = psutil.virtual_memory()
-                output = f"❌ MemoryError: Available: {mem.available/1024/1024:.0f}MB / Total: {mem.total/1024/1024:.0f}MB. Switch to Lite Mode."
-            except Exception as e:
-                output = f"Error: {e}"
-        else:
-            # LITE MODE - lightweight sympy evaluator
-            try:
-                # Check for special commands first
-                cmd_lower = cli_input.strip().lower()
+            repl_instance = st.session_state.repl_instance
             
-                if cmd_lower == "help":
-                    output = """Kalkulator AI v1.5.0 (Terminal Mode)
+            # Output buffer
+            output_buffer = []
+            def capture_output(text):
+                output_buffer.append(text)
 
-BASIC MATH
-  1+1, 2*3, sin(pi/2)     Evaluate expressions
-  x = 5                   Define variable
-  
-FUNCTION DEFINITION
-  f(x) = x^2              Define function
-  f(1), f(2), f(3)        Call function
+            # Initialize REPL with callback if not already set or correct it
+            # Ensure callback is current (in case of page reload/re-instantiation issues)
+            repl_instance.output_callback = capture_output
+            
+            # Monkey-patch plt.show just to block popups (allow figure capture via gcf)
+            original_show = plt.show
+            plt.show = lambda: None
+            
+            is_plot = cli_input.strip().lower().startswith("plot")
+            
+            # Clean up previous plots
+            plt.close('all')
+            
+            # Run command - output goes to output_buffer via callback
+            repl_instance.process_input(cli_input)
+            
+            if is_plot:
+                fig = plt.gcf()
+                if fig.get_axes():
+                    captured_fig = fig
+                    fig.set_size_inches(8, 4)
+            
+            plt.show = original_show
+            
+            output = "".join(output_buffer)
+            # Sync back vars
+            st.session_state.cli_vars = repl_instance.variables.copy()
 
-EQUATION SOLVING
-  x^2+x-6=0               Solve for x → x = 2, -3
-
-FUNCTION DISCOVERY
-  find f(1)=1, f(2)=4, f(3)=9    Discover f(x) from data
-
-PLOTTING
-  plot sin(x)             Plot a function
-"""
-                # Handle FIND command - function discovery
-                elif cmd_lower.startswith("find "):
-                    data_str = cli_input[5:].strip()
-                    # Parse f(x)=y pairs
-                    import re
-                    pairs = re.findall(r'f\(([^)]+)\)\s*=\s*([^\s,]+)', data_str)
-                    if pairs:
-                        # Lazy import to reduce startup memory
-                        from kalkulator_pkg.symbolic_regression.genetic_engine import GeneticSymbolicRegressor, GeneticConfig
-                        
-                        X_data = np.array([[float(x)] for x, y in pairs])
-                        y_data = np.array([float(y) for x, y in pairs])
-                        
-                        config = GeneticConfig(
-                            population_size=pop_size,
-                            generations=generations,
-                            patience=patience
-                        )
-                        regressor = GeneticSymbolicRegressor(config)
-                        
-                        # Capture output
-                        import io, contextlib
-                        f = io.StringIO()
-                        with contextlib.redirect_stdout(f):
-                            front = regressor.fit(X_data, y_data, variables=["x"])
-                        
-                        if front and front.solutions:
-                            best = front.get_best()
-                            output = f"Found: f(x) = {best.expression}\nMSE: {best.mse:.6e}"
-                        else:
-                            output = "No function found."
-                    else:
-                        output = "Usage: find f(1)=1, f(2)=4, f(3)=9"
-                    
-                # Handle PLOT command
-                elif cmd_lower.startswith("plot "):
-                    expr_str = cli_input[5:].strip()
-                    try:
-                        expr = sp.sympify(expr_str)
-                        x_sym = sp.Symbol('x')
-                        f_lambda = sp.lambdify(x_sym, expr, modules=['numpy'])
-                        
-                        x_vals = np.linspace(-10, 10, 200)
-                        y_vals = f_lambda(x_vals)
-                        
-                        fig, ax = plt.subplots(figsize=(8, 4))
-                        ax.plot(x_vals, y_vals, 'b-', linewidth=2)
-                        ax.grid(True, alpha=0.3)
-                        ax.set_title(f"y = {expr_str}")
-                        ax.set_xlabel("x")
-                        ax.set_ylabel("y")
-                        
-                        # Dark theme
-                        ax.set_facecolor('#0e1117')
-                        fig.patch.set_facecolor('#0e1117')
-                        ax.tick_params(colors='white')
-                        ax.xaxis.label.set_color('white')
-                        ax.yaxis.label.set_color('white')
-                        ax.title.set_color('white')
-                        for spine in ax.spines.values():
-                            spine.set_color('white')
-                        
-                        captured_fig = fig
-                        output = f"Plotted: y = {expr_str}"
-                    except Exception as e:
-                        output = f"Plot error: {e}"
-                elif "=" in cli_input and not cli_input.strip().startswith("="):
-                    # Check if it's an equation to solve (lhs = number or lhs = 0)
-                    parts = cli_input.split("=", 1)
-                    lhs = parts[0].strip()
-                    rhs = parts[1].strip()
-                    
-                    import re
-                    
-                    # Check if function definition: f(x) = ...
-                    func_match = re.match(r'(\w+)\(([^)]+)\)', lhs)
-                    if func_match:
-                        name = func_match.group(1)
-                        args = func_match.group(2)
-                        st.session_state.cli_vars[name] = {"args": args, "expr": rhs}
-                        output = f"Function '{name}' defined."
-                    # Check if equation solving: expr = 0 or expr = number
-                    elif rhs == "0" or re.match(r'^-?\d+\.?\d*$', rhs):
-                        # This is an equation to solve
-                        try:
-                            # Move rhs to lhs: lhs - rhs = 0
-                            if rhs != "0":
-                                equation = f"({lhs}) - ({rhs})"
-                            else:
-                                equation = lhs
-                            
-                            expr = sp.sympify(equation)
-                            # Find all free symbols (variables)
-                            symbols = list(expr.free_symbols)
-                            if symbols:
-                                solutions = sp.solve(expr, symbols[0])
-                                if solutions:
-                                    sol_str = ", ".join([str(s) for s in solutions])
-                                    output = f"{symbols[0]} = {sol_str}"
-                                else:
-                                    output = "No solution found."
-                            else:
-                                output = "No variable to solve for."
-                        except Exception as e:
-                            output = f"Solve error: {e}"
-                    else:
-                        # Variable assignment
-                        try:
-                            val = sp.sympify(rhs).evalf()
-                            st.session_state.cli_vars[lhs] = float(val)
-                            output = f"{lhs} = {val}"
-                        except:
-                            output = f"Error parsing: {rhs}"
-                else:
-                    # Expression evaluation
-                    import re
-                    
-                    # Helper function to evaluate a single expression
-                    def eval_single_expr(expr_str):
-                        # Substitute function calls: f(1) -> evaluate the stored function
-                        def eval_func_call(match):
-                            fname = match.group(1)
-                            fargs = match.group(2)
-                            if fname in st.session_state.cli_vars:
-                                func_def = st.session_state.cli_vars[fname]
-                                if isinstance(func_def, dict) and "args" in func_def:
-                                    # It's a function - substitute args into expr
-                                    param_names = [p.strip() for p in func_def["args"].split(",")]
-                                    arg_vals = [a.strip() for a in fargs.split(",")]
-                                    func_expr = func_def["expr"]
-                                    for pname, aval in zip(param_names, arg_vals):
-                                        func_expr = re.sub(rf'\b{pname}\b', f'({aval})', func_expr)
-                                    return f"({func_expr})"
-                            return match.group(0)  # Return unchanged if not found
-                        
-                        # Find all function calls like f(1) or g(2, 3)
-                        expr_str = re.sub(r'(\w+)\(([^)]+)\)', eval_func_call, expr_str)
-                        
-                        # Substitute numeric variables
-                        for var, val in st.session_state.cli_vars.items():
-                            if isinstance(val, (int, float)):
-                                expr_str = re.sub(rf'\b{var}\b', str(val), expr_str)
-                        
-                        return sp.sympify(expr_str).evalf()
-                    
-                    # Split by commas NOT inside parentheses (top-level commas only)
-                    # Simple approach: split by ", " (comma-space pattern for chains)
-                    parts = [p.strip() for p in re.split(r',\s*(?![^()]*\))', cli_input)]
-                    
-                    if len(parts) > 1:
-                        # Multiple expressions - evaluate each
-                        results = []
-                        for part in parts:
-                            try:
-                                results.append(str(eval_single_expr(part)))
-                            except Exception as e:
-                                results.append(f"Error: {e}")
-                        output = ", ".join(results)
-                    else:
-                        # Single expression
-                        result = eval_single_expr(cli_input)
-                        output = str(result)
-                    
-            except Exception as e:
-                output = f"Error: {e}"
-        
-        # Variables are already in st.session_state.cli_vars - no need to sync
+        except MemoryError:
+            import psutil
+            mem = psutil.virtual_memory()
+            output = f"❌ MemoryError: Available: {mem.available/1024/1024:.0f}MB / Total: {mem.total/1024/1024:.0f}MB."
+        except Exception as e:
+            output = f"Error: {e}"
         
         # Store in history: 3-tuple (cmd, out, fig)
-        # Note: fig object is mutated (resized), so history will use new size
         st.session_state.cli_history.append((cli_input, output, captured_fig))
         
     # Display History
     st.markdown("---")
+    
+    # Feature: Send Output to GUI
+    # If the latest output contains "f(...) = ...", offer to send it to GUI input
+    if st.session_state.cli_history:
+        # Handle unpacking safely (old history might be 2-tuple)
+        last_item = st.session_state.cli_history[-1]
+        if len(last_item) == 3:
+            _, last_out, _ = last_item
+            import re
+            # Check for data pattern: f(number) = number
+            if re.search(r"f\([^)]+\)\s*=\s*", str(last_out)):
+                col_hist_info, col_send_btn = st.columns([3, 1])
+                with col_send_btn:
+                     if st.button("📋 Send Last Output to GUI", key="send_last_to_gui", help="Copy this data to the GUI Mode input box"):
+                        # Clean up: lines that look like data
+                        clean_lines = []
+                        for line in str(last_out).split('\n'):
+                             if "=" in line and "(" in line:
+                                 clean_lines.append(line.strip())
+                        
+                        if clean_lines:
+                             st.session_state.gui_input_data = ", ".join(clean_lines)
+                             st.toast("✅ Data sent to GUI Mode! Switch tabs to evolve.", icon="🚀")
+                        else:
+                             st.session_state.gui_input_data = str(last_out).strip()
+                             st.toast("✅ Output sent to GUI Mode! Switch tabs to evolve.", icon="🚀")
     # Loop history
     for item in reversed(st.session_state.cli_history):
         # Handle backward compatibility if tuple length changed (old history)
