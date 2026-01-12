@@ -676,8 +676,10 @@ with tab2:
         
         try:
             # Check for special commands first
-            if cli_input.strip().lower() == "help":
-                output = """Kalkulator AI v1.4.0 (Lite Mode)
+            cmd_lower = cli_input.strip().lower()
+            
+            if cmd_lower == "help":
+                output = """Kalkulator AI v1.5.0 (Terminal Mode)
 
 BASIC MATH
   1+1, 2*3, sin(pi/2)     Evaluate expressions
@@ -685,9 +687,80 @@ BASIC MATH
   
 FUNCTION DEFINITION
   f(x) = x^2              Define function
-  
-NOTE: Full CLI commands require local installation.
+  f(1), f(2), f(3)        Call function
+
+EQUATION SOLVING
+  x^2+x-6=0               Solve for x → x = 2, -3
+
+FUNCTION DISCOVERY
+  find f(1)=1, f(2)=4, f(3)=9    Discover f(x) from data
+
+PLOTTING
+  plot sin(x)             Plot a function
 """
+            # Handle FIND command - function discovery
+            elif cmd_lower.startswith("find "):
+                data_str = cli_input[5:].strip()
+                # Parse f(x)=y pairs
+                import re
+                pairs = re.findall(r'f\(([^)]+)\)\s*=\s*([^\s,]+)', data_str)
+                if pairs:
+                    X_data = np.array([[float(x)] for x, y in pairs])
+                    y_data = np.array([float(y) for x, y in pairs])
+                    
+                    config = GeneticConfig(
+                        population_size=pop_size,
+                        generations=generations,
+                        patience=patience
+                    )
+                    regressor = GeneticSymbolicRegressor(config)
+                    
+                    # Capture output
+                    import io, contextlib
+                    f = io.StringIO()
+                    with contextlib.redirect_stdout(f):
+                        front = regressor.fit(X_data, y_data, variables=["x"])
+                    
+                    if front and front.solutions:
+                        best = front.get_best()
+                        output = f"Found: f(x) = {best.expression}\nMSE: {best.mse:.6e}"
+                    else:
+                        output = "No function found."
+                else:
+                    output = "Usage: find f(1)=1, f(2)=4, f(3)=9"
+                    
+            # Handle PLOT command
+            elif cmd_lower.startswith("plot "):
+                expr_str = cli_input[5:].strip()
+                try:
+                    expr = sp.sympify(expr_str)
+                    x_sym = sp.Symbol('x')
+                    f_lambda = sp.lambdify(x_sym, expr, modules=['numpy'])
+                    
+                    x_vals = np.linspace(-10, 10, 200)
+                    y_vals = f_lambda(x_vals)
+                    
+                    fig, ax = plt.subplots(figsize=(8, 4))
+                    ax.plot(x_vals, y_vals, 'b-', linewidth=2)
+                    ax.grid(True, alpha=0.3)
+                    ax.set_title(f"y = {expr_str}")
+                    ax.set_xlabel("x")
+                    ax.set_ylabel("y")
+                    
+                    # Dark theme
+                    ax.set_facecolor('#0e1117')
+                    fig.patch.set_facecolor('#0e1117')
+                    ax.tick_params(colors='white')
+                    ax.xaxis.label.set_color('white')
+                    ax.yaxis.label.set_color('white')
+                    ax.title.set_color('white')
+                    for spine in ax.spines.values():
+                        spine.set_color('white')
+                    
+                    captured_fig = fig
+                    output = f"Plotted: y = {expr_str}"
+                except Exception as e:
+                    output = f"Plot error: {e}"
             elif "=" in cli_input and not cli_input.strip().startswith("="):
                 # Check if it's an equation to solve (lhs = number or lhs = 0)
                 parts = cli_input.split("=", 1)
