@@ -620,17 +620,19 @@ with tab1:
                                     # Layout styling for Dark Mode & "Premium Fee"
                                     fig.update_layout(
                                         title=dict(text="Data vs Discovered Model", font=dict(size=20, color='white')),
-                                        xaxis=dict(title="Input (x)", showgrid=True, gridcolor='#333', zerolinecolor='#666'),
-                                        yaxis=dict(title="Output (y)", showgrid=True, gridcolor='#333', zerolinecolor='#666'),
+                                        xaxis=dict(title="Input (x)", showgrid=True, gridcolor='#333', zerolinecolor='#666', fixedrange=True),
+                                        yaxis=dict(title="Output (y)", showgrid=True, gridcolor='#333', zerolinecolor='#666', fixedrange=True),
                                         paper_bgcolor='rgba(0,0,0,0)',  # Transparent background
                                         plot_bgcolor='rgba(0,0,0,0)',
                                         font=dict(color='white'),
                                         hovermode="closest",  # Focus on the specific point hovered
                                         legend=dict(
-                                            yanchor="top", y=0.99, xanchor="left", x=0.01,
-                                            bgcolor="rgba(0,0,0,0.5)"
+                                            orientation="h",
+                                            yanchor="bottom", y=1.02,
+                                            xanchor="right", x=1
                                         ),
-                                        margin=dict(l=40, r=40, t=40, b=40)
+                                        margin=dict(l=40, r=40, t=40, b=40),
+                                        dragmode=False # Disable drag interactions entirely
                                     )
                                     
                                     st.plotly_chart(fig, use_container_width=True)
