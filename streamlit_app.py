@@ -713,34 +713,52 @@ NOTE: Full CLI commands require local installation.
             else:
                 # Expression evaluation
                 import re
-                expr_str = cli_input
                 
-                # First, substitute function calls: f(1) -> evaluate the stored function
-                def eval_func_call(match):
-                    fname = match.group(1)
-                    fargs = match.group(2)
-                    if fname in st.session_state.cli_vars:
-                        func_def = st.session_state.cli_vars[fname]
-                        if isinstance(func_def, dict) and "args" in func_def:
-                            # It's a function - substitute args into expr
-                            param_names = [p.strip() for p in func_def["args"].split(",")]
-                            arg_vals = [a.strip() for a in fargs.split(",")]
-                            func_expr = func_def["expr"]
-                            for pname, aval in zip(param_names, arg_vals):
-                                func_expr = re.sub(rf'\b{pname}\b', f'({aval})', func_expr)
-                            return f"({func_expr})"
-                    return match.group(0)  # Return unchanged if not found
+                # Helper function to evaluate a single expression
+                def eval_single_expr(expr_str):
+                    # Substitute function calls: f(1) -> evaluate the stored function
+                    def eval_func_call(match):
+                        fname = match.group(1)
+                        fargs = match.group(2)
+                        if fname in st.session_state.cli_vars:
+                            func_def = st.session_state.cli_vars[fname]
+                            if isinstance(func_def, dict) and "args" in func_def:
+                                # It's a function - substitute args into expr
+                                param_names = [p.strip() for p in func_def["args"].split(",")]
+                                arg_vals = [a.strip() for a in fargs.split(",")]
+                                func_expr = func_def["expr"]
+                                for pname, aval in zip(param_names, arg_vals):
+                                    func_expr = re.sub(rf'\b{pname}\b', f'({aval})', func_expr)
+                                return f"({func_expr})"
+                        return match.group(0)  # Return unchanged if not found
+                    
+                    # Find all function calls like f(1) or g(2, 3)
+                    expr_str = re.sub(r'(\w+)\(([^)]+)\)', eval_func_call, expr_str)
+                    
+                    # Substitute numeric variables
+                    for var, val in st.session_state.cli_vars.items():
+                        if isinstance(val, (int, float)):
+                            expr_str = re.sub(rf'\b{var}\b', str(val), expr_str)
+                    
+                    return sp.sympify(expr_str).evalf()
                 
-                # Find all function calls like f(1) or g(2, 3)
-                expr_str = re.sub(r'(\w+)\(([^)]+)\)', eval_func_call, expr_str)
+                # Split by commas NOT inside parentheses (top-level commas only)
+                # Simple approach: split by ", " (comma-space pattern for chains)
+                parts = [p.strip() for p in re.split(r',\s*(?![^()]*\))', cli_input)]
                 
-                # Substitute numeric variables
-                for var, val in st.session_state.cli_vars.items():
-                    if isinstance(val, (int, float)):
-                        expr_str = re.sub(rf'\b{var}\b', str(val), expr_str)
-                
-                result = sp.sympify(expr_str).evalf()
-                output = str(result)
+                if len(parts) > 1:
+                    # Multiple expressions - evaluate each
+                    results = []
+                    for part in parts:
+                        try:
+                            results.append(str(eval_single_expr(part)))
+                        except Exception as e:
+                            results.append(f"Error: {e}")
+                    output = ", ".join(results)
+                else:
+                    # Single expression
+                    result = eval_single_expr(cli_input)
+                    output = str(result)
                 
         except Exception as e:
             output = f"Error: {e}"
