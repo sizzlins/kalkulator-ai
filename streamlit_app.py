@@ -711,11 +711,33 @@ NOTE: Full CLI commands require local installation.
                     except:
                         output = f"Error parsing: {rhs}"
             else:
-                # Expression evaluation - substitute variables
+                # Expression evaluation
+                import re
                 expr_str = cli_input
+                
+                # First, substitute function calls: f(1) -> evaluate the stored function
+                def eval_func_call(match):
+                    fname = match.group(1)
+                    fargs = match.group(2)
+                    if fname in st.session_state.cli_vars:
+                        func_def = st.session_state.cli_vars[fname]
+                        if isinstance(func_def, dict) and "args" in func_def:
+                            # It's a function - substitute args into expr
+                            param_names = [p.strip() for p in func_def["args"].split(",")]
+                            arg_vals = [a.strip() for a in fargs.split(",")]
+                            func_expr = func_def["expr"]
+                            for pname, aval in zip(param_names, arg_vals):
+                                func_expr = re.sub(rf'\b{pname}\b', f'({aval})', func_expr)
+                            return f"({func_expr})"
+                    return match.group(0)  # Return unchanged if not found
+                
+                # Find all function calls like f(1) or g(2, 3)
+                expr_str = re.sub(r'(\w+)\(([^)]+)\)', eval_func_call, expr_str)
+                
+                # Substitute numeric variables
                 for var, val in st.session_state.cli_vars.items():
                     if isinstance(val, (int, float)):
-                        expr_str = expr_str.replace(var, str(val))
+                        expr_str = re.sub(rf'\b{var}\b', str(val), expr_str)
                 
                 result = sp.sympify(expr_str).evalf()
                 output = str(result)
