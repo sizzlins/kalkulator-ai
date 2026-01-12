@@ -709,7 +709,8 @@ with tab1:
                                 
                                 # Evaluate on dense grid
                                 try:
-                                    y_pred_plot = regressor.predict(x_plot)
+                                    # Evaluate directly using the best solution tree
+                                    y_pred_plot = best_sol.tree.evaluate(x_plot)
                                     
                                     # Create dataframe for Altair/Streamlit
                                     # It's easier to use matplotlib for explicit control
