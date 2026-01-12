@@ -66,10 +66,10 @@ if 'session_id' not in st.session_state:
 with st.sidebar:
     st.header("Settings")
     
-    # Genetic Config
-    pop_size = st.slider("Population Size", 100, 1000, 300, step=50)
-    generations = st.slider("Generations", 10, 200, 50, step=10)
-    patience = st.slider("Patience (Early Stop)", 5, 50, 10)
+    # Genetic Config (reduced defaults for Streamlit Cloud memory limits)
+    pop_size = st.slider("Population Size", 50, 500, 150, step=50)
+    generations = st.slider("Generations", 10, 100, 30, step=10)
+    patience = st.slider("Patience (Early Stop)", 5, 30, 10)
     
     st.markdown("---")
     
