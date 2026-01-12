@@ -199,55 +199,15 @@ with st.sidebar:
     st.markdown("---")
     
     # --- REPORT ISSUE ---
+    # --- REPORT ISSUE ---
     with st.expander("📝 Report Issue / Feedback"):
-        report_text = st.text_area("Describe the issue or feedback:", height=100, key="report_text")
-        report_email = st.text_input("Your email (optional):", key="report_email")
+        st.write("Found a bug or have a feature request? Let us know on GitHub or the Community tab!")
         
-        if st.button("Submit Report", key="submit_report"):
-            if report_text.strip():
-                try:
-                    # Try to send email if SMTP secrets are configured
-                    smtp_configured = False
-                    if hasattr(st, 'secrets'):
-                        smtp_email = st.secrets.get("SMTP_EMAIL", "")
-                        smtp_password = st.secrets.get("SMTP_PASSWORD", "")
-                        admin_email = st.secrets.get("ADMIN_EMAIL", smtp_email)
-                        smtp_configured = bool(smtp_email and smtp_password)
-                    
-                    if smtp_configured:
-                        import smtplib
-                        from email.mime.text import MIMEText
-                        
-                        subject = f"[Kalkulator AI] Report from {st.session_state.session_id}"
-                        body = f"""
-New Report from Kalkulator AI
-=============================
-Session ID: {st.session_state.session_id}
-Timestamp: {datetime.now().isoformat()}
-User Email: {report_email.strip() if report_email else 'Not provided'}
-
-Message:
-{report_text.strip()}
-"""
-                        msg = MIMEText(body)
-                        msg['Subject'] = subject
-                        msg['From'] = smtp_email
-                        msg['To'] = admin_email
-                        
-                        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-                            server.login(smtp_email, smtp_password)
-                            server.sendmail(smtp_email, admin_email, msg.as_string())
-                        
-                        st.success("✅ Report sent! Thank you for your feedback.")
-                    else:
-                        # Fallback: show the report for manual copy
-                        st.success("✅ Report received! (Email not configured)")
-                        st.code(f"Session: {st.session_state.session_id}\nMessage: {report_text.strip()}")
-                        
-                except Exception as e:
-                    st.error(f"Failed to send: {e}")
-            else:
-                st.warning("Please enter a message.")
+        col_gh, col_hf = st.columns(2)
+        with col_gh:
+            st.link_button("🐛 GitHub Issues", "https://github.com/sizzlins/kalkulator-ai/issues", help="Open a new issue on GitHub")
+        with col_hf:
+            st.link_button("🤗 HF Community", "https://huggingface.co/spaces/sizzlins/kalkulator-ai/discussions", help="Discuss in the Community tab")
     
     # --- PRESENCE INDICATOR ---
     st.caption(f"Session: `{st.session_state.session_id}`")
