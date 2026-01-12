@@ -45,9 +45,23 @@ st.markdown("### Symbolic Regression Engine")
 
 # --- BROADCAST BANNER ---
 import os
+import sys
 import json
+import shutil
+from pathlib import Path
 from datetime import datetime
 import uuid
+
+# CRITICAL FIX: Disable multiprocessing workers to prevent "MemoryError" / crash in Docker
+os.environ["KALKULATOR_ENABLE_PERSISTENT_WORKER"] = "false"
+# Clear cache on startup to prevent corruption issues
+try:
+    cache_dir = Path.home() / ".kalkulator_cache"
+    if cache_dir.exists():
+        shutil.rmtree(cache_dir)
+except Exception:
+    pass
+
 
 broadcast_file = os.path.join(os.path.dirname(__file__), "broadcast.txt")
 if os.path.exists(broadcast_file):
@@ -136,7 +150,11 @@ with st.sidebar:
                  selected_model = model_choice
              
              # Use secret as default if available
-             default_gemini_key = st.secrets.get("GEMINI_API_KEY", "") if hasattr(st, 'secrets') else ""
+             try:
+                 default_gemini_key = st.secrets.get("GEMINI_API_KEY", "")
+             except (FileNotFoundError, Exception):
+                 default_gemini_key = ""
+
              provider_api_key = st.text_input(
                  "Gemini API Key", 
                  value=default_gemini_key,
@@ -181,55 +199,15 @@ with st.sidebar:
     st.markdown("---")
     
     # --- REPORT ISSUE ---
+    # --- REPORT ISSUE ---
     with st.expander("📝 Report Issue / Feedback"):
-        report_text = st.text_area("Describe the issue or feedback:", height=100, key="report_text")
-        report_email = st.text_input("Your email (optional):", key="report_email")
+        st.write("Found a bug or have a feature request? Let us know on GitHub or the Community tab!")
         
-        if st.button("Submit Report", key="submit_report"):
-            if report_text.strip():
-                try:
-                    # Try to send email if SMTP secrets are configured
-                    smtp_configured = False
-                    if hasattr(st, 'secrets'):
-                        smtp_email = st.secrets.get("SMTP_EMAIL", "")
-                        smtp_password = st.secrets.get("SMTP_PASSWORD", "")
-                        admin_email = st.secrets.get("ADMIN_EMAIL", smtp_email)
-                        smtp_configured = bool(smtp_email and smtp_password)
-                    
-                    if smtp_configured:
-                        import smtplib
-                        from email.mime.text import MIMEText
-                        
-                        subject = f"[Kalkulator AI] Report from {st.session_state.session_id}"
-                        body = f"""
-New Report from Kalkulator AI
-=============================
-Session ID: {st.session_state.session_id}
-Timestamp: {datetime.now().isoformat()}
-User Email: {report_email.strip() if report_email else 'Not provided'}
-
-Message:
-{report_text.strip()}
-"""
-                        msg = MIMEText(body)
-                        msg['Subject'] = subject
-                        msg['From'] = smtp_email
-                        msg['To'] = admin_email
-                        
-                        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-                            server.login(smtp_email, smtp_password)
-                            server.sendmail(smtp_email, admin_email, msg.as_string())
-                        
-                        st.success("✅ Report sent! Thank you for your feedback.")
-                    else:
-                        # Fallback: show the report for manual copy
-                        st.success("✅ Report received! (Email not configured)")
-                        st.code(f"Session: {st.session_state.session_id}\nMessage: {report_text.strip()}")
-                        
-                except Exception as e:
-                    st.error(f"Failed to send: {e}")
-            else:
-                st.warning("Please enter a message.")
+        col_gh, col_hf = st.columns(2)
+        with col_gh:
+            st.link_button("🐛 GitHub Issues", "https://github.com/sizzlins/kalkulator-ai/issues", help="Open a new issue on GitHub")
+        with col_hf:
+            st.link_button("🤗 HF Community", "https://huggingface.co/spaces/sizzlins/kalkulator-ai/discussions", help="Discuss in the Community tab")
     
     # --- PRESENCE INDICATOR ---
     st.caption(f"Session: `{st.session_state.session_id}`")
@@ -391,7 +369,8 @@ with tab3:
                         st.info(f"💡 **Suggested data:** `{prefill_data[:50]}...`")
                         if st.button("📋 Use this data in GUI Mode", key=f"prefill_{len(st.session_state.messages)}"):
                             st.session_state.prefill_for_gui = prefill_data
-                            st.session_state.gui_input_text = prefill_data # Directly set the key
+                            st.session_state.gui_input_data = prefill_data
+                            st.session_state["gui_textarea_widget"] = prefill_data # Update actual widget key
                             st.toast("✅ Data loaded! Switch to 'GUI Mode' tab now.", icon="📋")
                             st.rerun() # Force page refresh to apply changes
                     
@@ -460,12 +439,71 @@ with tab1:
                             args_str = match.group(2)
                             val_str = match.group(3)
                             
-                            # Parse args using robust eval
-                            args = [eval_to_float(a.strip()) for a in args_str.split(",")]
-                            val = eval_to_float(val_str)
-                            
-                            x_list.append(args)
-                            y_list.append(val)
+                            # Check for function definition: f(x) = expression (where 'x' is in args)
+                            # Simple heuristic: if any arg is 'x', 'y' (and not a value), treat as definition
+                            is_def = False
+                            try:
+                                args = [eval_to_float(a.strip()) for a in args_str.split(",")]
+                            except:
+                                is_def = True
+                                
+                            if is_def:
+                                # Function Definition Mode
+                                # f(x) = ...
+                                import sympy as sp
+                                from kalkulator_pkg.symbolic_regression.expression_tree import ExpressionTree
+                                
+                                # Parse the expression
+                                rhs_str = val_str.strip()
+                                input_vars = [a.strip() for a in args_str.split(",")]
+                                
+                                # Generate synthetic data
+                                if len(input_vars) == 1:
+                                    # 1D: Generate range
+                                    X_synth = np.linspace(-5, 5, 20).reshape(-1, 1)
+                                    
+                                    # Evaluate expression
+                                    local_dict = {v: sp.Symbol(v) for v in input_vars}
+                                    # Handle bitwise/custom operators in sympify if needed, or rely on simple cases
+                                    # The user input had 'bitwise_xor' which sympy might not handle by default
+                                    # We can assume the engine's tools are available or use robust parsing
+                                    
+                                    # Hack: for complex user expressions like 'bitwise_xor', we might need the engine's eval
+                                    # Let's try to pass it to the engine's parser if sympy fails
+                                    try:
+                                        expr = sp.sympify(rhs_str, locals=local_dict)
+                                        tree = ExpressionTree.from_sympy(expr, input_vars)
+                                        y_synth = tree.evaluate(X_synth)
+                                    except Exception as ex_sympy:
+                                        # Fallback to python eval (dangerous but ok for local app) with numpy context
+                                        # Need to map custom functions
+                                        # For now, just raise or warn
+                                        st.warning(f"Could not parse definition symbolically: {ex_sympy}. Trying Python eval...")
+                                        try:
+                                            # Create safe context with numpy and custom funcs
+                                            ctx = {k: getattr(np, k) for k in dir(np)}
+                                            ctx.update({"bitwise_xor": np.bitwise_xor, "rshift": np.right_shift}) # Add common bitwise
+                                            # Map 'x' to X_synth column
+                                            ctx[input_vars[0]] = X_synth[:, 0]
+                                            y_synth = eval(rhs_str, {"__builtins__": None}, ctx)
+                                        except Exception as ex_eval:
+                                            raise ValueError(f"Could not evaluate function: {ex_eval}")
+                                            
+                                    # Append synthetic data
+                                    if x_list == []: # Only if empty so far
+                                        X_data = X_synth
+                                        y_data = y_synth
+                                        x_list.append(True) # Dummy to signal success
+                                        st.info("✨ Detected function definition. Generated synthetic training data (20 points).")
+                                        break # Stop parsing other lines if definition found
+                                else:
+                                    st.warning(f"Only 1D function definitions supported for auto-generation for now.")
+                                    
+                            else:
+                                # Normal Data Point
+                                val = eval_to_float(val_str)
+                                x_list.append(args)
+                                y_list.append(val)
                     
                     if x_list:
                         X_data = np.array(x_list)
@@ -541,17 +579,92 @@ with tab1:
             with st.spinner("Evolving... (See logs below)"):
                 try:
                     # Lazy import to reduce startup memory
+                    # Lazy import to reduce startup memory
                     from kalkulator_pkg.symbolic_regression.genetic_engine import GeneticSymbolicRegressor, GeneticConfig
+                    from kalkulator_pkg.symbolic_regression.pareto_front import ParetoFront, ParetoSolution 
+                    from kalkulator_pkg.function_manager import find_function_from_data
+                    import sympy as sp
+                    from kalkulator_pkg.function_manager import find_function_from_data
+                    # Import our new Forensic Analysis module
+                    from kalkulator_pkg.symbolic_regression.forensic_analysis import generate_pattern_seeds
+
                     
-                    # Configure engine
+                    # --- HYBRID MODE: SEEDING ---
+                    # Run "Rational Analysis" (find) to get high-quality seeds for rational functions
+                    seeds = []
+                    try:
+                        # Build data list for find(): [(x1,y1), (x2,y2)...]
+                        # CRITICAL: Filter out non-finite values (Inf/NaN) for find(), otherwise rational fit fails!
+                        find_data = []
+                        if X_data is not None and y_data is not None:
+                            for i in range(len(y_data)):
+                                # Skip Inf/NaN/Complex for find() (Rational Analysis)
+                                if not np.isfinite(y_data[i]) or np.iscomplex(y_data[i]):
+                                    continue
+                                    
+                                x_row = tuple(X_data[i]) if X_data.ndim > 1 else (X_data[i],)
+                                # Also check inputs
+                                if not all(np.isfinite(x) for x in x_row):
+                                    continue
+                                    
+                                find_data.append((x_row, y_data[i]))
+                                
+                        # Use generic variable names for finding
+                        param_chars = "xyzuvwrst"
+                        input_vars = [param_chars[i] if i < len(param_chars) else f"x{i+1}" for i in range(X_data.shape[1])]
+                        
+                        st.info("🧠 Hybrid Mode: Running rational analysis optimization...")
+                        success, func_str, _, _ = find_function_from_data(find_data, input_vars)
+                        
+                        if success and func_str:
+                            seeds.append(func_str)
+                            st.info(f"🌱 Rational Seed: {func_str}")
+                            
+                        # --- PATTERN ANALYSIS (FORENSIC) ---
+                        # This enables "Sherlock Mode" for integer patterns like (x-1)/(x+1)
+                        st.info("🔍 Forensic Mode: Analyzing patterns (Singularities, Integers)...")
+                        pattern_seeds = generate_pattern_seeds(X_data, y_data, variable_names=input_vars, verbose=True)
+                        if pattern_seeds:
+                            seeds.extend(pattern_seeds)
+                            # Show first few seeds in UI
+                            display_seeds = pattern_seeds[:3]
+                            suffix = f" + {len(pattern_seeds)-3} more" if len(pattern_seeds) > 3 else ""
+                            st.info(f"🧬 Forensic Seeds detected: {', '.join(display_seeds)}{suffix}")
+                            
+                    except Exception as e:
+                        print(f"Hybrid seeding failed: {e}")
+
+                    
+                    # Configure engine with Hybrid Power
                     config = GeneticConfig(
-                        population_size=pop_size,
-                        generations=generations,
+                        population_size=pop_size * 3, # Boost population for hard problems
+                        generations=generations * 3,  # Boost generations
                         patience=patience,
-                        verbose=True
+                        verbose=True,
+                        seeds=seeds,
+                        boosting_rounds=3 # Enable Symbolic Gradient Boosting (matches 'alt' command)
                     )
                     
                     regressor = GeneticSymbolicRegressor(config)
+                    
+                    # DEBUG: Pre-evaluate the seed to verify it works on filtered data
+                    if seeds and len(seeds) > 0 and 'X_train' in locals():
+                         try:
+                             from kalkulator_pkg.symbolic_regression.expression_tree import ExpressionTree
+                             import sympy as sp
+                             test_seed = seeds[0] # The rational seed is usually first
+                             local_dict = {v: sp.Symbol(v) for v in input_vars}
+                             test_expr = sp.sympify(test_seed, locals=local_dict)
+                             test_tree = ExpressionTree.from_sympy(test_expr, input_vars)
+                             
+                             # Evaluate on filtered data
+                             test_preds = test_tree.evaluate(X_train)
+                             test_diff = test_preds - y_train
+                             test_mse = np.mean(test_diff**2)
+                             
+                             st.info(f"🧪 Seed Validation: '{test_seed}' has MSE={test_mse:.2e} on training data.")
+                         except Exception as e:
+                             st.warning(f"⚠️ Seed Validation Warning: Could not evaluate seed '{seeds[0]}': {e}")
                     
                     # Redirect stdout
                     import sys
@@ -560,7 +673,53 @@ with tab1:
                     
                     try:
                         # Run fit
-                        pareto = regressor.fit(X_data, y_data)
+                        # CRITICAL: Filter out non-finite values (Inf/NaN) from training data
+                        # The genetic engine cannot calculate MSE on Infinity.
+                        # We used the Infs for Forensic/Rational Analysis (Seeding), but we must hide them for Evolution.
+                        filter_mask = np.isfinite(y_data)
+                        if not np.all(filter_mask):
+                            dropped_count = len(y_data) - np.sum(filter_mask)
+                            st.warning(f"⚠️ Filtered {dropped_count} non-finite data points (Infinity/NaN) to allow evolution.")
+                            X_train = X_data[filter_mask]
+                            y_train = y_data[filter_mask]
+                        else:
+                            X_train = X_data
+                            y_train = y_data
+                            
+                            X_train = X_data
+                            y_train = y_data
+                            
+                        # ENABLE MULTI-SPACE EVOLUTION (Matches 'alt' command)
+                        # This tries evolving in Direct, Log, and Inverse spaces simultaneously
+                        st.info("🌌 Multi-Space Mode: Evolving in Direct, Log, and Inverse spaces...")
+                        best_expr, best_mse, best_space = regressor.fit_with_transformations(X_train, y_train, input_vars)
+                        
+                        # Manually construct ParetoFront from best result (fit_with_transformations returns tuple)
+                        pareto = ParetoFront()
+                        if best_expr:
+                            # Calculate complexity
+                            try:
+                                from kalkulator_pkg.symbolic_regression.expression_tree import ExpressionTree
+                                symbols = {v: sp.Symbol(v) for v in input_vars}
+                                sympy_expr = sp.sympify(best_expr, locals=symbols)
+                                tree = ExpressionTree.from_sympy(sympy_expr, input_vars)
+                                complexity = tree.complexity()
+                            except:
+                                complexity = 10.0 # Fallback
+                                
+                            solution = ParetoSolution(
+                                expression=best_expr,
+                                mse=best_mse,
+                                complexity=complexity,
+                                # r2=0.0  <- REMOVED: ParetoSolution does not take this arg
+                                sympy_expr=sympy_expr,  # Added missing required arg
+                                tree=tree               # Added missing required arg
+                            )
+                            pareto.add(solution)
+                            
+                            # Show which space won
+                            if best_space != "direct":
+                                st.success(f"🚀 Solution found in transformed space: {best_space.upper()}")
                     finally:
                         # Restore stdout
                         sys.stdout = original_stdout
@@ -609,31 +768,63 @@ with tab1:
                                 
                                 # Evaluate on dense grid
                                 try:
-                                    y_pred_plot = regressor.predict(x_plot)
+                                    # Evaluate directly using the best solution tree
+                                    y_pred_plot = best_sol.tree.evaluate(x_plot)
                                     
                                     # Create dataframe for Altair/Streamlit
                                     # It's easier to use matplotlib for explicit control
-                                    fig, ax = plt.subplots(figsize=(10, 5))
-                                    ax.scatter(X_data, y_data, color='red', label='Data Points', zorder=5)
-                                    ax.plot(x_plot, y_pred_plot, color='blue', label='Discovered: ' + display_expr[:30] + '...', linewidth=2)
-                                    ax.grid(True, alpha=0.3)
-                                    ax.legend()
-                                    ax.set_title("Data vs Model")
+                                    import plotly.graph_objects as go
                                     
-                                    # Style
-                                    ax.set_facecolor('#0e1117')
-                                    fig.patch.set_facecolor('#0e1117')
-                                    ax.tick_params(colors='white')
-                                    ax.xaxis.label.set_color('white')
-                                    ax.yaxis.label.set_color('white')
-                                    ax.spines['top'].set_color('white')
-                                    ax.spines['bottom'].set_color('white')
-                                    ax.spines['left'].set_color('white')
-                                    ax.spines['right'].set_color('white')
-                                    # Legend text
-                                    plt.setp(ax.get_legend().get_texts(), color='black') # Matplotlib legend is usually white bg
+                                    # Create interactive plot
+                                    fig = go.Figure()
                                     
-                                    st.pyplot(fig)
+                                    # 1. Scatter Plot for Data (Red Balls)
+                                    # Handle complex data for plotting (Project to Real plane)
+                                    x_scatter = np.real(X_data).flatten()
+                                    y_scatter = np.real(y_data).flatten()
+                                    
+                                    fig.add_trace(go.Scatter(
+                                        x=x_scatter, 
+                                        y=y_scatter,
+                                        mode='markers',
+                                        name='Data Points (Real Part)',
+                                        marker=dict(size=12, color='#ff2b2b', line=dict(width=2, color='white')),
+                                        hovertemplate="<b>Input (Re):</b> %{x}<br><b>Target (Re):</b> %{y}<extra></extra>"
+                                    ))
+                                    
+                                    # 2. Line Plot for Discovered Function (Blue Line)
+                                    # Ensure we plot real parts only
+                                    x_line = np.real(x_plot).flatten()
+                                    y_line = np.real(y_pred_plot).flatten()
+                                    
+                                    fig.add_trace(go.Scatter(
+                                        x=x_line,
+                                        y=y_line,
+                                        mode='lines',
+                                        name=f"Function: {display_expr[:30]}..." if len(display_expr) > 30 else f"f(x) = {display_expr}",
+                                        line=dict(color='#0068c9', width=4),
+                                        hovertemplate="<b>Prediction (Re):</b> %{y:.4f}<extra></extra>"
+                                    ))
+
+                                    # Layout styling for Dark Mode & "Premium Fee"
+                                    fig.update_layout(
+                                        title=dict(text="Data vs Discovered Model", font=dict(size=20, color='white')),
+                                        xaxis=dict(title="Input (x)", showgrid=True, gridcolor='#333', zerolinecolor='#666', fixedrange=True),
+                                        yaxis=dict(title="Output (y)", showgrid=True, gridcolor='#333', zerolinecolor='#666', fixedrange=True),
+                                        paper_bgcolor='rgba(0,0,0,0)',  # Transparent background
+                                        plot_bgcolor='rgba(0,0,0,0)',
+                                        font=dict(color='white'),
+                                        hovermode="closest",  # Focus on the specific point hovered
+                                        legend=dict(
+                                            orientation="h",
+                                            yanchor="bottom", y=1.02,
+                                            xanchor="right", x=1
+                                        ),
+                                        margin=dict(l=40, r=40, t=40, b=40),
+                                        dragmode=False # Disable drag interactions entirely
+                                    )
+                                    
+                                    st.plotly_chart(fig, use_container_width=True)
                                     
                                 except Exception as e:
                                     st.error(f"Plotting error: {e}")
@@ -663,21 +854,11 @@ with tab2:
         st.session_state.terminal_mode = "lite"  # Default to lite mode
     
     # Mode toggle
-    col_mode, col_info = st.columns([1, 3])
-    with col_mode:
-        terminal_mode = st.radio(
-            "Mode",
-            ["lite", "full"],
-            index=0 if st.session_state.terminal_mode == "lite" else 1,
-            horizontal=True,
-            help="Lite = fast, Full = heavy (may crash on cloud)"
-        )
-        st.session_state.terminal_mode = terminal_mode
-    with col_info:
-        if terminal_mode == "lite":
-            st.caption("🚀 **Lite Mode**: Fast sympy-based evaluator")
-        else:
-            st.caption("⚠️ **Full Mode**: Uses heavy REPL (may cause MemoryError on cloud)")
+    st.caption("Enter commands below. Supports math, function finding, and plotting.")
+    
+    # Init Full Mode defaults
+    if 'terminal_mode' in st.session_state:
+        del st.session_state.terminal_mode
         
     # Input Form
     with st.form("terminal_form", clear_on_submit=True):
@@ -695,237 +876,99 @@ with tab2:
         output = ""
         captured_fig = None
         
-        # Check if FULL mode is enabled - use the heavy REPL
-        if st.session_state.terminal_mode == "full":
-            try:
+        # FULL MODE (Standard)
+        try:
+            # Optimized: Singleton REPL instance in session state
+            if 'repl_instance' not in st.session_state:
                 from kalkulator_pkg.cli.repl_core import REPL
-                
-                repl_instance = REPL()
-                repl_instance.variables = st.session_state.cli_vars
-                
-                f = io.StringIO()
-                with contextlib.redirect_stdout(f):
-                    # Monkey-patch plt.show
-                    original_show = plt.show
-                    plt.show = lambda: None
-                    
-                    is_plot = cli_input.strip().lower().startswith("plot")
-                    repl_instance.process_input(cli_input)
-                    
-                    if is_plot:
-                        fig = plt.gcf()
-                        if fig.get_axes():
-                            captured_fig = fig
-                            fig.set_size_inches(8, 4)
-                    
-                    plt.show = original_show
-                
-                output = f.getvalue()
-                st.session_state.cli_vars = repl_instance.variables
-            except MemoryError:
-                output = "❌ MemoryError: Switch to Lite Mode or reduce settings."
-            except Exception as e:
-                output = f"Error: {e}"
-        else:
-            # LITE MODE - lightweight sympy evaluator
-            try:
-                # Check for special commands first
-                cmd_lower = cli_input.strip().lower()
+                st.session_state.repl_instance = REPL()
+                # Restore variables if any exists in vars backup
+                if 'cli_vars' in st.session_state and st.session_state.cli_vars:
+                        st.session_state.repl_instance.variables = st.session_state.cli_vars.copy()
+
+            repl_instance = st.session_state.repl_instance
             
-                if cmd_lower == "help":
-                    output = """Kalkulator AI v1.5.0 (Terminal Mode)
+            # Output buffer
+            output_buffer = []
+            def capture_output(text):
+                output_buffer.append(text)
 
-BASIC MATH
-  1+1, 2*3, sin(pi/2)     Evaluate expressions
-  x = 5                   Define variable
-  
-FUNCTION DEFINITION
-  f(x) = x^2              Define function
-  f(1), f(2), f(3)        Call function
+            # Initialize REPL with callback if not already set or correct it
+            # Ensure callback is current (in case of page reload/re-instantiation issues)
+            repl_instance.output_callback = capture_output
+            
+            # Monkey-patch plt.show just to block popups (allow figure capture via gcf)
+            original_show = plt.show
+            plt.show = lambda: None
+            
+            is_plot = cli_input.strip().lower().startswith("plot")
+            
+            # Clean up previous plots
+            plt.close('all')
+            
+            # Run command - output goes to output_buffer via callback
+            repl_instance.process_input(cli_input)
+            
+            if is_plot:
+                fig = plt.gcf()
+                if fig.get_axes():
+                    captured_fig = fig
+                    fig.set_size_inches(8, 4)
+            
+            plt.show = original_show
+            
+            output = "".join(output_buffer)
+            # Sync back vars
+            st.session_state.cli_vars = repl_instance.variables.copy()
 
-EQUATION SOLVING
-  x^2+x-6=0               Solve for x → x = 2, -3
-
-FUNCTION DISCOVERY
-  find f(1)=1, f(2)=4, f(3)=9    Discover f(x) from data
-
-PLOTTING
-  plot sin(x)             Plot a function
-"""
-                # Handle FIND command - function discovery
-                elif cmd_lower.startswith("find "):
-                    data_str = cli_input[5:].strip()
-                    # Parse f(x)=y pairs
-                    import re
-                    pairs = re.findall(r'f\(([^)]+)\)\s*=\s*([^\s,]+)', data_str)
-                    if pairs:
-                        # Lazy import to reduce startup memory
-                        from kalkulator_pkg.symbolic_regression.genetic_engine import GeneticSymbolicRegressor, GeneticConfig
-                        
-                        X_data = np.array([[float(x)] for x, y in pairs])
-                        y_data = np.array([float(y) for x, y in pairs])
-                        
-                        config = GeneticConfig(
-                            population_size=pop_size,
-                            generations=generations,
-                            patience=patience
-                        )
-                        regressor = GeneticSymbolicRegressor(config)
-                        
-                        # Capture output
-                        import io, contextlib
-                        f = io.StringIO()
-                        with contextlib.redirect_stdout(f):
-                            front = regressor.fit(X_data, y_data, variables=["x"])
-                        
-                        if front and front.solutions:
-                            best = front.get_best()
-                            output = f"Found: f(x) = {best.expression}\nMSE: {best.mse:.6e}"
-                        else:
-                            output = "No function found."
-                    else:
-                        output = "Usage: find f(1)=1, f(2)=4, f(3)=9"
-                    
-                # Handle PLOT command
-                elif cmd_lower.startswith("plot "):
-                    expr_str = cli_input[5:].strip()
-                    try:
-                        expr = sp.sympify(expr_str)
-                        x_sym = sp.Symbol('x')
-                        f_lambda = sp.lambdify(x_sym, expr, modules=['numpy'])
-                        
-                        x_vals = np.linspace(-10, 10, 200)
-                        y_vals = f_lambda(x_vals)
-                        
-                        fig, ax = plt.subplots(figsize=(8, 4))
-                        ax.plot(x_vals, y_vals, 'b-', linewidth=2)
-                        ax.grid(True, alpha=0.3)
-                        ax.set_title(f"y = {expr_str}")
-                        ax.set_xlabel("x")
-                        ax.set_ylabel("y")
-                        
-                        # Dark theme
-                        ax.set_facecolor('#0e1117')
-                        fig.patch.set_facecolor('#0e1117')
-                        ax.tick_params(colors='white')
-                        ax.xaxis.label.set_color('white')
-                        ax.yaxis.label.set_color('white')
-                        ax.title.set_color('white')
-                        for spine in ax.spines.values():
-                            spine.set_color('white')
-                        
-                        captured_fig = fig
-                        output = f"Plotted: y = {expr_str}"
-                    except Exception as e:
-                        output = f"Plot error: {e}"
-                elif "=" in cli_input and not cli_input.strip().startswith("="):
-                    # Check if it's an equation to solve (lhs = number or lhs = 0)
-                    parts = cli_input.split("=", 1)
-                    lhs = parts[0].strip()
-                    rhs = parts[1].strip()
-                    
-                    import re
-                    
-                    # Check if function definition: f(x) = ...
-                    func_match = re.match(r'(\w+)\(([^)]+)\)', lhs)
-                    if func_match:
-                        name = func_match.group(1)
-                        args = func_match.group(2)
-                        st.session_state.cli_vars[name] = {"args": args, "expr": rhs}
-                        output = f"Function '{name}' defined."
-                    # Check if equation solving: expr = 0 or expr = number
-                    elif rhs == "0" or re.match(r'^-?\d+\.?\d*$', rhs):
-                        # This is an equation to solve
-                        try:
-                            # Move rhs to lhs: lhs - rhs = 0
-                            if rhs != "0":
-                                equation = f"({lhs}) - ({rhs})"
-                            else:
-                                equation = lhs
-                            
-                            expr = sp.sympify(equation)
-                            # Find all free symbols (variables)
-                            symbols = list(expr.free_symbols)
-                            if symbols:
-                                solutions = sp.solve(expr, symbols[0])
-                                if solutions:
-                                    sol_str = ", ".join([str(s) for s in solutions])
-                                    output = f"{symbols[0]} = {sol_str}"
-                                else:
-                                    output = "No solution found."
-                            else:
-                                output = "No variable to solve for."
-                        except Exception as e:
-                            output = f"Solve error: {e}"
-                    else:
-                        # Variable assignment
-                        try:
-                            val = sp.sympify(rhs).evalf()
-                            st.session_state.cli_vars[lhs] = float(val)
-                            output = f"{lhs} = {val}"
-                        except:
-                            output = f"Error parsing: {rhs}"
-                else:
-                    # Expression evaluation
-                    import re
-                    
-                    # Helper function to evaluate a single expression
-                    def eval_single_expr(expr_str):
-                        # Substitute function calls: f(1) -> evaluate the stored function
-                        def eval_func_call(match):
-                            fname = match.group(1)
-                            fargs = match.group(2)
-                            if fname in st.session_state.cli_vars:
-                                func_def = st.session_state.cli_vars[fname]
-                                if isinstance(func_def, dict) and "args" in func_def:
-                                    # It's a function - substitute args into expr
-                                    param_names = [p.strip() for p in func_def["args"].split(",")]
-                                    arg_vals = [a.strip() for a in fargs.split(",")]
-                                    func_expr = func_def["expr"]
-                                    for pname, aval in zip(param_names, arg_vals):
-                                        func_expr = re.sub(rf'\b{pname}\b', f'({aval})', func_expr)
-                                    return f"({func_expr})"
-                            return match.group(0)  # Return unchanged if not found
-                        
-                        # Find all function calls like f(1) or g(2, 3)
-                        expr_str = re.sub(r'(\w+)\(([^)]+)\)', eval_func_call, expr_str)
-                        
-                        # Substitute numeric variables
-                        for var, val in st.session_state.cli_vars.items():
-                            if isinstance(val, (int, float)):
-                                expr_str = re.sub(rf'\b{var}\b', str(val), expr_str)
-                        
-                        return sp.sympify(expr_str).evalf()
-                    
-                    # Split by commas NOT inside parentheses (top-level commas only)
-                    # Simple approach: split by ", " (comma-space pattern for chains)
-                    parts = [p.strip() for p in re.split(r',\s*(?![^()]*\))', cli_input)]
-                    
-                    if len(parts) > 1:
-                        # Multiple expressions - evaluate each
-                        results = []
-                        for part in parts:
-                            try:
-                                results.append(str(eval_single_expr(part)))
-                            except Exception as e:
-                                results.append(f"Error: {e}")
-                        output = ", ".join(results)
-                    else:
-                        # Single expression
-                        result = eval_single_expr(cli_input)
-                        output = str(result)
-                    
-            except Exception as e:
-                output = f"Error: {e}"
-        
-        # Variables are already in st.session_state.cli_vars - no need to sync
+        except MemoryError:
+            import psutil
+            mem = psutil.virtual_memory()
+            output = f"❌ MemoryError: Available: {mem.available/1024/1024:.0f}MB / Total: {mem.total/1024/1024:.0f}MB."
+        except Exception as e:
+            output = f"Error: {e}"
         
         # Store in history: 3-tuple (cmd, out, fig)
-        # Note: fig object is mutated (resized), so history will use new size
         st.session_state.cli_history.append((cli_input, output, captured_fig))
         
     # Display History
     st.markdown("---")
+    
+    # Feature: Send Output to GUI
+    # If the latest output contains "f(...) = ...", offer to send it to GUI input
+    if st.session_state.cli_history:
+        # Handle unpacking safely (old history might be 2-tuple)
+        last_item = st.session_state.cli_history[-1]
+        if len(last_item) == 3:
+            _, last_out, _ = last_item
+            import re
+            # Check for data pattern: f(number) = number
+            if re.search(r"f\([^)]+\)\s*=\s*", str(last_out)):
+                col_hist_info, col_send_btn = st.columns([3, 1])
+                with col_send_btn:
+                    # Callback to safely update session state before rerun
+                    def send_to_gui_callback(output_text):
+                        clean_lines = []
+                        for line in str(output_text).split('\n'):
+                            if "=" in line and "(" in line:
+                                clean_lines.append(line.strip())
+                        
+                        if clean_lines:
+                            data = ", ".join(clean_lines)
+                        else:
+                            data = str(output_text).strip()
+                        
+                        st.session_state.gui_input_data = data
+                        st.session_state["gui_textarea_widget"] = data
+                        st.toast("✅ Data sent to GUI Mode! Switch tabs to evolve.", icon="🚀")
+
+                    st.button(
+                        "📋 Send Last Output to GUI", 
+                        key="send_last_to_gui", 
+                        help="Copy this data to the GUI Mode input box",
+                        on_click=send_to_gui_callback,
+                        args=(last_out,)
+                    )
     # Loop history
     for item in reversed(st.session_state.cli_history):
         # Handle backward compatibility if tuple length changed (old history)

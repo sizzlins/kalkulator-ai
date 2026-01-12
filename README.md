@@ -1,3 +1,13 @@
+---
+title: Kalkulator AI
+emoji: 🧠
+colorFrom: purple
+colorTo: blue
+sdk: docker
+pinned: false
+license: mit
+---
+
 ![Demo](demo.png)
 
 # Kalkulator-ai CLI

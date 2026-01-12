@@ -17,7 +17,23 @@ from ..utils.numeric import solve_modulo_system_if_applicable
 from ..worker import evaluate_safely
 from .context import ReplContext
 
+import sys
+import contextlib
+import io
 logger = logging.getLogger(__name__)
+
+
+class StreamToCallback:
+    """Redirects writes to a callback function."""
+    def __init__(self, callback):
+        self.callback = callback
+
+    def write(self, buf):
+        if self.callback:
+            self.callback(buf)
+
+    def flush(self):
+        pass
 
 
 class REPL:
@@ -26,13 +42,25 @@ class REPL:
     Adheres to Engineering Standards: Small Units, Linear Logic, Encapsulation.
     """
 
-    def __init__(self, context: Optional[ReplContext] = None):
+    def __init__(self, context: Optional[ReplContext] = None, output_callback=None):
         self.ctx = context if context else ReplContext()
         self.running = True
         self.chained_context: dict[str, str] = {}
         self.variables: dict[str, str] = {}  # Global variable cache for substitution
         self.results_buffer: list[str] = []
+        self.output_callback = output_callback
         self._setup_readline()
+        
+    def print(self, *args, **kwargs):
+        """Custom print method that routes to callback if available."""
+        if self.output_callback:
+            # Emulate print behavior
+            sep = kwargs.get('sep', ' ')
+            end = kwargs.get('end', '\n')
+            text = sep.join(map(str, args)) + end
+            self.output_callback(text)
+        else:
+            print(*args, **kwargs)
 
     def _setup_readline(self):
         try:
@@ -60,7 +88,7 @@ class REPL:
         from ..config import VERSION
 
         # We can just print a simple welcome here or define it
-        print(f"kalkulator-ai v{VERSION} — type 'help' for commands, 'quit' to exit.")
+        self.print(f"kalkulator-ai v{VERSION} — type 'help' for commands, 'quit' to exit.")
 
         while self.running:
             self.loop_once()
@@ -76,7 +104,7 @@ class REPL:
                 return
             except UnicodeDecodeError:
                 # Handle Windows console encoding issues on interrupt
-                print("\n[Input decoding error - Interrupted]")
+                self.print("\n[Input decoding error - Interrupted]")
                 return
 
             self.process_input(raw)
@@ -85,20 +113,38 @@ class REPL:
         except Exception as e:
             import traceback
             logger.exception("Unexpected error in REPL loop")
-            print(f"Error: {e}")
+            self.print(f"Error: {e}")
             traceback.print_exc()  # DEBUG: Print full stack trace
 
     def handle_interrupt(self):
         if self.ctx.current_req_id:
             # Logic to cancel request would go here if we tracked requests completely
             # For now, just print
-            print("\n[Interrupted]")
+            self.print("\n[Interrupted]")
         else:
-            print("\n[Press Ctrl+C again to exit]")
+            self.print("\n[Press Ctrl+C again to exit]")
 
     def process_input(self, text: str):
-        """Dispatch input to specific handlers."""
+        """
+        Process a single line of input command.
+        """
         text = text.strip()
+        if not text:
+            return
+            
+        ctx_mgr = (
+            contextlib.redirect_stdout(StreamToCallback(self.output_callback))
+            if self.output_callback
+            else contextlib.nullcontext()
+        )
+
+        with ctx_mgr:
+            self._process_input_internal(text)
+
+    def _process_input_internal(self, text: str):
+        """Dispatch input to specific handlers."""
+        # text already stripped by wrapper
+
         
         # SANITIZATION: Strip common copy-paste artifacts for more forgiving parsing
         # Remove backticks (from markdown code blocks)
@@ -124,7 +170,7 @@ class REPL:
             if len(text_lower) == 1 and text_lower in self.variables:
                 pass
             else:
-                print(f"Command '{text}' requires arguments (e.g., '{text} f(x)=...').")
+                self.print(f"Command '{text}' requires arguments (e.g., '{text} f(x)=...').")
                 return
 
         if text_lower.startswith(('all ', 'b ', 'h ', 'v ', 'alt ')):
@@ -176,7 +222,7 @@ class REPL:
                 evolve_cmd = (
                     f"evolve {func_name}({','.join(param_names)}) from {data_text}"
                 )
-                print(f"Auto-detecting evolution for '{func_name}'...")
+                self.print(f"Auto-detecting evolution for '{func_name}'...")
 
                 from .repl_commands import _handle_evolve
 
@@ -495,7 +541,7 @@ class REPL:
                 evolve_cmd = (
                     f"evolve {target_func}({','.join(param_names)}) from {data_text}"
                 )
-                print(f"Auto-detecting evolution for '{target_func}'...")
+                self.print(f"Auto-detecting evolution for '{target_func}'...")
 
                 from .repl_commands import _handle_evolve
 
@@ -513,7 +559,7 @@ class REPL:
             # We pass original text + find command
             enhanced_text = raw_text + f", find {target_func}"
             # Print helpful message
-            print(f"Auto-detecting function finding for '{target_func}'...")
+            self.print(f"Auto-detecting function finding for '{target_func}'...")
 
             if handle_find_command_raw(enhanced_text, self.ctx):
                 return
@@ -525,7 +571,9 @@ class REPL:
             subbed_text = self._substitute_variables(raw_text)
             allowed = self._get_allowed_functions(raw_text)
             res = solve_system(subbed_text, None, allowed_functions=allowed)
-            print_result_pretty(res)
+            print_result_pretty(
+                res, printer=self.print
+            )
 
     def _execute_chain(self, parts: list[str]):
         """Execute a chain of commands/assignments/definitions with persistence."""
@@ -570,7 +618,7 @@ class REPL:
                 self._handle_chain_expression(part, part_subbed)
 
         if self.results_buffer:
-            print(", ".join(self.results_buffer))
+            self.print(", ".join(self.results_buffer))
 
     def _substitute_chain_context(self, text: str) -> str:
         # Similar to variables but for chained_context
@@ -666,7 +714,7 @@ class REPL:
                 
                 # Check for shadowing built-ins
                 if name in ALLOWED_SYMPY_NAMES:
-                    print(f"Error: Cannot redefine reserved function '{name}'")
+                    self.print(f"Error: Cannot redefine reserved function '{name}'")
                     return
 
                 # We probably don't want to substitute in body for function definition?
@@ -677,10 +725,10 @@ class REPL:
                 body_subbed = self._substitute_variables(body, exclude=set(params))
                 try:
                     define_function(name, params, body_subbed)
-                    print(f"Function '{name}' defined.")
+                    self.print(f"Function '{name}' defined.")
                     return
                 except Exception as e:
-                    print(f"Error defining function: {e}")
+                    self.print(f"Error defining function: {e}")
                     return
 
         if "=" in text and not text.startswith("solve") and not force_solve:
@@ -692,7 +740,7 @@ class REPL:
 
             if VAR_NAME_RE.match(lhs):
                 if lhs in ALLOWED_SYMPY_NAMES:
-                    print(f"Error: Cannot assign to reserved name '{lhs}'")
+                    self.print(f"Error: Cannot assign to reserved name '{lhs}'")
                     return
 
                 # It is an assignment!
@@ -704,13 +752,13 @@ class REPL:
                     try:
                         define_variable(lhs, val_str)
                         self.variables[lhs] = val_str  # Update global cache
-                        print(f"{lhs} = {format_solution(val_str)}")
+                        self.print(f"{lhs} = {format_solution(val_str)}")
                         return
                     except Exception as e:
-                        print(f"Error defining variable: {e}")
+                        self.print(f"Error defining variable: {e}")
                         return
                 else:
-                    print(f"Error evaluating assignment: {res.get('error')}")
+                    self.print(f"Error evaluating assignment: {res.get('error')}")
                     return
 
         if any(op in text for op in ("<", ">", "<=", ">=")):
@@ -720,7 +768,9 @@ class REPL:
             res = solve_single_equation(
                 text_subbed, None, allowed_functions=allowed
             )  # Or inequality solver
-            print_result_pretty(res)
+            print_result_pretty(
+                res, printer=self.print
+            )
             return
 
         # 3. Default Solve/Eval
@@ -730,7 +780,9 @@ class REPL:
         if "=" in text_subbed or force_solve:
             allowed = self._get_allowed_functions(text)
             res = solve_single_equation(text_subbed, None, allowed_functions=allowed)
-            print_result_pretty(res)
+            print_result_pretty(
+                res, printer=self.print
+            )
         else:
             # Evaluate expression
             allowed = self._get_allowed_functions(text)
@@ -746,7 +798,7 @@ class REPL:
                 if self.ctx.timing_enabled:
                     # Inject timing validly even if worker didn't
                     res["time_taken"] = dt
-                    print(f"Execution time: {dt:.6f}s", flush=True)
+                    self.print(f"Execution time: {dt:.6f}s")
                 print_result_pretty(
                     {
                         "ok": True,
@@ -756,13 +808,14 @@ class REPL:
                         "approx": [res.get("approx")],
                     },
                     expression=text,
+                    printer=self.print,
                 )
             else:
                 # Nice error for things like print("hello")
                 err = res.get("error", "")
                 if "syntax" in str(err).lower() or "invalid syntax" in str(err).lower():
-                    print(
+                    self.print(
                         f"Error: Invalid syntax in '{text}'. (Only mathematical expressions are supported)"
                     )
                 else:
-                    print(f"Error: {err}")
+                    self.print(f"Error: {err}")

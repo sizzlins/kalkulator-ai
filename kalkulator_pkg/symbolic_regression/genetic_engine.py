@@ -1409,13 +1409,13 @@ class GeneticSymbolicRegressor:
                         denom = np.abs(y[valid])
                         denom[denom < 1e-10] = 1.0 # avoid div/0
                         diff_rel = (pred[valid] - y[valid]) / denom
-                        mse = np.mean(diff_rel**2)
+                        mse = np.mean(np.abs(diff_rel)**2)
                         
                         # DEBUG PRINT
                         if self.config.verbose and np.random.rand() < 0.01: # Sample occasionally
                              print(f"DEBUG MSE REL: Pred={pred[valid][:3]} Y={y[valid][:3]} DiffRel={diff_rel[:3]} MSE={mse}")
                     else:
-                        mse = np.mean((pred[valid] - y[valid])**2)
+                        mse = np.mean(np.abs(pred[valid] - y[valid])**2)
                         
                 else:
                     # Transformed spaces: evaluate original tree, then transform
@@ -1444,9 +1444,9 @@ class GeneticSymbolicRegressor:
                             denom = np.abs(y[valid])
                             denom[denom < 1e-10] = 1.0
                             diff_rel = (pred[valid] - y[valid]) / denom
-                            mse = np.mean(diff_rel**2)
+                            mse = np.mean(np.abs(diff_rel)**2)
                         else:
-                            mse = np.mean((pred[valid] - y[valid])**2)
+                            mse = np.mean(np.abs(pred[valid] - y[valid])**2)
                         
                         # Determine dtype to avoid ComplexWarning
                         target_dtype = np.complex128 if np.iscomplexobj(pred_transformed) else np.float64
