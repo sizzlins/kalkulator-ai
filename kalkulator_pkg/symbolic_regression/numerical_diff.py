@@ -35,7 +35,10 @@ def check_even_spacing(x: np.ndarray, tolerance: float = 1e-6) -> tuple[bool, fl
     relative_errors = np.abs(diffs - mean_step) / np.abs(mean_step)
     is_even = np.all(relative_errors < tolerance)
     
-    return is_even, float(mean_step)
+    # Suppress complex casting warning (we care about real spacing)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return is_even, float(mean_step)
 
 
 def compute_derivatives(
