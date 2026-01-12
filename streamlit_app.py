@@ -667,50 +667,63 @@ with tab2:
             submitted = st.form_submit_button("Run")
     
     if submitted and cli_input:
-        # Lazy import REPL only when Terminal is actually used
-        from kalkulator_pkg.cli.repl_core import REPL
-        
-        # Initialize REPL with session variables
-        repl_instance = REPL()
-        repl_instance.variables = st.session_state.cli_vars
-        
         import io
         import contextlib
-        import matplotlib.pyplot as plt
+        import sympy as sp
         
-        f = io.StringIO()
-        with contextlib.redirect_stdout(f):
-            try:
-                # Monkey-patch plt.show to avoid popping windows on server
-                original_show = plt.show
-                plt.show = lambda: None
-                
-                # Check for plot command
-                is_plot = cli_input.strip().lower().startswith("plot")
-                
-                # process_input handles commands, help, AND math expressions
-                repl_instance.process_input(cli_input)
-                
-                # If command was plot, check for active figure
-                captured_fig = None
-                if is_plot:
-                   fig = plt.gcf()
-                   if fig.get_axes(): # Only if axes were drawn
-                       captured_fig = fig # Store for history
-                       fig.set_size_inches(8, 4) # Resize for web (smaller than default 10x6)
-                       # st.pyplot(fig) # Removed to avoid duplicate (handled by history loop)
-                       pass 
-                
-                # Restore original show
-                plt.show = original_show
-                
-            except Exception as e:
-                print(f"Error: {e}")
-                
-        output = f.getvalue()
+        output = ""
+        captured_fig = None
         
-        # Sync variables back
-        st.session_state.cli_vars = repl_instance.variables
+        try:
+            # Check for special commands first
+            if cli_input.strip().lower() == "help":
+                output = """Kalkulator AI v1.4.0 (Lite Mode)
+
+BASIC MATH
+  1+1, 2*3, sin(pi/2)     Evaluate expressions
+  x = 5                   Define variable
+  
+FUNCTION DEFINITION
+  f(x) = x^2              Define function
+  
+NOTE: Full CLI commands require local installation.
+"""
+            elif "=" in cli_input and not cli_input.strip().startswith("="):
+                # Variable/function definition
+                parts = cli_input.split("=", 1)
+                lhs = parts[0].strip()
+                rhs = parts[1].strip()
+                
+                # Check if function definition: f(x) = ...
+                import re
+                func_match = re.match(r'(\w+)\(([^)]+)\)', lhs)
+                if func_match:
+                    name = func_match.group(1)
+                    args = func_match.group(2)
+                    st.session_state.cli_vars[name] = {"args": args, "expr": rhs}
+                    output = f"Function '{name}' defined."
+                else:
+                    # Variable assignment
+                    try:
+                        val = sp.sympify(rhs).evalf()
+                        st.session_state.cli_vars[lhs] = float(val)
+                        output = f"{lhs} = {val}"
+                    except:
+                        output = f"Error parsing: {rhs}"
+            else:
+                # Expression evaluation - substitute variables
+                expr_str = cli_input
+                for var, val in st.session_state.cli_vars.items():
+                    if isinstance(val, (int, float)):
+                        expr_str = expr_str.replace(var, str(val))
+                
+                result = sp.sympify(expr_str).evalf()
+                output = str(result)
+                
+        except Exception as e:
+            output = f"Error: {e}"
+        
+        # Variables are already in st.session_state.cli_vars - no need to sync
         
         # Store in history: 3-tuple (cmd, out, fig)
         # Note: fig object is mutated (resized), so history will use new size
