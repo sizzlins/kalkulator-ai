@@ -439,12 +439,71 @@ with tab1:
                             args_str = match.group(2)
                             val_str = match.group(3)
                             
-                            # Parse args using robust eval
-                            args = [eval_to_float(a.strip()) for a in args_str.split(",")]
-                            val = eval_to_float(val_str)
-                            
-                            x_list.append(args)
-                            y_list.append(val)
+                            # Check for function definition: f(x) = expression (where 'x' is in args)
+                            # Simple heuristic: if any arg is 'x', 'y' (and not a value), treat as definition
+                            is_def = False
+                            try:
+                                args = [eval_to_float(a.strip()) for a in args_str.split(",")]
+                            except:
+                                is_def = True
+                                
+                            if is_def:
+                                # Function Definition Mode
+                                # f(x) = ...
+                                import sympy as sp
+                                from kalkulator_pkg.symbolic_regression.expression_tree import ExpressionTree
+                                
+                                # Parse the expression
+                                rhs_str = val_str.strip()
+                                input_vars = [a.strip() for a in args_str.split(",")]
+                                
+                                # Generate synthetic data
+                                if len(input_vars) == 1:
+                                    # 1D: Generate range
+                                    X_synth = np.linspace(-5, 5, 20).reshape(-1, 1)
+                                    
+                                    # Evaluate expression
+                                    local_dict = {v: sp.Symbol(v) for v in input_vars}
+                                    # Handle bitwise/custom operators in sympify if needed, or rely on simple cases
+                                    # The user input had 'bitwise_xor' which sympy might not handle by default
+                                    # We can assume the engine's tools are available or use robust parsing
+                                    
+                                    # Hack: for complex user expressions like 'bitwise_xor', we might need the engine's eval
+                                    # Let's try to pass it to the engine's parser if sympy fails
+                                    try:
+                                        expr = sp.sympify(rhs_str, locals=local_dict)
+                                        tree = ExpressionTree.from_sympy(expr, input_vars)
+                                        y_synth = tree.evaluate(X_synth)
+                                    except Exception as ex_sympy:
+                                        # Fallback to python eval (dangerous but ok for local app) with numpy context
+                                        # Need to map custom functions
+                                        # For now, just raise or warn
+                                        st.warning(f"Could not parse definition symbolically: {ex_sympy}. Trying Python eval...")
+                                        try:
+                                            # Create safe context with numpy and custom funcs
+                                            ctx = {k: getattr(np, k) for k in dir(np)}
+                                            ctx.update({"bitwise_xor": np.bitwise_xor, "rshift": np.right_shift}) # Add common bitwise
+                                            # Map 'x' to X_synth column
+                                            ctx[input_vars[0]] = X_synth[:, 0]
+                                            y_synth = eval(rhs_str, {"__builtins__": None}, ctx)
+                                        except Exception as ex_eval:
+                                            raise ValueError(f"Could not evaluate function: {ex_eval}")
+                                            
+                                    # Append synthetic data
+                                    if x_list == []: # Only if empty so far
+                                        X_data = X_synth
+                                        y_data = y_synth
+                                        x_list.append(True) # Dummy to signal success
+                                        st.info("✨ Detected function definition. Generated synthetic training data (20 points).")
+                                        break # Stop parsing other lines if definition found
+                                else:
+                                    st.warning(f"Only 1D function definitions supported for auto-generation for now.")
+                                    
+                            else:
+                                # Normal Data Point
+                                val = eval_to_float(val_str)
+                                x_list.append(args)
+                                y_list.append(val)
                     
                     if x_list:
                         X_data = np.array(x_list)
