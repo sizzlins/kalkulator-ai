@@ -26,13 +26,25 @@ class REPL:
     Adheres to Engineering Standards: Small Units, Linear Logic, Encapsulation.
     """
 
-    def __init__(self, context: Optional[ReplContext] = None):
+    def __init__(self, context: Optional[ReplContext] = None, output_callback=None):
         self.ctx = context if context else ReplContext()
         self.running = True
         self.chained_context: dict[str, str] = {}
         self.variables: dict[str, str] = {}  # Global variable cache for substitution
         self.results_buffer: list[str] = []
+        self.output_callback = output_callback
         self._setup_readline()
+        
+    def print(self, *args, **kwargs):
+        """Custom print method that routes to callback if available."""
+        if self.output_callback:
+            # Emulate print behavior
+            sep = kwargs.get('sep', ' ')
+            end = kwargs.get('end', '\n')
+            text = sep.join(map(str, args)) + end
+            self.output_callback(text)
+        else:
+            print(*args, **kwargs)
 
     def _setup_readline(self):
         try:
@@ -60,7 +72,7 @@ class REPL:
         from ..config import VERSION
 
         # We can just print a simple welcome here or define it
-        print(f"kalkulator-ai v{VERSION} — type 'help' for commands, 'quit' to exit.")
+        self.print(f"kalkulator-ai v{VERSION} — type 'help' for commands, 'quit' to exit.")
 
         while self.running:
             self.loop_once()
@@ -76,7 +88,7 @@ class REPL:
                 return
             except UnicodeDecodeError:
                 # Handle Windows console encoding issues on interrupt
-                print("\n[Input decoding error - Interrupted]")
+                self.print("\n[Input decoding error - Interrupted]")
                 return
 
             self.process_input(raw)
@@ -85,16 +97,16 @@ class REPL:
         except Exception as e:
             import traceback
             logger.exception("Unexpected error in REPL loop")
-            print(f"Error: {e}")
+            self.print(f"Error: {e}")
             traceback.print_exc()  # DEBUG: Print full stack trace
 
     def handle_interrupt(self):
         if self.ctx.current_req_id:
             # Logic to cancel request would go here if we tracked requests completely
             # For now, just print
-            print("\n[Interrupted]")
+            self.print("\n[Interrupted]")
         else:
-            print("\n[Press Ctrl+C again to exit]")
+            self.print("\n[Press Ctrl+C again to exit]")
 
     def process_input(self, text: str):
         """Dispatch input to specific handlers."""
@@ -124,7 +136,7 @@ class REPL:
             if len(text_lower) == 1 and text_lower in self.variables:
                 pass
             else:
-                print(f"Command '{text}' requires arguments (e.g., '{text} f(x)=...').")
+                self.print(f"Command '{text}' requires arguments (e.g., '{text} f(x)=...').")
                 return
 
         if text_lower.startswith(('all ', 'b ', 'h ', 'v ', 'alt ')):
@@ -176,7 +188,7 @@ class REPL:
                 evolve_cmd = (
                     f"evolve {func_name}({','.join(param_names)}) from {data_text}"
                 )
-                print(f"Auto-detecting evolution for '{func_name}'...")
+                self.print(f"Auto-detecting evolution for '{func_name}'...")
 
                 from .repl_commands import _handle_evolve
 

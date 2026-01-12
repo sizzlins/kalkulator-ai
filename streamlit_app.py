@@ -45,6 +45,7 @@ st.markdown("### Symbolic Regression Engine")
 
 # --- BROADCAST BANNER ---
 import os
+import sys
 import json
 from datetime import datetime
 import uuid
@@ -714,29 +715,44 @@ with tab2:
                 # Sync variables from UI override if needed (though usually REPL drives UI)
                 # repl_instance.variables.update(st.session_state.cli_vars) 
                 
-                f = io.StringIO()
-                with contextlib.redirect_stdout(f):
-                    # Monkey-patch plt.show to capture figure
-                    original_show = plt.show
-                    plt.show = lambda: None
-                    
-                    is_plot = cli_input.strip().lower().startswith("plot")
-                    
-                    # Clean up previous plots to prevent memory leak
-                    plt.close('all')
-                    
-                    repl_instance.process_input(cli_input)
-                    
-                    if is_plot:
-                        fig = plt.gcf()
-                        if fig.get_axes():
-                            captured_fig = fig
-                            fig.set_size_inches(8, 4)
-                    
-                    plt.show = original_show
+                # Output buffer
+                output_buffer = []
+                def capture_output(text):
+                    output_buffer.append(text)
+
+                # Initialize REPL with callback if not already set or correct it
+                if 'repl_instance' not in st.session_state:
+                    from kalkulator_pkg.cli.repl_core import REPL
+                    st.session_state.repl_instance = REPL(output_callback=capture_output)
+                    if 'cli_vars' in st.session_state and st.session_state.cli_vars:
+                         st.session_state.repl_instance.variables = st.session_state.cli_vars.copy()
                 
-                output = f.getvalue()
-                # Sync back to session state for persistence
+                repl_instance = st.session_state.repl_instance
+                # Ensure callback is current (in case of page reload/re-instantiation issues)
+                repl_instance.output_callback = capture_output
+
+                # Monkey-patch plt.show just to block popups (allow figure capture via gcf)
+                original_show = plt.show
+                plt.show = lambda: None
+                
+                is_plot = cli_input.strip().lower().startswith("plot")
+                
+                # Clean up previous plots
+                plt.close('all')
+                
+                # Run command - output goes to output_buffer via callback
+                repl_instance.process_input(cli_input)
+                
+                if is_plot:
+                    fig = plt.gcf()
+                    if fig.get_axes():
+                        captured_fig = fig
+                        fig.set_size_inches(8, 4)
+                
+                plt.show = original_show
+                
+                output = "".join(output_buffer)
+                # Sync back vars
                 st.session_state.cli_vars = repl_instance.variables.copy()
 
             except MemoryError:
