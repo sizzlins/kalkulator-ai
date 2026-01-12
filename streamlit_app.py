@@ -131,9 +131,19 @@ with st.sidebar:
                  selected_model = "auto"
              else:
                  selected_model = model_choice
-                 
-             provider_api_key = st.text_input("Gemini API Key", type="password", help="Required. 'Auto' will pick the best available model.")
-             st.caption("Get a free key at aistudio.google.com")
+             
+             # Use secret as default if available
+             default_gemini_key = st.secrets.get("GEMINI_API_KEY", "") if hasattr(st, 'secrets') else ""
+             provider_api_key = st.text_input(
+                 "Gemini API Key", 
+                 value=default_gemini_key,
+                 type="password", 
+                 help="Required. Set in Streamlit secrets or enter manually."
+             )
+             if default_gemini_key:
+                 st.caption("✅ Using key from Streamlit secrets")
+             else:
+                 st.caption("Get a free key at aistudio.google.com")
              
              # Check Available Models button
              if provider_api_key and st.button("🔍 Check Available Models"):
@@ -149,8 +159,17 @@ with st.sidebar:
              
         else:
              selected_model = "gpt-4o"
-             provider_api_key = st.text_input("OpenAI API Key", type="password", help="Required for OpenAI.")
-             st.caption("Your key is not stored permanently.")
+             default_openai_key = st.secrets.get("OPENAI_API_KEY", "") if hasattr(st, 'secrets') else ""
+             provider_api_key = st.text_input(
+                 "OpenAI API Key", 
+                 value=default_openai_key,
+                 type="password", 
+                 help="Required for OpenAI."
+             )
+             if default_openai_key:
+                 st.caption("✅ Using key from Streamlit secrets")
+             else:
+                 st.caption("Your key is not stored permanently.")
 
     st.markdown("---")
     st.markdown("Created by **Syahbana**")
