@@ -47,8 +47,21 @@ st.markdown("### Symbolic Regression Engine")
 import os
 import sys
 import json
+import shutil
+from pathlib import Path
 from datetime import datetime
 import uuid
+
+# CRITICAL FIX: Disable multiprocessing workers to prevent "MemoryError" / crash in Docker
+os.environ["KALKULATOR_ENABLE_PERSISTENT_WORKER"] = "false"
+# Clear cache on startup to prevent corruption issues
+try:
+    cache_dir = Path.home() / ".kalkulator_cache"
+    if cache_dir.exists():
+        shutil.rmtree(cache_dir)
+except Exception:
+    pass
+
 
 broadcast_file = os.path.join(os.path.dirname(__file__), "broadcast.txt")
 if os.path.exists(broadcast_file):
