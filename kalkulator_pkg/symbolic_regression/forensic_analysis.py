@@ -139,6 +139,55 @@ def generate_pattern_seeds(X, y, variable_names=None, verbose=False):
     step_patterns = _detect_step_patterns(X, y)
     if step_patterns: return (step_patterns, step_patterns[0]) # Match return signature
     
+    # 1.5 Peeling Heuristic (Inverse Composition)
+    # Check if peeling off an outer function reveals a simple integer pattern
+    # e.g. y = sin((x-1)/(x+1)) -> z = arcsin(y) = (x-1)/(x+1)
+    peeled_seeds = []
+    
+    # Try Arcsin peeling if in range [-1, 1]
+    y_finite = y[np.isfinite(y)]
+    if len(y_finite) > 0:
+        y_min, y_max = np.min(y_finite), np.max(y_finite)
+        if y_min > -1.01 and y_max < 1.01:
+             # Try Arcsin
+             try:
+                 # Avoid domain errors at edges
+                 z_arcsin = np.arcsin(np.clip(y, -0.99999, 0.99999))
+                 int_patterns_asin = _detect_integer_patterns(X, z_arcsin)
+                 if int_patterns_asin:
+                     if verbose: print(f"   Composition Analysis: Found sin({int_patterns_asin[0]})")
+                     for p in int_patterns_asin:
+                         peeled_seeds.append(f"sin({p})")
+             except: pass
+             
+             # Try Arctan (range is open, but usually used for tanh-like)
+             # But if it's tanh(something), we use atanh
+             
+        # Try Log peeling if positive
+        if y_min > 0:
+             try:
+                 z_log = np.log(y)
+                 int_patterns_log = _detect_integer_patterns(X, z_log)
+                 if int_patterns_log:
+                     if verbose: print(f"   Composition Analysis: Found exp({int_patterns_log[0]})")
+                     for p in int_patterns_log:
+                         peeled_seeds.append(f"exp({p})")
+             except: pass
+             
+        # Try Atanh peeling if in range (-1, 1) and looks like tanh
+        if y_min > -1.01 and y_max < 1.01:
+             try:
+                 # Clip slightly inside to avoid infinity
+                 z_atanh = np.arctanh(np.clip(y, -0.99999, 0.99999))
+                 int_patterns_atanh = _detect_integer_patterns(X, z_atanh)
+                 if int_patterns_atanh:
+                     if verbose: print(f"   Composition Analysis: Found tanh({int_patterns_atanh[0]})")
+                     for p in int_patterns_atanh:
+                         peeled_seeds.append(f"tanh({p})")
+             except: pass
+
+    seeds.extend(peeled_seeds)
+    
     # 2. Integer Pattern Analysis (Gemini Method)
     integer_patterns = _detect_integer_patterns(X, y)
     if integer_patterns:
