@@ -702,18 +702,29 @@ with tab2:
         # Check if FULL mode is enabled - use the heavy REPL
         if st.session_state.terminal_mode == "full":
             try:
-                from kalkulator_pkg.cli.repl_core import REPL
-                
-                repl_instance = REPL()
-                repl_instance.variables = st.session_state.cli_vars
+                # Optimized: Singleton REPL instance in session state
+                if 'repl_instance' not in st.session_state:
+                    from kalkulator_pkg.cli.repl_core import REPL
+                    st.session_state.repl_instance = REPL()
+                    # Restore variables if any exists in vars backup
+                    if 'cli_vars' in st.session_state and st.session_state.cli_vars:
+                         st.session_state.repl_instance.variables = st.session_state.cli_vars.copy()
+
+                repl_instance = st.session_state.repl_instance
+                # Sync variables from UI override if needed (though usually REPL drives UI)
+                # repl_instance.variables.update(st.session_state.cli_vars) 
                 
                 f = io.StringIO()
                 with contextlib.redirect_stdout(f):
-                    # Monkey-patch plt.show
+                    # Monkey-patch plt.show to capture figure
                     original_show = plt.show
                     plt.show = lambda: None
                     
                     is_plot = cli_input.strip().lower().startswith("plot")
+                    
+                    # Clean up previous plots to prevent memory leak
+                    plt.close('all')
+                    
                     repl_instance.process_input(cli_input)
                     
                     if is_plot:
@@ -725,7 +736,9 @@ with tab2:
                     plt.show = original_show
                 
                 output = f.getvalue()
-                st.session_state.cli_vars = repl_instance.variables
+                # Sync back to session state for persistence
+                st.session_state.cli_vars = repl_instance.variables.copy()
+
             except MemoryError:
                 output = "❌ MemoryError: Switch to Lite Mode or reduce settings."
             except Exception as e:
