@@ -720,23 +720,31 @@ with tab1:
                                     fig = go.Figure()
                                     
                                     # 1. Scatter Plot for Data (Red Balls)
+                                    # Handle complex data for plotting (Project to Real plane)
+                                    x_scatter = np.real(X_data).flatten()
+                                    y_scatter = np.real(y_data).flatten()
+                                    
                                     fig.add_trace(go.Scatter(
-                                        x=X_data.flatten(), 
-                                        y=y_data,
+                                        x=x_scatter, 
+                                        y=y_scatter,
                                         mode='markers',
-                                        name='Data Points',
+                                        name='Data Points (Real Part)',
                                         marker=dict(size=12, color='#ff2b2b', line=dict(width=2, color='white')),
-                                        hovertemplate="<b>Input (x):</b> %{x}<br><b>Target (y):</b> %{y}<extra></extra>"
+                                        hovertemplate="<b>Input (Re):</b> %{x}<br><b>Target (Re):</b> %{y}<extra></extra>"
                                     ))
                                     
                                     # 2. Line Plot for Discovered Function (Blue Line)
+                                    # Ensure we plot real parts only
+                                    x_line = np.real(x_plot).flatten()
+                                    y_line = np.real(y_pred_plot).flatten()
+                                    
                                     fig.add_trace(go.Scatter(
-                                        x=x_plot.flatten(),
-                                        y=y_pred_plot,
+                                        x=x_line,
+                                        y=y_line,
                                         mode='lines',
                                         name=f"Function: {display_expr[:30]}..." if len(display_expr) > 30 else f"f(x) = {display_expr}",
                                         line=dict(color='#0068c9', width=4),
-                                        hovertemplate="<b>Prediction:</b> %{y:.4f}<extra></extra>"
+                                        hovertemplate="<b>Prediction (Re):</b> %{y:.4f}<extra></extra>"
                                     ))
 
                                     # Layout styling for Dark Mode & "Premium Fee"
