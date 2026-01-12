@@ -591,7 +591,20 @@ with tab1:
                     
                     try:
                         # Run fit
-                        pareto = regressor.fit(X_data, y_data)
+                        # CRITICAL: Filter out non-finite values (Inf/NaN) from training data
+                        # The genetic engine cannot calculate MSE on Infinity.
+                        # We used the Infs for Forensic/Rational Analysis (Seeding), but we must hide them for Evolution.
+                        filter_mask = np.isfinite(y_data)
+                        if not np.all(filter_mask):
+                            dropped_count = len(y_data) - np.sum(filter_mask)
+                            st.warning(f"⚠️ Filtered {dropped_count} non-finite data points (Infinity/NaN) to allow evolution.")
+                            X_train = X_data[filter_mask]
+                            y_train = y_data[filter_mask]
+                        else:
+                            X_train = X_data
+                            y_train = y_data
+                            
+                        pareto = regressor.fit(X_train, y_train)
                     finally:
                         # Restore stdout
                         sys.stdout = original_stdout
