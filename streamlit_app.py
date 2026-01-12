@@ -521,13 +521,40 @@ with tab1:
                 try:
                     # Lazy import to reduce startup memory
                     from kalkulator_pkg.symbolic_regression.genetic_engine import GeneticSymbolicRegressor, GeneticConfig
+                    from kalkulator_pkg.function_manager import find_function_from_data
                     
-                    # Configure engine
+                    # --- HYBRID MODE: SEEDING ---
+                    # Run "Rational Analysis" (find) to get high-quality seeds for rational functions
+                    seeds = []
+                    try:
+                        # Build data list for find(): [(x1,y1), (x2,y2)...]
+                        find_data = []
+                        if X_data is not None and y_data is not None:
+                            for i in range(len(y_data)):
+                                x_row = tuple(X_data[i]) if X_data.ndim > 1 else (X_data[i],)
+                                find_data.append((x_row, y_data[i]))
+                                
+                        # Use generic variable names for finding
+                        param_chars = "xyzuvwrst"
+                        input_vars = [param_chars[i] if i < len(param_chars) else f"x{i+1}" for i in range(X_data.shape[1])]
+                        
+                        st.info("🧠 Hybrid Mode: Running rational analysis optimization...")
+                        success, func_str, _, _ = find_function_from_data(find_data, input_vars)
+                        
+                        if success and func_str:
+                            seeds.append(func_str)
+                            st.info(f"🌱 Seed injected: {func_str}")
+                    except Exception as e:
+                        print(f"Hybrid seeding failed: {e}")
+                    
+                    # Configure engine with Hybrid Power
                     config = GeneticConfig(
-                        population_size=pop_size,
-                        generations=generations,
+                        population_size=pop_size * 3, # Boost population for hard problems
+                        generations=generations * 3,  # Boost generations
                         patience=patience,
-                        verbose=True
+                        verbose=True,
+                        seeds=seeds,
+                        boosting_rounds=3 # Enable Symbolic Gradient Boosting (matches 'alt' command)
                     )
                     
                     regressor = GeneticSymbolicRegressor(config)
