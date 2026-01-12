@@ -588,6 +588,25 @@ with tab1:
                     
                     regressor = GeneticSymbolicRegressor(config)
                     
+                    # DEBUG: Pre-evaluate the seed to verify it works on filtered data
+                    if seeds and len(seeds) > 0 and 'X_train' in locals():
+                         try:
+                             from kalkulator_pkg.symbolic_regression.expression_tree import ExpressionTree
+                             import sympy as sp
+                             test_seed = seeds[0] # The rational seed is usually first
+                             local_dict = {v: sp.Symbol(v) for v in input_vars}
+                             test_expr = sp.sympify(test_seed, locals=local_dict)
+                             test_tree = ExpressionTree.from_sympy(test_expr, input_vars)
+                             
+                             # Evaluate on filtered data
+                             test_preds = test_tree.evaluate(X_train)
+                             test_diff = test_preds - y_train
+                             test_mse = np.mean(test_diff**2)
+                             
+                             st.info(f"🧪 Seed Validation: '{test_seed}' has MSE={test_mse:.2e} on training data.")
+                         except Exception as e:
+                             st.warning(f"⚠️ Seed Validation Warning: Could not evaluate seed '{seeds[0]}': {e}")
+                    
                     # Redirect stdout
                     import sys
                     original_stdout = sys.stdout
