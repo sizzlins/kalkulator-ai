@@ -4113,25 +4113,50 @@ def _handle_evolve(text, variables=None):
                 # Check if data has ACTUAL complex values (non-zero imaginary parts)
                 # Note: np.iscomplexobj only checks dtype, not actual values!
                 # sqrt(pi) is real but may be stored in complex128 array
-                def has_actual_complex(arr):
-                    if not np.iscomplexobj(arr):
-                        return False
-                    return np.any(np.abs(np.imag(arr)) > 1e-10)
-                has_complex_data = has_actual_complex(X) or has_actual_complex(y)
-                success = False
-                func_str = None
-                if has_complex_data:
-                    print("Hybrid mode: skipping find() (complex data not supported, using pure evolve)")
+                # Checks:
+                # 1. We need Real data for Rational Analysis (scipy.optimize/numpy.polyfit don't like complex)
+                # 2. But we shouldn't just GIVE UP if there are a few complex points (e.g. f(i)).
+                #    We should filter them out and run Rational Analysis on the real subset.
+                
+                # Filter for Real-only points
+                find_data_points_real = []
+                count_complex_skipped = 0
+                
+                for i in range(len(y)):
+                    # Check X realness
+                    x_row = X[i] if X.ndim > 1 else np.array([X[i]])
+                    if np.any(np.abs(np.imag(x_row)) > 1e-9):
+                        count_complex_skipped += 1
+                        continue
+                        
+                    # Check Y realness
+                    if np.abs(np.imag(y[i])) > 1e-9:
+                        count_complex_skipped += 1
+                        continue
+                        
+                    # Add to real subset
+                    x_vals = tuple(x_row.real) # extracting real part explicitly
+                    find_data_points_real.append((x_vals, float(y[i].real)))
+
+                if count_complex_skipped > 0 and len(find_data_points_real) < 5:
+                     # Too few real points to run rational analysis reliably
+                     print(f"Hybrid mode: skipping find() (only {len(find_data_points_real)} real points found, need 5+)")
+                     success = False
+                     func_str = None
                 else:
-                    # Run find() to get approximation
-                    print("Hybrid mode: running find() for initial approximation...")
+                    if count_complex_skipped > 0:
+                        print(f"Hybrid mode: filtering {count_complex_skipped} complex points, running find() on {len(find_data_points_real)} real points...")
+                    else:
+                        print("Hybrid mode: running find() for initial approximation...")
+                        
                     import warnings
                     with warnings.catch_warnings():
-                        warnings.simplefilter("ignore")  # Suppress ComplexWarnings
-                        # Signature: find_function_from_data(data_points, param_names, skip_linear)
-                        success, func_str, factored, error = find_function_from_data(
-                            find_data_points, input_vars
-                        )
+                         warnings.simplefilter("ignore")
+                         # Run on the filtered real dataset
+                         # Signature: find_function_from_data(data_points, param_names, skip_linear)
+                         success, func_str, factored, error = find_function_from_data(
+                             find_data_points_real, input_vars
+                         )
 
                 # QUALITY CHECK: Only use seed if it's actually good
                 # Instead of parsing R² from string (which doesn't exist), evaluate the function
