@@ -621,7 +621,11 @@ with tab1:
                         input_vars = [param_chars[i] if i < len(param_chars) else f"x{i+1}" for i in range(X_data.shape[1])]
                         
                         st.info("🧠 Hybrid Mode: Running rational analysis optimization...")
-                        success, func_str, _, note = find_function_from_data(find_data, input_vars)
+                        # Pass verbose=True to see detection logs in execution log
+                        success, func_str, _, note = find_function_from_data(find_data, input_vars, verbose=True)
+                        
+                        early_exit = False
+                        best_sol = None
                         
                         if success and func_str:
                             seeds.append(func_str)
@@ -629,115 +633,165 @@ with tab1:
                                 st.success(f"⚡ Rational SVD Discovery: {func_str} ({note})")
                             else:
                                 st.info(f"🌱 Rational Seed: {func_str}")
-                            
-                        # --- PATTERN ANALYSIS (FORENSIC) ---
-                        # This enables "Sherlock Mode" for integer patterns like (x-1)/(x+1)
-                        st.info("🔍 Forensic Mode: Analyzing patterns (Singularities, Integers)...")
-                        pattern_seeds = generate_pattern_seeds(X_data, y_data, variable_names=input_vars, verbose=True)
-                        if pattern_seeds:
-                            seeds.extend(pattern_seeds)
-                            # Show first few seeds in UI
-                            display_seeds = pattern_seeds[:3]
-                            suffix = f" + {len(pattern_seeds)-3} more" if len(pattern_seeds) > 3 else ""
-                            st.info(f"🧬 Forensic Seeds detected: {', '.join(display_seeds)}{suffix}")
-                            
+                                
+                            # === QUALITY CHECK & EARLY EXIT ===
+                            try:
+                                from kalkulator_pkg.symbolic_regression.expression_tree import ExpressionTree
+                                local_dict = {v: sp.Symbol(v) for v in input_vars}
+                                discovered_expr = sp.sympify(func_str, locals=local_dict)
+                                tree = ExpressionTree.from_sympy(discovered_expr, input_vars)
+                                
+                                # Use training data for validation (filtering NaNs/Infs done above)
+                                # Re-filter find_data to ensure valid float values
+                                y_true = []
+                                y_pred = []
+                                for (val_x, val_y) in find_data:
+                                    try:
+                                        pred = float(tree.evaluate(np.array([val_x])))
+                                        y_pred.append(pred)
+                                        y_true.append(float(val_y))
+                                    except:
+                                        pass
+                                        
+                                if len(y_true) > 0:
+                                    y_true_arr = np.array(y_true)
+                                    y_pred_arr = np.array(y_pred)
+                                    mse_val = np.mean((y_true_arr - y_pred_arr)**2)
+                                    
+                                    st.info(f"🔍 Seed MSE: {mse_val:.2e}")
+                                    
+                                    # EARLY EXIT THRESHOLD
+                                    if mse_val < 0.01:
+                                        st.success(f"🎯 Perfect Match Found! Skipping evolution.")
+                                        st.balloons()
+                                        
+                                        # Construct explicit solution to bypass evolution
+                                        early_exit = True
+                                        best_sol = ParetoSolution(
+                                            expression=func_str,
+                                            mse=mse_val,
+                                            complexity=tree.complexity(),
+                                            sympy_expr=discovered_expr,
+                                            tree=tree
+                                        )
+                            except Exception as e:
+                                print(f"Seed validation failed: {e}")
+
+                        if not early_exit:
+                            # --- PATTERN ANALYSIS (FORENSIC) ---
+                            # This enables "Sherlock Mode" for integer patterns like (x-1)/(x+1)
+                            st.info("🔍 Forensic Mode: Analyzing patterns (Singularities, Integers)...")
+                            pattern_seeds = generate_pattern_seeds(X_data, y_data, variable_names=input_vars, verbose=True)
+                            if pattern_seeds:
+                                seeds.extend(pattern_seeds)
+                                # Show first few seeds in UI
+                                display_seeds = pattern_seeds[:3]
+                                suffix = f" + {len(pattern_seeds)-3} more" if len(pattern_seeds) > 3 else ""
+                                st.info(f"🧬 Forensic Seeds detected: {', '.join(display_seeds)}{suffix}")
+                                
                     except Exception as e:
                         print(f"Hybrid seeding failed: {e}")
 
-                    
-                    # Configure engine with Hybrid Power
-                    config = GeneticConfig(
-                        population_size=pop_size * 3, # Boost population for hard problems
-                        generations=generations * 3,  # Boost generations
-                        patience=patience,
-                        verbose=True,
-                        seeds=seeds,
-                        boosting_rounds=3 # Enable Symbolic Gradient Boosting (matches 'alt' command)
-                    )
-                    
-                    regressor = GeneticSymbolicRegressor(config)
-                    
-                    # DEBUG: Pre-evaluate the seed to verify it works on filtered data
-                    if seeds and len(seeds) > 0 and 'X_train' in locals():
-                         try:
-                             from kalkulator_pkg.symbolic_regression.expression_tree import ExpressionTree
-                             import sympy as sp
-                             test_seed = seeds[0] # The rational seed is usually first
-                             local_dict = {v: sp.Symbol(v) for v in input_vars}
-                             test_expr = sp.sympify(test_seed, locals=local_dict)
-                             test_tree = ExpressionTree.from_sympy(test_expr, input_vars)
-                             
-                             # Evaluate on filtered data
-                             test_preds = test_tree.evaluate(X_train)
-                             test_diff = test_preds - y_train
-                             test_mse = np.mean(test_diff**2)
-                             
-                             st.info(f"🧪 Seed Validation: '{test_seed}' has MSE={test_mse:.2e} on training data.")
-                         except Exception as e:
-                             st.warning(f"⚠️ Seed Validation Warning: Could not evaluate seed '{seeds[0]}': {e}")
-                    
-                    # Redirect stdout
-                    import sys
-                    original_stdout = sys.stdout
-                    sys.stdout = StreamlitLogger(log_container)
-                    
-                    try:
-                        # Run fit
-                        # CRITICAL: Filter out non-finite values (Inf/NaN) from training data
-                        # The genetic engine cannot calculate MSE on Infinity.
-                        # We used the Infs for Forensic/Rational Analysis (Seeding), but we must hide them for Evolution.
-                        filter_mask = np.isfinite(y_data)
-                        if not np.all(filter_mask):
-                            dropped_count = len(y_data) - np.sum(filter_mask)
-                            st.warning(f"⚠️ Filtered {dropped_count} non-finite data points (Infinity/NaN) to allow evolution.")
-                            X_train = X_data[filter_mask]
-                            y_train = y_data[filter_mask]
-                        else:
-                            X_train = X_data
-                            y_train = y_data
-                            
-                            X_train = X_data
-                            y_train = y_data
-                            
-                        # ENABLE MULTI-SPACE EVOLUTION (Matches 'alt' command)
-                        # This tries evolving in Direct, Log, and Inverse spaces simultaneously
-                        st.info("🌌 Multi-Space Mode: Evolving in Direct, Log, and Inverse spaces...")
-                        best_expr, best_mse, best_space = regressor.fit_with_transformations(X_train, y_train, input_vars)
+                    if early_exit and best_sol:
+                         # Skip to results
+                         pass
+                    else:
+                        # Configure engine with Hybrid Power
+                        config = GeneticConfig(
+                            population_size=pop_size * 3, # Boost population for hard problems
+                            generations=generations * 3,  # Boost generations
+                            patience=patience,
+                            verbose=True,
+                            seeds=seeds,
+                            boosting_rounds=3 # Enable Symbolic Gradient Boosting (matches 'alt' command)
+                        )
                         
-                        # Manually construct ParetoFront from best result (fit_with_transformations returns tuple)
-                        pareto = ParetoFront()
-                        if best_expr:
-                            # Calculate complexity
-                            try:
-                                from kalkulator_pkg.symbolic_regression.expression_tree import ExpressionTree
-                                symbols = {v: sp.Symbol(v) for v in input_vars}
-                                sympy_expr = sp.sympify(best_expr, locals=symbols)
-                                tree = ExpressionTree.from_sympy(sympy_expr, input_vars)
-                                complexity = tree.complexity()
-                            except:
-                                complexity = 10.0 # Fallback
+                        regressor = GeneticSymbolicRegressor(config)
+
+                        regressor = GeneticSymbolicRegressor(config)
+                        
+                        # DEBUG: Pre-evaluate the seed to verify it works on filtered data
+                        if seeds and len(seeds) > 0 and 'X_train' in locals():
+                             try:
+                                 from kalkulator_pkg.symbolic_regression.expression_tree import ExpressionTree
+                                 import sympy as sp
+                                 test_seed = seeds[0] # The rational seed is usually first
+                                 local_dict = {v: sp.Symbol(v) for v in input_vars}
+                                 test_expr = sp.sympify(test_seed, locals=local_dict)
+                                 test_tree = ExpressionTree.from_sympy(test_expr, input_vars)
+                                 
+                                 # Evaluate on filtered data
+                                 test_preds = test_tree.evaluate(X_train)
+                                 test_diff = test_preds - y_train
+                                 test_mse = np.mean(test_diff**2)
+                                 
+                                 st.info(f"🧪 Seed Validation: '{test_seed}' has MSE={test_mse:.2e} on training data.")
+                             except Exception as e:
+                                 st.warning(f"⚠️ Seed Validation Warning: Could not evaluate seed '{seeds[0]}': {e}")
+                        
+                        # Redirect stdout
+                        import sys
+                        original_stdout = sys.stdout
+                        sys.stdout = StreamlitLogger(log_container)
+                        
+                        try:
+                            # Run fit
+                            # CRITICAL: Filter out non-finite values (Inf/NaN) from training data
+                            # The genetic engine cannot calculate MSE on Infinity.
+                            # We used the Infs for Forensic/Rational Analysis (Seeding), but we must hide them for Evolution.
+                            filter_mask = np.isfinite(y_data)
+                            if not np.all(filter_mask):
+                                dropped_count = len(y_data) - np.sum(filter_mask)
+                                st.warning(f"⚠️ Filtered {dropped_count} non-finite data points (Infinity/NaN) to allow evolution.")
+                                X_train = X_data[filter_mask]
+                                y_train = y_data[filter_mask]
+                            else:
+                                X_train = X_data
+                                y_train = y_data
                                 
-                            solution = ParetoSolution(
-                                expression=best_expr,
-                                mse=best_mse,
-                                complexity=complexity,
-                                # r2=0.0  <- REMOVED: ParetoSolution does not take this arg
-                                sympy_expr=sympy_expr,  # Added missing required arg
-                                tree=tree               # Added missing required arg
-                            )
-                            pareto.add(solution)
+                                X_train = X_data
+                                y_train = y_data
+                                
+                            # ENABLE MULTI-SPACE EVOLUTION (Matches 'alt' command)
+                            # This tries evolving in Direct, Log, and Inverse spaces simultaneously
+                            st.info("🌌 Multi-Space Mode: Evolving in Direct, Log, and Inverse spaces...")
+                            best_expr, best_mse, best_space = regressor.fit_with_transformations(X_train, y_train, input_vars)
                             
-                            # Show which space won
-                            if best_space != "direct":
-                                st.success(f"🚀 Solution found in transformed space: {best_space.upper()}")
-                    finally:
-                        # Restore stdout
-                        sys.stdout = original_stdout
-                    
-                    st.success("Evolution complete!")
-                    
-                    # Get best
-                    best_sol = pareto.get_best()
+                            # Manually construct ParetoFront from best result (fit_with_transformations returns tuple)
+                            pareto = ParetoFront()
+                            if best_expr:
+                                # Calculate complexity
+                                try:
+                                    from kalkulator_pkg.symbolic_regression.expression_tree import ExpressionTree
+                                    symbols = {v: sp.Symbol(v) for v in input_vars}
+                                    sympy_expr = sp.sympify(best_expr, locals=symbols)
+                                    tree = ExpressionTree.from_sympy(sympy_expr, input_vars)
+                                    complexity = tree.complexity()
+                                except:
+                                    complexity = 10.0 # Fallback
+                                    
+                                solution = ParetoSolution(
+                                    expression=best_expr,
+                                    mse=best_mse,
+                                    complexity=complexity,
+                                    # r2=0.0  <- REMOVED: ParetoSolution does not take this arg
+                                    sympy_expr=sympy_expr,  # Added missing required arg
+                                    tree=tree               # Added missing required arg
+                                )
+                                pareto.add(solution)
+                                
+                                # Show which space won
+                                if best_space != "direct":
+                                    st.success(f"🚀 Solution found in transformed space: {best_space.upper()}")
+                        finally:
+                            # Restore stdout
+                            sys.stdout = original_stdout
+                        
+                        st.success("Evolution complete!")
+                        
+                        # Get best
+                        best_sol = pareto.get_best()
+
                     
                     if best_sol:
                         st.balloons()
@@ -888,13 +942,21 @@ with tab2:
         
         # FULL MODE (Standard)
         try:
-            # Optimized: Singleton REPL instance in session state
-            if 'repl_instance' not in st.session_state:
-                from kalkulator_pkg.cli.repl_core import REPL
-                st.session_state.repl_instance = REPL()
-                # Restore variables if any exists in vars backup
-                if 'cli_vars' in st.session_state and st.session_state.cli_vars:
-                        st.session_state.repl_instance.variables = st.session_state.cli_vars.copy()
+            # Optimized: Reload modules to support hot-fixes (like 'altv')
+            import importlib
+            import kalkulator_pkg.cli.repl_core
+            import kalkulator_pkg.cli.repl_commands
+            # Reload explicit dependencies to ensure new command routing (like 'altv') is active
+            importlib.reload(kalkulator_pkg.cli.repl_commands)
+            importlib.reload(kalkulator_pkg.cli.repl_core)
+            
+            # Always re-instantiate REPL to use fresh code/logic
+            from kalkulator_pkg.cli.repl_core import REPL
+            st.session_state.repl_instance = REPL()
+            
+            # Restore variables from session state
+            if 'cli_vars' in st.session_state and st.session_state.cli_vars:
+                 st.session_state.repl_instance.variables = st.session_state.cli_vars.copy()
 
             repl_instance = st.session_state.repl_instance
             
