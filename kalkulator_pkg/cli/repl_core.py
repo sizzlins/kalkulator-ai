@@ -163,7 +163,7 @@ class REPL:
 
         # Reserved Keyword Check: Prevent commands from being parsed as math
         # e.g., 'all' -> a*l^2 or 'b' -> b (if undefined)
-        reserved_keywords = {'all', 'alt', 'evolve', 'find', 'b', 'h', 'v'}
+        reserved_keywords = {'all', 'alt', 'altv', 'evolve', 'find', 'b', 'h', 'v'}
         if text_lower in reserved_keywords:
             # Exception: Allow single-letter shortcuts (b, h, v) if they are defined variables
             # This allows users to inspect variable 'b' if they defined it
@@ -173,7 +173,7 @@ class REPL:
                 self.print(f"Command '{text}' requires arguments (e.g., '{text} f(x)=...').")
                 return
 
-        if text_lower.startswith(('all ', 'b ', 'h ', 'v ', 'alt ')):
+        if text_lower.startswith(('all ', 'b ', 'h ', 'v ', 'alt ', 'altv ')):
              # SAFETY CHECK: Ignore if it looks like assignment or math (e.g. "b = 10", "b - 5")
              # Split by space. If first part is shortcut, check subsequent char.
              parts = text.split(maxsplit=1)

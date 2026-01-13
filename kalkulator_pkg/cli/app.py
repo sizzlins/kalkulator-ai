@@ -231,6 +231,7 @@ DISCOVERY
 
 SHORTCUTS (for evolve)
   alt f(...)    ULTIMATE:   --hybrid --verbose --boost 3 --transform
+  altv f(...)   DEBUG:      --hybrid --super-verbose --boost 3 --transform
   all f(...)    Full power: --hybrid --verbose --boost 3
   b f(...)      Fast mode:  --verbose --boost 3
   h f(...)      Smart mode: --hybrid --verbose
@@ -241,6 +242,7 @@ PATTERN DETECTION (auto-seeding)
   Modulo:       f(0)=0, f(3)=0, f(6)=0 → mod(x,3)
   ReLU:         f(-1)=0, f(0)=0, f(1)=1 → max(0,x)
   Clamp:        f(1)=1, f(5)=5, f(10)=5 → min(x,5)
+  Triangle:     f(0)=0, f(0.5)=0.5, f(1)=0 → abs(x - round(x))
   Bouncing:     |sin(x)| via cusp detection
   Pulse:        Heaviside patterns via edge detection
   ODE Physics:  y'' + y = 0 (harmonic), y' = y(1-y) (logistic)
@@ -258,8 +260,8 @@ SETTINGS
   cachehits [on|off] Show hits
 
 SUPPORTED:
-  Math: +, -, *, /, ^, sqrt, abs, exp, log, sin, cos, tan, asin, acos, atan, sinh, cosh, tanh
-  Special: prime_pi (primes), gamma, bessel_j/y/i/k, Heaviside, Piecewise
+  Math: +, -, *, /, ^, sqrt, abs, round, floor, ceil, sign, exp, log, sin, cos, tan, asin, acos, atan, sinh, cosh, tanh
+  Special: prime_pi (primes), gamma, bessel_j/y/i/k, Heaviside, Piecewise, LambertW
   Bitwise: bitwise_xor, bitwise_and, bitwise_or, lshift, rshift (or ^, &, |, <<, >>)
 
 Full Docs: https://github.com/sizzlins/kalkulator-ai

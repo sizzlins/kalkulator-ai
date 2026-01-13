@@ -34,22 +34,25 @@ license: mit
 
 These demonstrate Kalkulator's ability to discover functions that defeat standard regression engines:
 
-| Function                | Description             | Why It's Hard                                       |
-| ----------------------- | ----------------------- | --------------------------------------------------- |
-| `floor(x) + frac(x)²`   | The Scalloped Staircase | Cusps at every integer break gradient-based solvers |
-| `x ⊕ 5`                 | Bitwise XOR             | Non-continuous, digital logic                       |
-| `Fibonacci(n)`          | Golden Ratio Sequence   | Detects recurrence, seeds Binet formula             |
-| `Tribonacci(n)`         | 3-term Recurrence       | Auto-detects `f(n)=f(n-1)+f(n-2)+f(n-3)`            |
-| `x % 1.5`               | Sawtooth Modulo         | Periodic zeros detection                            |
-| `acosh(x)`              | Complex Domain          | Requires forensic detection of hyperbolic patterns  |
-| `π(x)`                  | Prime Counting          | Integer-only step function                          |
-| `x^x`                   | Self-Power              | Complex logarithmic domain                          |
-| `(x+1)^(1/x)`           | Constant Anchor         | Detected via `f(2) = √3` pattern                    |
-| `dy/dt = 2y(1-y)`       | Logistic ODE            | Phase space regression (y' vs y)                    |
-| `\|sin(x)\|`            | Bouncing Ball           | Cusp detector finds V-shaped zeros                  |
-| `min(x, 5)`             | Clamped Linear          | Clamp detector (linear then constant)               |
-| `Heaviside(x-3)-H(x-7)` | Rectangle Pulse         | Pulse detector finds rising/falling edges           |
-| `max(0, x)`             | ReLU                    | Piecewise linear detector                           |
+| Function                | Description             | Why It's Hard                                        |
+| ----------------------- | ----------------------- | ---------------------------------------------------- |
+| `floor(x) + frac(x)²`   | The Scalloped Staircase | Cusps at every integer break gradient-based solvers  |
+| `x ⊕ 5`                 | Bitwise XOR             | Non-continuous, digital logic                        |
+| `Fibonacci(n)`          | Golden Ratio Sequence   | Detects recurrence, seeds Binet formula              |
+| `Tribonacci(n)`         | 3-term Recurrence       | Auto-detects `f(n)=f(n-1)+f(n-2)+f(n-3)`             |
+| `x % 1.5`               | Sawtooth Modulo         | Periodic zeros detection                             |
+| `acosh(x)`              | Complex Domain          | Requires forensic detection of hyperbolic patterns   |
+| `π(x)`                  | Prime Counting          | Integer-only step function                           |
+| `x^x`                   | Self-Power              | Complex logarithmic domain                           |
+| `(x+1)^(1/x)`           | Constant Anchor         | Detected via `f(2) = √3` pattern                     |
+| `dy/dt = 2y(1-y)`       | Logistic ODE            | Phase space regression (y' vs y)                     |
+| `\|sin(x)\|`            | Bouncing Ball           | Cusp detector finds V-shaped zeros                   |
+| `min(x, 5)`             | Clamped Linear          | Clamp detector (linear then constant)                |
+| `Heaviside(x-3)-H(x-7)` | Rectangle Pulse         | Pulse detector finds rising/falling edges            |
+| `max(0, x)`             | ReLU                    | Piecewise linear detector                            |
+| `abs(x - round(x))`     | Triangle Wave           | Triangle wave detector (distance to nearest integer) |
+| `sin(x^2)`              | Chirp Signal            | Zero-crossing analysis finds accelerating frequency  |
+| `sign(x)`               | Signum Function         | Amplitude constant detector                          |
 
 ## Installation
 
@@ -533,6 +536,10 @@ You can easily deploy this app for free using **Streamlit Community Cloud** so y
 5.  Click **"Deploy!"**.
 
 That's it! Streamlit will install the dependencies from `requirements.txt` and launch your app. You'll get a URL (e.g., `https://kalkulator-ai.streamlit.app`) to share.
+
+## Development
+
+This project was architected and engineered by Syahbana. Large Language Models (LLMs) were utilized for rapid prototyping, code generation of boilerplate components, and refactoring assistance. All core logic regarding feature engineering, regularization strategies, and calculus integration was manually verified and tuned.
 
 ## License
 

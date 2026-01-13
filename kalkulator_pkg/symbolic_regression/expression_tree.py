@@ -95,6 +95,7 @@ def symbolify_constants(expr_str: str) -> str:
         -> "(1/sqrt(5))*(((1 + sqrt(5))/2))**x"
         
         "3.14159265358979*x" -> "pi*x"
+        "3.14159*x" -> "pi*x"  (also works with fewer decimals)
     
     Args:
         expr_str: Expression string with potential decimal constants
@@ -107,8 +108,8 @@ def symbolify_constants(expr_str: str) -> str:
     result = expr_str
     
     # Pattern to match floating point numbers (including negative)
-    # Matches: 3.14159, -0.618, 1.618033988749895, etc.
-    float_pattern = re.compile(r'-?\d+\.\d{6,}')
+    # Relaxed to 4+ decimal places to catch common approximations like 3.14159
+    float_pattern = re.compile(r'-?\d+\.\d{4,}')
     
     def replace_constant(match):
         num_str = match.group(0)
@@ -117,8 +118,13 @@ def symbolify_constants(expr_str: str) -> str:
         except ValueError:
             return num_str
             
-        # Check against known constants
-        for const_val, const_sym, tol in SYMBOLIC_CONSTANTS:
+        # Check against known constants with relaxed tolerance for short approximations
+        for const_val, const_sym, base_tol in SYMBOLIC_CONSTANTS:
+            # Use tighter tolerance for high-precision matches, relaxed for short decimals
+            # Short decimals (5-6 digits) get 1e-4 tolerance, longer get 1e-10
+            n_decimals = len(num_str.split('.')[-1]) if '.' in num_str else 0
+            tol = 1e-4 if n_decimals <= 6 else base_tol
+            
             if abs(num_val - const_val) < tol:
                 # Wrap in parentheses if it contains operators
                 if any(op in const_sym for op in ['+', '-', '/', '*', '^']):

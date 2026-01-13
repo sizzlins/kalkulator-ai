@@ -3494,8 +3494,12 @@ def _handle_evolve(text, variables=None):
         # SHORTCUT COMMANDS: Expand to full evolve syntax
         text_lower = text.lower().strip()
         
+        # altv: SUPER-VERBOSE mode (like alt but with detailed analysis logging)
+        # Shows EXACTLY what the engine is thinking for tech-savvy users
+        if text_lower.startswith('altv '):
+            text = 'evolve --hybrid --verbose --super-verbose --boost 3 --transform ' + text[5:]
         # alt: ULTIMATE power mode (hybrid + verbose + boost 3 + transform)
-        if text_lower.startswith('alt '):
+        elif text_lower.startswith('alt '):
             text = 'evolve --hybrid --verbose --boost 3 --transform ' + text[4:]
         # all: Full power mode (hybrid + verbose + boost 3)
         elif text_lower.startswith('all '):
@@ -3543,6 +3547,13 @@ def _handle_evolve(text, variables=None):
         verbose_mode = "--verbose" in text.lower()
         if verbose_mode:
             text = re.sub(r"--verbose", "", text, flags=re.IGNORECASE)
+
+        # Super-Verbose Mode: Detailed analysis logging for tech-savvy users
+        # Shows EXACTLY what the engine is thinking at each step
+        super_verbose = "--super-verbose" in text.lower() or "-sv" in text
+        if super_verbose:
+            text = re.sub(r"--super-verbose", "", text, flags=re.IGNORECASE)
+            text = re.sub(r"-sv\b", "", text)
 
         # Multi-Space Transformation
         # Parse "--transform" flag to use multi-space evolution (direct + log + inverse)
@@ -4096,6 +4107,30 @@ def _handle_evolve(text, variables=None):
         if len(y) == 0:
             print(f"Error: All {original_len} data points were filtered out (no valid real numbers).")
             return
+        
+        # --- ROBUST OUTLIER FILTERING (IQR-Based) ---
+        # Remove extreme outliers that could corrupt evolution
+        # This helps when input data has precision errors near poles (e.g., f(0.0005) wrong by 10 orders of magnitude)
+        try:
+            if len(y) >= 10 and not np.iscomplexobj(y):
+                y_real = np.real(y) if np.iscomplexobj(y) else y.astype(float)
+                q1 = np.percentile(y_real, 25)
+                q3 = np.percentile(y_real, 75)
+                iqr = q3 - q1
+                
+                # Use a relaxed 3*IQR fence (broader than 1.5*IQR)
+                lower_bound = q1 - 3 * iqr
+                upper_bound = q3 + 3 * iqr
+                
+                outlier_mask = (y_real >= lower_bound) & (y_real <= upper_bound)
+                num_outliers = np.sum(~outlier_mask)
+                
+                if num_outliers > 0 and num_outliers < len(y) * 0.3:  # Don't filter if too many outliers
+                    X = X[outlier_mask]
+                    y = y[outlier_mask]
+                    print(f"Note: Filtered {num_outliers} outlier point(s) using IQR method.")
+        except Exception:
+            pass  # If outlier detection fails, continue with original data
 
         print(f"Evolving {func_name}({', '.join(input_vars)}) from {len(y)} data points...")
 
@@ -4148,6 +4183,16 @@ def _handle_evolve(text, variables=None):
                         print(f"Hybrid mode: filtering {count_complex_skipped} complex points, running find() on {len(find_data_points_real)} real points...")
                     else:
                         print("Hybrid mode: running find() for initial approximation...")
+                    
+                    # Super-verbose: Show input data statistics
+                    if super_verbose:
+                        y_vals_real = [p[1] for p in find_data_points_real]
+                        x_vals_real = [p[0][0] for p in find_data_points_real]
+                        print(f"\n[SV] INPUT DATA ANALYSIS:")
+                        print(f"     Points: {len(find_data_points_real)}")
+                        print(f"     X range: [{min(x_vals_real):.4g}, {max(x_vals_real):.4g}]")
+                        print(f"     Y range: [{min(y_vals_real):.4g}, {max(y_vals_real):.4g}]")
+                        print(f"     Y mean: {np.mean(y_vals_real):.4g}, std: {np.std(y_vals_real):.4g}")
                         
                     import warnings
                     with warnings.catch_warnings():
@@ -4155,7 +4200,7 @@ def _handle_evolve(text, variables=None):
                          # Run on the filtered real dataset
                          # Signature: find_function_from_data(data_points, param_names, skip_linear)
                          success, func_str, factored, error = find_function_from_data(
-                             find_data_points_real, input_vars
+                             find_data_points_real, input_vars, verbose=super_verbose
                          )
 
                 # QUALITY CHECK: Only use seed if it's actually good
@@ -4209,21 +4254,48 @@ def _handle_evolve(text, variables=None):
                             ss_tot = np.sum((np.array(y_true) - y_mean)**2)
                             ss_res = np.sum((np.array(y_true) - np.array(y_pred))**2)
                             r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
+                            mse_val = ss_res / len(y_true)
                         else:
                             # Fallback if no valid points for validation
                             r_squared = 0.0
+                            mse_val = 1e9
+                        
                         
                         # Threshold: Only use seed if R² > 0.7 (good fit)
-                        if r_squared > 0.7:
+                        # OR if it's a decent fit (R² > 0.4) with low MSE (useful for rational functions with poles)
+                        # Relaxed to 0.05 to handle SVD linearization approximations
+                        if r_squared > 0.7 or (r_squared > 0.4 and mse_val < 0.05):
                             use_seed = True
                             seeds.append(func_str)
                             display = func_str[:50] + "..." if len(func_str) > 50 else func_str
                             print(
-                                f"Hybrid seeding: using find() result '{display}' (R²={r_squared:.4f})"
+                                f"Hybrid seeding: using find() result '{display}' (R²={r_squared:.4f}, MSE={mse_val:.6f})"
                             )
+                            
+                            # EARLY RETURN: If find() result is EXCELLENT (MSE < 0.01), skip evolution
+                            # This handles cases where SVD finds perfect rational functions that
+                            # the Genetic Engine can't parse or improve
+                            if mse_val < 0.01:
+                                print(f"\n🎯 find() discovered an excellent solution (MSE={mse_val:.6f})")
+                                print(f"   Skipping evolution and returning directly.")
+                                
+                                # Format and return the result
+                                from ..symbolic_regression.expression_tree import symbolify_constants
+                                from ..utils.formatting import format_solution
+                                beautified = symbolify_constants(func_str)
+                                print(f"\nResult: {format_solution(beautified)}")
+                                print(f"MSE: {mse_val:.6g}, Complexity: ~{len(func_str)//5}")
+                                
+                                # Persist the function
+                                try:
+                                    from ..function_manager import define_function
+                                    define_function(func_name, input_vars, beautified)
+                                except Exception:
+                                    pass
+                                return
                         else:
                             print(
-                                f"Hybrid seeding: find() result has low R²={r_squared:.2f}, skipping seed"
+                                f"Hybrid seeding: find() result has low R²={r_squared:.2f} (MSE={mse_val:.6f}), skipping seed"
                             )
                             print("  → Using pure evolve instead (no bad seed)")
                     except Exception as eval_error:
@@ -4400,6 +4472,8 @@ def _handle_evolve(text, variables=None):
             return
 
         # Print Result (with symbolic constant beautification)
+        from ..symbolic_regression.expression_tree import symbolify_constants
+        from ..utils.formatting import format_solution
         beautified_expr = symbolify_constants(best.expression)
         print(f"\nResult: {format_solution(beautified_expr)}")
         print(f"MSE: {best.mse:.6g}, Complexity: {best.complexity}")

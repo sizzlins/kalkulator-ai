@@ -1358,6 +1358,7 @@ def find_function_from_data(
     data_points: list[tuple[Any, Any]],
     param_names: list[str] | None = None,
     skip_linear: bool = False,
+    verbose: bool = False,
 ) -> tuple[bool, str | None, dict[str, Any] | None, str | None]:
     """Find a function from data points using interpolation/regression.
 
@@ -1591,6 +1592,38 @@ def find_function_from_data(
             f"Warning: {len(complex_data)} data point(s) with complex/imaginary values were skipped."
         )
         print("         Regression requires real-valued inputs and outputs.")
+
+    # === TRIANGLE WAVE EARLY DETECTION ===
+    # Check for triangle wave pattern BEFORE expensive SVD/regression
+    # Triangle wave: abs(x - round(x)) = distance to nearest integer
+    if len(numeric_data) >= 5 and len(param_names) == 1:
+        try:
+            x_vals_tri = np.array([p[0][0] for p in numeric_data])
+            y_vals_tri = np.array([p[1] for p in numeric_data])
+            
+            # Filter finite values
+            valid_mask = np.isfinite(x_vals_tri) & np.isfinite(y_vals_tri)
+            if np.sum(valid_mask) >= 5:
+                x_valid = x_vals_tri[valid_mask]
+                y_valid = y_vals_tri[valid_mask]
+                
+                # Test triangle wave: y = abs(x - round(x))
+                y_pred_triangle = np.abs(x_valid - np.round(x_valid))
+                max_err_triangle = np.max(np.abs(y_valid - y_pred_triangle))
+                
+                if verbose:
+                    print(f"\n[SV] TRIANGLE WAVE EARLY CHECK:")
+                    print(f"     Testing abs(x - round(x)): max_err={max_err_triangle:.4g}")
+                
+                if max_err_triangle < 1e-6:
+                    var_name = param_names[0] if param_names else "x"
+                    result_func = f"Abs({var_name} - floor({var_name} + 0.5))"
+                    if verbose:
+                        print(f"     → PERFECT MATCH! Returning: {result_func}")
+                    return (True, result_func, None, None)
+        except Exception as e:
+            if verbose:
+                print(f"     → Triangle wave check failed: {e}")
 
     # --- Hybrid Mode: If mixed data, use numeric to find function, validate with symbolic ---
     # Note: Requires at least 3 numeric points for reliable regression
@@ -1907,6 +1940,10 @@ def find_function_from_data(
 
                 # Check A*x + B*sin(x) + C (linear + sine combination)
                 # This catches x + sin(x), 2*x + sin(x), etc.
+                if verbose:
+                    print(f"\n[SV] TEMPLATE: A*x + B*sin(x) + C (linear + sine combination)")
+                    print(f"     Reason: Y range [{min(y_arr_sin):.4g}, {max(y_arr_sin):.4g}] suggests oscillatory behavior")
+                
                 x_feat = X_arr_sin.reshape(-1, 1)
                 sin_feat = np.sin(X_arr_sin).reshape(-1, 1)
                 combined_feat = np.hstack([x_feat, sin_feat])
@@ -1916,6 +1953,15 @@ def find_function_from_data(
 
                 y_pred_combined = lr_combined.predict(combined_feat)
                 mse_combined = np.mean((y_arr_sin - y_pred_combined) ** 2)
+                
+                if verbose:
+                    A_lin = lr_combined.coef_[0]
+                    B_sin = lr_combined.coef_[1]
+                    C = lr_combined.intercept_
+                    print(f"     Fitted: A={A_lin:.6g}, B={B_sin:.6g}, C={C:.6g}")
+                    print(f"     MSE: {mse_combined:.6g}")
+                    residuals = y_arr_sin - y_pred_combined
+                    print(f"     Residuals: max={np.max(np.abs(residuals)):.4g}, mean={np.mean(np.abs(residuals)):.4g}")
 
                 if mse_combined < 1e-5:  # Excellent fit (relaxed for FP noise)
                     A_lin = lr_combined.coef_[0]  # coefficient for x
@@ -1933,6 +1979,9 @@ def find_function_from_data(
                     is_valid_A = abs(A_lin - A_r) < 1e-3 and abs(A_r) <= 10
                     is_valid_B = abs(B_sin - B_r) < 1e-3 and abs(B_r) <= 10
                     abs(C - C_r) < 1e-2 and abs(C_r) <= 10
+                    
+                    if verbose:
+                        print(f"     Validation: A near {A_r}? {is_valid_A}, B near {B_r}? {is_valid_B}")
 
                     # Only proceed if coefficients look like simple sine+linear combination
                     if is_valid_A and is_valid_B and (abs(A_r) >= 1 or abs(B_r) >= 1):
@@ -2020,15 +2069,36 @@ def find_function_from_data(
             # We use 4/4 which has 10 coefficients. Requires at least 11 data points for safety.
             max_deg = 4 if len(data_points) >= 12 else 2
             
+            if verbose:
+                print(f"\n[SV] RATIONAL SVD SOLVER:")
+                print(f"     Trying degrees: numerator={max_deg}, denominator={max_deg}")
+                print(f"     Points fed to SVD: {len(X_data_svd)}")
+            
             success_svd, func_svd, mse_svd = solve_rational_function_svd(
-                X_data_svd, y_data_svd, param_names, max_numerator_degree=max_deg, max_denominator_degree=max_deg
+                X_data_svd, y_data_svd, param_names, 
+                max_numerator_degree=max_deg, max_denominator_degree=max_deg,
+                verbose=verbose
             )
             
+            if verbose:
+                print(f"     SVD Result: success={success_svd}, MSE={mse_svd:.6g}")
+                if success_svd:
+                    print(f"     Function: {func_svd}")
+            
             if success_svd and mse_svd < 1e-9:
+                 if verbose:
+                     print(f"     → Early return: MSE < 1e-9 (machine precision)")
                  return (True, func_svd, None, f"RationalSVD (MSE={mse_svd:.2e})")
+            
+            # Store as candidate even if not perfect - we'll compare later
+            svd_candidate = (success_svd, func_svd, mse_svd) if success_svd else None
+            if verbose and svd_candidate:
+                print(f"     → Stored as candidate (will compare with regression later)")
 
-        except Exception:
-            pass
+        except Exception as e:
+            if verbose:
+                print(f"     SVD failed with exception: {e}")
+            svd_candidate = None
             
         try:
             X_vals = [
@@ -2235,12 +2305,24 @@ def find_function_from_data(
             # Try frequencies: 0.5, 1, 2, 3, 4, 5, pi
             pure_trig_freqs = [0.5, 1, 2, 3, 4, 5, np.pi]
             pure_trig_labels = ["0.5", "1", "2", "3", "4", "5", "pi"]
+            
+            if verbose:
+                print(f"\n[SV] TEMPLATE: Pure sin/cos with frequency sweep")
+                print(f"     Testing frequencies: {pure_trig_labels}")
+                print(f"     Threshold: max_error < 1e-3")
 
             for freq, freq_label in zip(pure_trig_freqs, pure_trig_labels):
                 # Test cos(freq*x)
                 cos_vals = [np.cos(freq * x) for x in X_vals]
                 cos_errors = [abs(c - y) for c, y in zip(cos_vals, y_vals)]
-                if max(cos_errors) < 1e-3:
+                max_cos_err = max(cos_errors)
+                
+                if verbose:
+                    print(f"     cos({freq_label}*x): max_err={max_cos_err:.4g} {'✓ MATCH' if max_cos_err < 1e-3 else ''}")
+                
+                if max_cos_err < 1e-3:
+                    if verbose:
+                        print(f"     → ACCEPTING cos({freq_label}*x) as solution")
                     if freq_label == "1":
                         return (True, f"cos({var_name})", None, None)
                     else:
@@ -2249,7 +2331,14 @@ def find_function_from_data(
                 # Test sin(freq*x)
                 sin_vals = [np.sin(freq * x) for x in X_vals]
                 sin_errors = [abs(s - y) for s, y in zip(sin_vals, y_vals)]
-                if max(sin_errors) < 1e-3:
+                max_sin_err = max(sin_errors)
+                
+                if verbose:
+                    print(f"     sin({freq_label}*x): max_err={max_sin_err:.4g} {'✓ MATCH' if max_sin_err < 1e-3 else ''}")
+                
+                if max_sin_err < 1e-3:
+                    if verbose:
+                        print(f"     → ACCEPTING sin({freq_label}*x) as solution")
                     if freq_label == "1":
                         return (True, f"sin({var_name})", None, None)
                     else:
@@ -3164,9 +3253,10 @@ def find_function_from_data(
                 if not include_transcendentals and r_squared > 0.99:
                     return (True, func_str, None, confidence_note)
 
-                # Otherwise, keep as candidate
-                best_result = res
-
+                # Otherwise, keep as candidate if it's the best so far
+                if best_result is None or mse < best_result[3]:
+                    best_result = res
+        
         if best_result:
             success, func_str, confidence_note, mse = best_result
 
@@ -3242,6 +3332,17 @@ def find_function_from_data(
                         except Exception:
                             pass  # Try next degree
 
+            # FINAL CHECK: Compare with SVD candidate if available
+            # SVD may have found a better result that was skipped due to threshold
+            try:
+                if svd_candidate is not None:
+                    _, svd_func, svd_mse = svd_candidate
+                    if svd_mse < mse:
+                        print(f"SVD result (MSE={svd_mse:.6f}) beats regression (MSE={mse:.6f}), using SVD")
+                        return (True, svd_func, None, f"RationalSVD (MSE={svd_mse:.2e})")
+            except NameError:
+                pass  # svd_candidate not defined (multi-param)
+                
             return (success, func_str, None, confidence_note)
 
         # FALLBACK: Try high-degree polynomial fitting (degrees 3, 4, 5)

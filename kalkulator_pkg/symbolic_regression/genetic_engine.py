@@ -1402,9 +1402,19 @@ class GeneticSymbolicRegressor:
                 
                 if space['name'] == 'direct':
                     # Direct space: use tree directly
-                    pred = best_solution.tree.evaluate(X)
+                    # IMPORTANT: Filter out complex values - floor/ceiling operators fail on complex
+                    real_mask = np.ones(len(y), dtype=bool)
+                    if np.iscomplexobj(X):
+                        real_mask &= ~np.any(np.abs(np.imag(X)) > 1e-9, axis=1 if X.ndim > 1 else 0)
+                    if np.iscomplexobj(y):
+                        real_mask &= np.abs(np.imag(y)) < 1e-9
+                    
+                    X_real = np.real(X[real_mask]) if np.any(~real_mask) else X
+                    y_real = np.real(y[real_mask]) if np.any(~real_mask) else y
+                    
+                    pred = best_solution.tree.evaluate(X_real)
                     valid = ~np.isnan(pred) & ~np.isinf(pred)
-                    valid_ratio = np.sum(valid) / len(y)
+                    valid_ratio = np.sum(valid) / len(y_real)
                     
                     if valid_ratio < min_valid_ratio:
                         mse = float('inf')
@@ -1413,16 +1423,16 @@ class GeneticSymbolicRegressor:
                     elif hasattr(self, '_use_relative_fitness') and self._use_relative_fitness:
                         # Use Relative Square Error for high-variance data
                         # Add epsilon to denominator to avoid division by zero
-                        denom = np.abs(y[valid])
+                        denom = np.abs(y_real[valid])
                         denom[denom < 1e-10] = 1.0 # avoid div/0
-                        diff_rel = (pred[valid] - y[valid]) / denom
+                        diff_rel = (pred[valid] - y_real[valid]) / denom
                         mse = np.mean(np.abs(diff_rel)**2)
                         
                         # DEBUG PRINT
                         if self.config.verbose and np.random.rand() < 0.01: # Sample occasionally
-                             print(f"DEBUG MSE REL: Pred={pred[valid][:3]} Y={y[valid][:3]} DiffRel={diff_rel[:3]} MSE={mse}")
+                             print(f"DEBUG MSE REL: Pred={pred[valid][:3]} Y={y_real[valid][:3]} DiffRel={diff_rel[:3]} MSE={mse}")
                     else:
-                        mse = np.mean(np.abs(pred[valid] - y[valid])**2)
+                        mse = np.mean(np.abs(pred[valid] - y_real[valid])**2)
                         
                 else:
                     # Transformed spaces: evaluate original tree, then transform

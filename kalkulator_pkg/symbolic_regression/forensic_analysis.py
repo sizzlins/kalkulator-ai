@@ -80,18 +80,21 @@ def _detect_integer_patterns(X, y):
                 
             num, den = frac.numerator, frac.denominator
             
-            for n in [1, 2, 3]:
+            
+            for n in range(1, 13):
                 x_pow = x_val ** n
                 num_rel = None
                 if num == x_pow: num_rel = f"{var_name}^{n}"
                 elif num == x_pow + 1: num_rel = f"({var_name}^{n} + 1)"
                 elif num == x_pow - 1: num_rel = f"({var_name}^{n} - 1)"
+                elif num == 1 - x_pow: num_rel = f"(1 - {var_name}^{n})"
                 elif num == x_pow + x_val: num_rel = f"({var_name}^{n} + {var_name})"
                 
                 den_rel = None
                 if den == x_pow: den_rel = f"{var_name}^{n}"
                 elif den == x_pow + 1: den_rel = f"({var_name}^{n} + 1)"
                 elif den == x_pow - 1: den_rel = f"({var_name}^{n} - 1)"
+                elif den == 1 - x_pow: den_rel = f"(1 - {var_name}^{n})"
                 elif den == x_pow - x_val: den_rel = f"({var_name}^{n} - {var_name})"
                 
                 if num_rel and den_rel: seeds.append(f"{num_rel} / {den_rel}")
@@ -121,6 +124,66 @@ def _detect_chirp_patterns(X, y, variable_names=None, verbose=False): return []
 def _detect_newton_polynomial(X, y, variable_names=None, verbose=False): return []
 def _detect_sub_epsilon_patterns(X, y, variable_names=None, verbose=False): return []
 
+def _detect_power_peeling(X, y):
+    """Detect if y = Base(x)^x via Rational Analysis on y^(1/x)."""
+    # 1. Compute z = y^(1/x)
+    # Filter to valid points where calculation is possible
+    valid_points = []
+    
+    # Handle both flat arrays and (N,1) shapes
+    X_flat = X.flatten()
+    y_flat = y.flatten()
+    
+    for i in range(len(y_flat)):
+        xi, yi = X_flat[i], y_flat[i]
+        if abs(xi) < 1e-6: continue # Avoid 1/0
+        
+        try:
+            # We want base = y^(1/x).
+            # If y is complex, this is tricky. Complex power have multiple branches.
+            # But Python's ** (pow) usually picks the principal branch.
+            # base = yi ** (1.0/xi)
+            # However, ((x-1)/(x+1)) might be negative, so base is negative.
+            # If base is negative, base^x is complex. yi is complex.
+            # yi^(1/xi) should recover base.
+            
+            # Suppress overflow/invalid warnings - we handle these cases gracefully
+            with np.errstate(invalid='ignore', over='ignore'):
+                zi = yi ** (1.0/xi)
+            
+            # Rational Analysis currently only supports Real numbers?
+            # Yes, standard SVD/Rational solver expects real coefficients.
+            # If base is real (like (x-1)/(x+1)), then zi should be real (or close to it).
+            if isinstance(zi, complex):
+                if abs(zi.imag) < 1e-4: zi = zi.real
+                else: continue # Skip complex bases for now (Rational Finder might not handle them)
+                
+            # Stability check: reject massive values that cause overflow in variance calculation
+            if np.isfinite(zi) and abs(zi) < 1e10:
+                valid_points.append(((xi,), zi))
+        except: continue
+        
+    if len(valid_points) < 5: 
+        print(f"Power Peeling: Only {len(valid_points)} valid points (need 5).")
+        return []
+    
+    # 2. Run Rational Analysis on z
+    # Local import to avoid circular dependency
+    try:
+        from kalkulator_pkg.function_manager import find_function_from_data
+        print(f"Power Peeling: Running Rational Analysis on {len(valid_points)} points...")
+        success, func_str, _, note = find_function_from_data(valid_points, param_names=["x"])
+        print(f"Power Peeling Result: {success}, {func_str}, Note: {note}")
+        
+        if success:
+             # Found a rational base!
+             # Return (base)**x
+             return [f"({func_str})**x"]
+    except ImportError:
+        pass
+        
+    return []
+
 def _detect_trig_composites(y_data):
     """Detect potential deep nested trigonometric functions."""
     # Heuristic: If bounded between [-1.5, 1.5] but noisy/high-frequency
@@ -140,6 +203,155 @@ def _detect_trig_composites(y_data):
         ]
     return []
 
+def _detect_triangle_wave(X, y, verbose=False):
+    """Detect triangle wave functions: abs(x - round(x)) = distance to nearest integer.
+    
+    Triangle waves are piecewise linear functions that repeat with period 1.
+    Common forms:
+    - abs(x - round(x)) = distance to nearest integer
+    - 0.5 - abs(frac(x) - 0.5) = same function, different form
+    - abs(frac(x + 0.5) - 0.5) = shifted variant
+    """
+    seeds = []
+    
+    # Need X to be 1D
+    if X.ndim > 1 and X.shape[1] > 1: 
+        return []
+    try: 
+        x_flat = X.flatten()
+    except: 
+        return []
+    
+    # Filter for real, finite values (exclude complex)
+    is_real_x = ~np.iscomplex(x_flat) if np.iscomplexobj(x_flat) else np.ones(len(x_flat), dtype=bool)
+    is_real_y = ~np.iscomplex(y) if np.iscomplexobj(y) else np.ones(len(y), dtype=bool)
+    valid_mask = np.isfinite(x_flat) & np.isfinite(y) & is_real_x & is_real_y
+    if np.sum(valid_mask) < 5:
+        return []
+    
+    x_valid = np.real(x_flat[valid_mask]).astype(float)
+    y_valid = np.real(y[valid_mask]).astype(float)
+    
+    # Triangle wave signature checks:
+    # 1. Y values should be in [0, 0.5] for standard triangle wave
+    y_min, y_max = np.min(y_valid), np.max(y_valid)
+    
+    if verbose:
+        print(f"\n[SV] TRIANGLE WAVE DETECTOR:")
+        print(f"     Y range: [{y_min:.4g}, {y_max:.4g}]")
+    
+    # Check if bounded like triangle wave [0, 0.5] or scaled variant
+    if y_min < -0.1 or y_max > 1.0:
+        if verbose:
+            print(f"     → Y range outside [0, 1], not a standard triangle wave")
+        return []
+    
+    # Test: abs(x - round(x)) - distance to nearest integer
+    try:
+        y_pred_triangle = np.abs(x_valid - np.round(x_valid))
+        mse_triangle = np.mean((y_valid - y_pred_triangle) ** 2)
+        max_err_triangle = np.max(np.abs(y_valid - y_pred_triangle))
+        
+        if verbose:
+            print(f"     Testing abs(x - round(x)):")
+            print(f"       MSE={mse_triangle:.6g}, max_err={max_err_triangle:.6g}")
+        
+        if max_err_triangle < 1e-6:
+            if verbose:
+                print(f"     → PERFECT MATCH: abs(x - round(x))")
+            seeds.append("abs(x - floor(x + 0.5))")  # Lowercase for GP engine compatibility
+            seeds.append("abs(x - ceil(x - 0.5))")   # Alternative form
+            return seeds
+        elif mse_triangle < 0.01:
+            if verbose:
+                print(f"     → Good match for triangle wave seed")
+            seeds.append("abs(x - floor(x + 0.5))")
+    except Exception as e:
+        if verbose:
+            print(f"     → Error testing triangle: {e}")
+    
+    # Test: 0.5 - abs(frac(x) - 0.5) = alternative triangle wave form
+    try:
+        frac_x = x_valid - np.floor(x_valid)
+        y_pred_frac = 0.5 - np.abs(frac_x - 0.5)
+        mse_frac = np.mean((y_valid - y_pred_frac) ** 2)
+        max_err_frac = np.max(np.abs(y_valid - y_pred_frac))
+        
+        if verbose:
+            print(f"     Testing 0.5 - abs(frac(x) - 0.5):")
+            print(f"       MSE={mse_frac:.6g}, max_err={max_err_frac:.6g}")
+        
+        if max_err_frac < 1e-6:
+            if verbose:
+                print(f"     → PERFECT MATCH: 0.5 - abs(frac(x) - 0.5)")
+            seeds.append("0.5 - abs(frac(x) - 0.5)")
+            return seeds
+    except Exception as e:
+        if verbose:
+            print(f"     → Error testing frac form: {e}")
+    
+    # Test: sawtooth wave frac(x) or x - floor(x)
+    try:
+        y_pred_sawtooth = frac_x
+        mse_sawtooth = np.mean((y_valid - y_pred_sawtooth) ** 2)
+        max_err_sawtooth = np.max(np.abs(y_valid - y_pred_sawtooth))
+        
+        if verbose:
+            print(f"     Testing frac(x) = x - floor(x):")
+            print(f"       MSE={mse_sawtooth:.6g}, max_err={max_err_sawtooth:.6g}")
+        
+        if max_err_sawtooth < 1e-6:
+            if verbose:
+                print(f"     → PERFECT MATCH: frac(x)")
+            seeds.append("frac(x)")
+            seeds.append("x - floor(x)")
+            return seeds
+    except:
+        pass
+    
+    return seeds
+
+def _detect_rapid_growth_poly(X, y, verbose=False):
+    """Detect high-degree polynomials like 1 - x^8 via log-slope analysis."""
+    seeds = []
+    # Filter for large values where x^n dominates
+    mask = (np.abs(y) > 100) & (np.abs(X.flatten()) > 1.5)
+    if np.sum(mask) < 3: return []
+    
+    x_large = X.flatten()[mask]
+    y_large = y[mask]
+    
+    # Check y ~ x^n
+    # log|y| ~ n * log|x|
+    try:
+        log_x = np.log(np.abs(x_large))
+        log_y = np.log(np.abs(y_large))
+        n_est = np.median(log_y / log_x)
+        
+        if verbose: print(f"   Rapid Growth: estimated degree {n_est:.2f}")
+        
+        # Check if close to integer
+        if abs(n_est - round(n_est)) < 0.1 and round(n_est) > 3:
+            n = int(round(n_est))
+            # Determine sign/offset by checking sign of y vs x^n
+            # x^n vs y
+            y_pred = x_large ** n
+            
+            # Check 1 - x^n
+            if np.median(np.abs((1 - y_pred) - y_large)) < 1e-3 * np.median(np.abs(y_large)):
+                 seeds.append(f"1 - x^{n}")
+                 
+            # Check x^n - 1
+            if np.median(np.abs((y_pred - 1) - y_large)) < 1e-3 * np.median(np.abs(y_large)):
+                 seeds.append(f"x^{n} - 1")
+                 
+            # Check -x^n
+            if np.median(np.abs((-y_pred) - y_large)) < 1e-3 * np.median(np.abs(y_large)):
+                 seeds.append(f"-x^{n}")
+    except: pass
+    
+    return seeds
+
 def generate_pattern_seeds(X, y, variable_names=None, verbose=False):
     """Detect patterns in data and return seed expression strings."""
     t0 = time.perf_counter()
@@ -158,6 +370,26 @@ def generate_pattern_seeds(X, y, variable_names=None, verbose=False):
     step_patterns = _detect_step_patterns(X, y)
     if step_patterns: return (step_patterns, step_patterns[0]) # Match return signature
     
+    # 2. Power Peeling Heuristic (NEW)
+    # Check if y = g(x)^x -> analyze z = y^(1/x)
+    try:
+        power_seeds = _detect_power_peeling(X, y)
+        if power_seeds:
+            if verbose: print(f"  -> Power Peeling found base: {power_seeds}")
+            seeds.extend(power_seeds)
+    except Exception as e:
+        if verbose: print(f"  -> Power Peeling error: {e}")
+
+    # 3. Triangle Wave Detection
+    # Check if y = abs(x - round(x)) or other piecewise periodic patterns
+    try:
+        triangle_seeds = _detect_triangle_wave(X, y, verbose=verbose)
+        if triangle_seeds:
+            if verbose: print(f"  -> Triangle Wave found: {triangle_seeds}")
+            seeds.extend(triangle_seeds)
+    except Exception as e:
+        if verbose: print(f"  -> Triangle Wave error: {e}")
+
     # 1.5 Peeling Heuristic (Inverse Composition)
     # Check if peeling off an outer function reveals a simple integer pattern
     # e.g. y = sin((x-1)/(x+1)) -> z = arcsin(y) = (x-1)/(x+1)
@@ -216,6 +448,12 @@ def generate_pattern_seeds(X, y, variable_names=None, verbose=False):
 
     seeds.extend(peeled_seeds)
     
+    # 3. Rapid Growth Polynomials
+    poly_seeds = _detect_rapid_growth_poly(X, y, verbose=verbose)
+    if poly_seeds:
+        if verbose: print(f"   Rapid Growth: Found {poly_seeds}")
+        seeds.extend(poly_seeds)
+
     # 2. Integer Pattern Analysis (Gemini Method)
     integer_patterns = _detect_integer_patterns(X, y)
     if integer_patterns:
