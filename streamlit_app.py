@@ -278,7 +278,8 @@ with tab3:
 - Example functions you can suggest:
   - x^2: [PREFILL]f(0)=0, f(1)=1, f(2)=4, f(3)=9, f(4)=16[/PREFILL]
   - sin(x): [PREFILL]f(0)=0, f(1.57)=1, f(3.14)=0, f(4.71)=-1[/PREFILL]
-  - x^3: [PREFILL]f(0)=0, f(1)=1, f(2)=8, f(3)=27[/PREFILL]
+  - Triangle: [PREFILL]f(0)=0, f(0.5)=0.5, f(1)=0, f(1.5)=0.5, f(2)=0[/PREFILL]
+  - Chirp: [PREFILL]f(0)=0, f(1.77)=0, f(2.5)=0, f(3.07)=0[/PREFILL]
 """
 
                 try:
@@ -566,7 +567,7 @@ with tab1:
                     # Show last 30 lines to keep UI snappy
                     full_text = "".join(self.log_history)
                     # Use code block for monospaced log look
-                    self.elem.code(full_text[-3000:], language="text")
+                    self.elem.code(full_text[-4000:], language="text")
                     
                     # Also write to original stdout
                     import sys
