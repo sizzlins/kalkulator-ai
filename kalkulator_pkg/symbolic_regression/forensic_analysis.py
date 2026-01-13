@@ -121,6 +121,25 @@ def _detect_chirp_patterns(X, y, variable_names=None, verbose=False): return []
 def _detect_newton_polynomial(X, y, variable_names=None, verbose=False): return []
 def _detect_sub_epsilon_patterns(X, y, variable_names=None, verbose=False): return []
 
+def _detect_trig_composites(y_data):
+    """Detect potential deep nested trigonometric functions."""
+    # Heuristic: If bounded between [-1.5, 1.5] but noisy/high-frequency
+    # Relaxed bounds to catch sin(complex) which can exceed 1
+    y_finite = y_data[np.isfinite(y_data)]
+    if len(y_finite) == 0: return []
+    
+    y_min, y_max = np.min(y_finite), np.max(y_finite)
+    if -1.5 < y_min < -0.5 and 0.5 < y_max < 1.5:
+        # It's definitely sinusodial-ish.
+        # Suggest deep nests which are hard to find randomly.
+        return [
+            "sin(tan(x))", "cos(tan(x))",
+            "sin(cos(x))", "cos(sin(x))",
+            "sin(cos(tan(x)))", "cos(sin(tan(x)))",
+            "tan(sin(x))", "tan(cos(x))"
+        ]
+    return []
+
 def generate_pattern_seeds(X, y, variable_names=None, verbose=False):
     """Detect patterns in data and return seed expression strings."""
     t0 = time.perf_counter()
@@ -253,5 +272,13 @@ def generate_pattern_seeds(X, y, variable_names=None, verbose=False):
     if pole_seeds and outer_functions:
         composed = _compose_seeds(pole_seeds, outer_functions)
         seeds.extend(composed)
+        
+    # 5. Deep Trig Heuristic (NEW)
+    try:
+        trig_seeds = _detect_trig_composites(y)
+        if trig_seeds:
+            if verbose: print(f"  -> Discovered deep trig possibilities: {trig_seeds}")
+            seeds.extend(trig_seeds)
+    except: pass
         
     return list(set(seeds))

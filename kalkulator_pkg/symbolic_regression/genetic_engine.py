@@ -71,6 +71,13 @@ class GeneticConfig:
             "pow",  # Enable a^x patterns like 2^x
             "sin",
             "cos",
+            "tan",
+            "asin",
+            "acos",
+            "atan",
+            "sinh",
+            "cosh",
+            "tanh",
             "exp",
             "log",  # Complex-capable log
             "square",
