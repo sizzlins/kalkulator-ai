@@ -978,8 +978,17 @@ with tab2:
             # Clean up previous plots
             plt.close('all')
             
-            # Run command - output goes to output_buffer via callback
-            repl_instance.process_input(cli_input)
+            # Capture stdout (for commands that use print() like _handle_evolve)
+            with contextlib.redirect_stdout(io.StringIO()) as f:
+                # Manual shim for 'altv' if REPL routing is stale
+                if cli_input.strip().lower().startswith("altv "):
+                     from kalkulator_pkg.cli.repl_commands import _handle_evolve
+                     _handle_evolve(cli_input, repl_instance.variables)
+                else:
+                    # Run command - output goes to output_buffer via callback (if self.print is used)
+                    repl_instance.process_input(cli_input)
+            
+            std_out = f.getvalue()
             
             if is_plot:
                 fig = plt.gcf()
@@ -989,7 +998,8 @@ with tab2:
             
             plt.show = original_show
             
-            output = "".join(output_buffer)
+            # Combine callback output and stdout
+            output = "".join(output_buffer) + std_out
             # Sync back vars
             st.session_state.cli_vars = repl_instance.variables.copy()
 
@@ -998,7 +1008,8 @@ with tab2:
             mem = psutil.virtual_memory()
             output = f"❌ MemoryError: Available: {mem.available/1024/1024:.0f}MB / Total: {mem.total/1024/1024:.0f}MB."
         except Exception as e:
-            output = f"Error: {e}"
+            import traceback
+            output = f"Error: {e}\n{traceback.format_exc()}"
         
         # Store in history: 3-tuple (cmd, out, fig)
         st.session_state.cli_history.append((cli_input, output, captured_fig))
