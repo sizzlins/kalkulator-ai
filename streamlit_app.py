@@ -40,7 +40,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🧠 Kalkulator AI")
+st.title("🧠 Kalkulator AI v1.2-DEBUG (ALTV FIXED)")
 st.markdown("### Symbolic Regression Engine")
 
 # --- BROADCAST BANNER ---
