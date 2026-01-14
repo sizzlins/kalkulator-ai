@@ -40,6 +40,7 @@ SAFE_GLOBALS = {
     "Add": sp.Add,
     "Mul": sp.Mul,
     "Number": sp.Number,
+    "Function": sp.Function,
 }
 
 
