@@ -41,6 +41,7 @@ SAFE_GLOBALS = {
     "Mul": sp.Mul,
     "Number": sp.Number,
     "Function": sp.Function,
+    "AccumBounds": sp.AccumBounds,
 }
 
 

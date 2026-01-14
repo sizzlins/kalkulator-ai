@@ -28,6 +28,65 @@ except ImportError:
     logger = logging.getLogger("solver.dispatch")
 
 
+def _try_enhanced_solve(equation: sp.Eq, sym: sp.Symbol) -> list[sp.Expr] | None:
+    """Attempt enhanced solving strategies for implicit trig equations."""
+    try:
+        # Strategy 1: Unwrap outer trig function (e.g. cos(ARG) = 0 -> ARG = pi/2)
+        lhs_expr = equation.lhs
+        rhs_val = equation.rhs
+        
+        new_eq = None
+        if rhs_val == 0:
+            if isinstance(lhs_expr, sp.cos):
+                new_eq = sp.Eq(lhs_expr.args[0], sp.pi/2)
+            elif isinstance(lhs_expr, sp.sin):
+                new_eq = sp.Eq(lhs_expr.args[0], 0)
+            elif isinstance(lhs_expr, sp.tan):
+                new_eq = sp.Eq(lhs_expr.args[0], 0)
+                
+        if new_eq is not None:
+            # Strategy 2: Simplify atan sums in the argument
+            arg = new_eq.lhs
+            arg = sp.factor(arg)
+            
+            # Handle common factor (e.g. 16 * (...))
+            coeff = sp.S.One
+            if isinstance(arg, sp.Mul):
+                args_rest = []
+                for term in arg.args:
+                    if term.is_Number:
+                        coeff *= term
+                    else:
+                        args_rest.append(term)
+                arg = sp.Mul(*args_rest)
+                # Adjust RHS
+                new_eq = sp.Eq(arg, new_eq.rhs / coeff)
+
+            # Check for atan summation
+            if isinstance(arg, sp.Add):
+                atans = [t for t in arg.args if isinstance(t, sp.atan)]
+                others = [t for t in arg.args if not isinstance(t, sp.atan)]
+                
+                if len(atans) == 2 and not others:
+                    # Combine atan(A) + atan(B) -> atan((A+B)/(1-AB))
+                    a, b = atans[0].args[0], atans[1].args[0]
+                    combined_arg = (a + b) / (1 - a*b)
+                    # Solve combined_arg = tan(rhs)
+                    # Use tan(rhs) unless invalid
+                    tan_rhs = sp.tan(new_eq.rhs)
+                    final_eq = sp.Eq(combined_arg, tan_rhs)
+                    
+                    # Now solve this algebraic equation
+                    sols = sp.solve(final_eq, sym)
+                    if sols:
+                        if isinstance(sols, (list, tuple)):
+                            return list(sols)
+                        return [sols]
+    except Exception as e:
+        logger.debug(f"Enhanced solve failed: {e}")
+    return None
+
+
 def solve_single_equation(
     eq_str: str,
     find_var: str | None = None,
@@ -270,6 +329,8 @@ def solve_single_equation(
 
     # Use module-level _numeric_roots_for_single_var function (defined above)
     try:
+        multi_solutions = None
+        multi_approx = None
         if find_var:
             sym = sp.symbols(find_var)
             if sym not in symbols:
@@ -278,7 +339,14 @@ def solve_single_equation(
                     "error": f"Variable '{find_var}' not present.",
                     "error_code": "VARIABLE_NOT_FOUND",
                 }
-            sols = sp.solve(equation, sym)
+            try:
+                sols = sp.solve(equation, sym)
+            except NotImplementedError:
+                sols_enhanced = _try_enhanced_solve(equation, sym)
+                if sols_enhanced:
+                    sols = sols_enhanced
+                else:
+                    raise
             # Filter to only real solutions
             real_sols = []
             real_approx = []
@@ -894,19 +962,52 @@ def solve_single_equation(
                         approx_list.append(None)
                 multi_approx[str(sym)] = approx_list
             except NotImplementedError as e:
-                logger.info(f"Solving for {sym} not implemented: {e}")
-                multi_solutions[str(sym)] = [
-                    "Solving not implemented for this variable"
-                ]
-                multi_approx[str(sym)] = [None]
+                # Try enhanced solving strategies
+                sols_enhanced = _try_enhanced_solve(equation, sym)
+                if sols_enhanced:
+                    # Found solution!
+                    if multi_solutions is not None:
+                        sols_list = [str(s) for s in sols_enhanced]
+                        multi_solutions[str(sym)] = sols_list
+                        multi_approx[str(sym)] = [None] * len(sols_list)
+                    else:
+                        # Single variable mode (find_var) - return result immediately
+                        exacts = [str(s) for s in sols_enhanced]
+                        return {
+                            "ok": True,
+                            "type": "equation",
+                            "exact": exacts,
+                            "approx": [None] * len(exacts),
+                        }
+                else:
+                    # Enhanced failed
+                    if multi_solutions is not None:
+                         logger.info(f"Solving for {sym} not implemented (enhanced failed): {e}")
+                         multi_solutions[str(sym)] = ["Solving not implemented for this variable"]
+                         multi_approx[str(sym)] = [None]
+                    else:
+                         # Single var failure
+                         # Re-raise or return error? Return error to avoid generic catch
+                         return {
+                            "ok": False,
+                            "error": f"Solving for {sym} not implemented: {e}. Enhanced trig strategies also failed.",
+                            "error_code": "NOT_IMPLEMENTED"
+                         }
             except (ValueError, TypeError) as e:
                 logger.warning(f"Error solving for {sym}", exc_info=True)
                 multi_solutions[str(sym)] = [f"Error: {e}"]
                 multi_approx[str(sym)] = [None]
     except Exception as e:
         logger.error(f"Unexpected error solving for {sym}", exc_info=True)
-        multi_solutions[str(sym)] = [f"Unexpected error: {e}"]
-        multi_approx[str(sym)] = [None]
+        if multi_solutions is not None:
+            multi_solutions[str(sym)] = [f"Unexpected error: {e}"]
+            multi_approx[str(sym)] = [None]
+        else:
+            return {
+                "ok": False,
+                "error": f"Unexpected error solving for {sym}: {e}",
+                "error_code": "UNEXPECTED_ERROR",
+            }
     return {
         "ok": True,
         "type": "multi_isolate",
