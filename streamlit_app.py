@@ -981,9 +981,17 @@ with tab2:
             # Capture stdout (for commands that use print() like _handle_evolve)
             with contextlib.redirect_stdout(io.StringIO()) as f:
                 # Manual shim for 'altv' if REPL routing is stale
-                if cli_input.strip().lower().startswith("altv "):
+                # 1. Clean input like REPL does (remove > or other prefixes)
+                clean_input = cli_input.strip()
+                # Remove markdown backticks
+                clean_input = clean_input.strip('`')
+                # Strip non-alphanumeric prefix chars
+                while clean_input and not clean_input[0].isalnum() and clean_input[0] not in '(-+.':
+                    clean_input = clean_input[1:]
+                
+                if clean_input.lower().startswith("altv ") or clean_input.lower() == "altv":
                      from kalkulator_pkg.cli.repl_commands import _handle_evolve
-                     _handle_evolve(cli_input, repl_instance.variables)
+                     _handle_evolve(clean_input, repl_instance.variables)
                 else:
                     # Run command - output goes to output_buffer via callback (if self.print is used)
                     repl_instance.process_input(cli_input)
