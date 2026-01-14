@@ -989,7 +989,11 @@ with tab2:
                 while clean_input and not clean_input[0].isalnum() and clean_input[0] not in '(-+.':
                     clean_input = clean_input[1:]
                 
+                # DEBUG: Show what the shim sees
+                print(f"DEBUG: Input='{cli_input}' Clean='{clean_input}'")
+                
                 if clean_input.lower().startswith("altv ") or clean_input.lower() == "altv":
+                     print("DEBUG: Routing to _handle_evolve via Shim")
                      from kalkulator_pkg.cli.repl_commands import _handle_evolve
                      _handle_evolve(clean_input, repl_instance.variables)
                 else:
