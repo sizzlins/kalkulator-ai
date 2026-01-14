@@ -80,6 +80,9 @@ COMMAND_REGISTRY = {
     "define",
     "health",
     "plot",
+    "alt",
+    "altv",
+    "all",
 }
 
 
@@ -149,8 +152,8 @@ def handle_command(text: str, ctx: Any, variables: Dict[str, str]) -> bool:
         _handle_evolve(text, variables)
         return True
 
-    # Shortcut commands route to evolve: alt, all, b, h, v
-    if raw_lower.startswith(("alt ", "all ", "b ", "h ", "v ")):
+    # Shortcut commands route to evolve: alt, all, b, h, v, altv
+    if raw_lower.startswith(("alt ", "all ", "b ", "h ", "v ", "altv ")):
         _handle_evolve(text, variables)
         return True
 
