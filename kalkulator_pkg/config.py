@@ -198,6 +198,7 @@ ALLOWED_SYMPY_NAMES = {
     "I": sp.I,
     # Special constants (must be recognized to prevent implicit mult corruption)
     "zoo": sp.zoo,  # Complex infinity
+    "AccumBounds": sp.AccumBounds,
     "oo": sp.oo,    # Positive infinity
     "nan": sp.nan,  # Not a Number
     "sqrt": sp.sqrt,
