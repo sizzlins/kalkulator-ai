@@ -173,17 +173,16 @@ def _detect_rational_form(X, y, variable_names=None, verbose=False):
         if verbose:
             print(f"  -> Rational form suspected ({fraction_ratio*100:.0f}% simple fractions)")
         
-        # Generate polynomial ratio seeds
-        # Pattern: (A - B²) / (A + B²) - common in angle-based functions
-        for coef in [4, 16]:  # Different scaling factors
-            # (coef*y² - (x²+y²-coef)²) / (coef*y² + (x²+y²-coef)²)
-            A = f"{coef}*{v1}**2"
-            B = f"({v0}**2+{v1}**2-{coef})"
-            seeds.append(f"({A}-{B}**2)/({A}+{B}**2)")
-            seeds.append(f"({A}-{B}**2)/({A}+{B}**2+1)")  # Offset variant
-            
-            # Also try with absolute values for stability
-            seeds.append(f"({A}-abs({B})**2)/({A}+abs({B})**2)")
+        # Generate polynomial ratio seeds with INDEPENDENT coefficients
+        # Pattern: (a*y² - (x²+y²-c)²) / (a*y² + (x²+y²-c)²)
+        # The y² coefficient (a) and constant offset (c) are independent
+        for a_coef in [4, 16]:  # y² coefficient
+            for c_offset in [4, 16]:  # Constant offset in (x²+y²-c)
+                A = f"{a_coef}*{v1}**2"
+                B = f"({v0}**2+{v1}**2-{c_offset})"
+                seeds.append(f"({A}-{B}**2)/({A}+{B}**2)")
+                # Also try negated version
+                seeds.append(f"({B}**2-{A})/({B}**2+{A})")
         
         # Simpler quadratic ratios
         seeds.append(f"({v0}**2-{v1}**2)/({v0}**2+{v1}**2)")  # Hyperbolic-like
