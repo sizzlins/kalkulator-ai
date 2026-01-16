@@ -1537,40 +1537,51 @@ class GeneticSymbolicRegressor:
         # Return best
         best = min(results, key=lambda r: r['mse'])
         
+        
+        # Helper to normalize expressions for consistent comparison
+        def normalize_expr(expr_obj_or_str):
+            try:
+                s = str(expr_obj_or_str)
+                # Quick string normalization first
+                return s.replace(' ', '')
+            except:
+                return str(expr_obj_or_str)
+
         # Collect equivalent forms (all results with MSE < 1e-9)
         equivalent_forms = []
+        seen_exprs = set()
+        
         for r in results:
             if r['mse'] < 1e-9:
-                expr_str = str(r['expression'])
-                # Avoid duplicates
-                if expr_str not in [str(e['expression']) for e in equivalent_forms]:
+                norm = normalize_expr(r['expression'])
+                if norm not in seen_exprs:
+                    seen_exprs.add(norm)
                     equivalent_forms.append(r)
         
-        # Also check if there are other near-perfect seeds in the Pareto front
+        # Algo check if there are other near-perfect seeds in the Pareto front
         if hasattr(self, 'pareto_front') and self.pareto_front.solutions:
             for sol in self.pareto_front.solutions:
                 if sol.mse < 1e-9:
-                    expr_str = str(sol.tree.to_sympy())
-                    existing = [str(e['expression']) for e in equivalent_forms]
-                    if expr_str not in existing and str(best['expression']) != expr_str:
+                    expr_sympy = sol.tree.to_sympy()
+                    norm = normalize_expr(expr_sympy)
+                    
+                    if norm not in seen_exprs:
+                        seen_exprs.add(norm)
                         equivalent_forms.append({
                             'space': 'pareto',
-                            'expression': sol.tree.to_sympy(),
+                            'expression': expr_sympy,
                             'mse': sol.mse
                         })
         
-        
         # When perfect solution found, check if other seeds also match perfectly
-        # This helps find algebraic alternatives to trigonometric forms
         if best['mse'] < 1e-9 and hasattr(self, '_last_seeds'):
             X_check = results[0].get('X', None) if results else None
             y_check = results[0].get('y', None) if results else None
-            # Get original X, y from the direct space evolution
             if X_check is None and hasattr(self, '_last_X'):
                 X_check = self._last_X
                 y_check = self._last_y
+                
             if X_check is not None and y_check is not None:
-                # Check ALL seeds
                 import sympy as sp
                 local_dict = {
                     'x': sp.Symbol('x'), 'y': sp.Symbol('y'),
@@ -1580,58 +1591,54 @@ class GeneticSymbolicRegressor:
                 }
                 from .expression_tree import ExpressionTree
                 
+                # Check ALL seeds
                 for seed_str in self._last_seeds:
                     try:
-                        # 1. Parse and Evaluate FIRST (fastest rejection)
+                        # Fast pre-check
+                        if normalize_expr(seed_str) in seen_exprs:
+                            continue
+
                         parsed = sp.sympify(seed_str, locals=local_dict)
                         tree = ExpressionTree.from_sympy(parsed, self._last_var_names)
                         preds = tree.evaluate(X_check)
                         
-                        # Handle singularities: Allow up to 10% NaNs/Infs if the rest match perfectly
                         valid_mask = np.isfinite(preds)
                         n_valid = np.sum(valid_mask)
                         
                         if n_valid < 0.9 * len(preds):
-                            continue # Too many errors
+                            continue 
                             
-                        # Compute MSE on valid points only
                         mse = float(np.mean((preds[valid_mask] - y_check[valid_mask]) ** 2))
                         
                         if mse < 1e-9:
-                            # 2. Candidate found! NOW check for duplicates using robust logic
-                            # (Expensive simplify() is ok here because we only run it on matches)
+                            # Robust duplicate check
                             is_duplicate = False
-                            simplified_candidate = sp.simplify(parsed)
+                            norm_parsed = normalize_expr(parsed)
                             
-                            for existing in equivalent_forms:
-                                # Safe comparison
-                                try:
-                                    # 1. String check (fast)
-                                    if str(existing['expression']).replace(' ', '') == str(parsed).replace(' ', ''):
-                                        is_duplicate = True
-                                        break
-                                        
-                                    # 2. Symbolic check (robust)
-                                    existing_simplified = sp.simplify(existing['expression'])
-                                    if sp.simplify(simplified_candidate - existing_simplified) == 0:
-                                        is_duplicate = True
-                                        break
-                                except:
-                                    pass
+                            if norm_parsed in seen_exprs:
+                                is_duplicate = True
+                            else:
+                                simplified_candidate = sp.simplify(parsed)
+                                for existing in equivalent_forms:
+                                    try:
+                                        if sp.simplify(simplified_candidate - sp.simplify(existing['expression'])) == 0:
+                                            is_duplicate = True
+                                            seen_exprs.add(norm_parsed) # Mark as seen to avoid re-check
+                                            break
+                                    except: pass
                             
                             if not is_duplicate:
+                                seen_exprs.add(norm_parsed)
                                 entry = {
                                     'space': 'seed',
                                     'expression': parsed,
                                     'mse': mse
                                 }
-                                # Tag singular solutions
                                 if n_valid < len(preds):
                                     entry['note'] = f"(Singularities at {len(preds)-n_valid} points)"
                                 equivalent_forms.append(entry)
-                                
-                    except Exception:
-                        pass  # Skip failed seeds
+                    except:
+                        pass
         
         if self.config.verbose:
             print(f"\n{'='*70}")
