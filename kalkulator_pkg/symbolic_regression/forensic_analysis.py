@@ -215,7 +215,7 @@ def _detect_bipolar_poles(X, y, variable_names=None, verbose=False):
             # atan2(a, b) = atan(a/b) but handles b=0 gracefully
             # Pattern: cos(k*(atan2(y, x+a) + atan2(x-a, y)))
             for a in [2, 3, 4]:  # Common pole separations
-                for k in [2, 4, 8, 16, 32]:  # Include k=2 for smaller angular frequencies
+                for k in range(1, 21):  # All multipliers 1-20 (not hardcoded)
                     # Using atan2 for division-free evaluation
                     wrapped.append(f"cos({k}*(atan2({v1},{v0}+{a})+atan2({v0}-{a},{v1})))")
                     wrapped.append(f"cos({k}*(atan2({v1},{v0}-{a})+atan2({v0}+{a},{v1})))")
