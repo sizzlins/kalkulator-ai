@@ -1369,6 +1369,14 @@ class GeneticSymbolicRegressor:
             
             temp_regressor.fit(space['X'], space['y'], variable_names)
             
+            # Copy stored data for equivalent forms checking
+            if space['name'] == 'direct' and hasattr(temp_regressor, '_last_seeds'):
+                self._last_seeds = temp_regressor._last_seeds
+                self._last_X = temp_regressor._last_X
+                self._last_y = temp_regressor._last_y
+                self._last_var_names = temp_regressor._last_var_names
+                self.pareto_front = temp_regressor.pareto_front
+            
             # Get best and transform back
             best_expr = temp_regressor.get_expression()
             if not best_expr:
