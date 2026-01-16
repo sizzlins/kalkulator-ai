@@ -222,7 +222,7 @@ class GeneticSymbolicRegressor(BaseEstimator, RegressorMixin):
             result = np.zeros(X.shape[0])
             for learning_rate, tree in self.boosted_models:
                 try:
-                    pred = tree.evaluate(X)
+                    pred = tree.evaluate_fast(X)
                     if np.isscalar(pred):
                         pred = np.full(X.shape[0], pred)
                     result += learning_rate * np.asarray(pred)
@@ -233,7 +233,7 @@ class GeneticSymbolicRegressor(BaseEstimator, RegressorMixin):
         # Single tree mode
         if self.best_tree is not None:
             try:
-                pred = self.best_tree.evaluate(X)
+                pred = self.best_tree.evaluate_fast(X)
                 if np.isscalar(pred):
                     return np.full(X.shape[0], pred)
                 return np.asarray(pred)
