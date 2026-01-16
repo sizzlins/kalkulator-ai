@@ -225,6 +225,7 @@ DISCOVERY
     --boost N             N× resources (pop/gen/timeout)
     --transform           Multi-space evolution (direct+log+inverse)
     --discover-ode        Discover ODE (y'' + y = 0) instead of curve fitting
+    (Auto-displays equivalent forms like Rational vs Trig)
   evolve f(x) from file.csv   Load data from CSV
   find ode                Find ODE (SINDy)
   benchmark               Run benchmarks

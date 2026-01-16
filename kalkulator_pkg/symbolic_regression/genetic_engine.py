@@ -1,1688 +1,266 @@
 """Genetic Programming Symbolic Regression Engine."""
 
+import gc
 import random
 import time
-from dataclasses import dataclass
-from dataclasses import field
-
 import numpy as np
 import sympy as sp
 
-from .expression_tree import BINARY_OPERATORS
-from .expression_tree import UNARY_OPERATORS
+# Scikit-Learn compliance (optional - graceful degradation)
+try:
+    from sklearn.base import BaseEstimator, RegressorMixin
+    SKLEARN_AVAILABLE = True
+except ImportError:
+    # Define dummy classes for compatibility when sklearn not installed
+    class BaseEstimator:
+        pass
+    class RegressorMixin:
+        pass
+    SKLEARN_AVAILABLE = False
+
 from .expression_tree import ExpressionTree
-from .operators import constant_optimization
-from .operators import crossover
-from .operators import hoist_mutation
-from .operators import point_mutation
-from .operators import shrink_mutation
-from .pareto_front import ParetoFront
-from .pareto_front import ParetoSolution
+from .pareto_front import ParetoFront, ParetoSolution
+from .genetic_config import GeneticConfig
+from .strategies import BoostingStrategy, EvolutionStrategy
 
 
-def huber_loss(y_true, y_pred, delta=1.0):
-    """Calculate Huber loss."""
-    # Complex-aware Huber loss (using magnitude of error)
-    error = y_true - y_pred
-    # Clip error magnitude to prevent overflow
-    # For complex, we need to handle real/imag parts or just magnitude?
-    # Simple magnitude clip:
-    # error = np.clip(np.abs(error), 0, 1e100) # Wait, this returns float
-    # We need error to stay complex if we were doing gradient descent, but here we just need scalar loss
-    
-    abs_error = np.abs(error)
-    # Clip magnitude
-    abs_error = np.clip(abs_error, 0, 1e100)
-    
-    is_small_error = abs_error <= delta
-    squared_loss = 0.5 * abs_error**2
-    linear_loss = delta * (abs_error - 0.5 * delta)
-    return np.where(is_small_error, squared_loss, linear_loss)
-
-
-def weighted_mse(y_true, y_pred, weights=None):
-    """Calculate Weighted Mean Squared Error."""
-    error = y_true - y_pred
-    squared_error = np.abs(error)**2
-    
-    if weights is not None:
-        return np.average(squared_error, weights=weights)
-    return np.mean(squared_error)
-
-
-@dataclass
-class GeneticConfig:
-    """Configuration for Genetic Symbolic Regression."""
-
-    population_size: int = 200  # Reduced from 500 for cloud memory
-    n_islands: int = 2  # Reduced from 4 for cloud memory
-    generations: int = 100
-    tournament_size: int = 5
-    crossover_rate: float = 0.7
-    mutation_rate: float = 0.1
-    parsimony_coefficient: float = 0.01
-    max_depth: int = 8
-    operators: list[str] = field(
-        default_factory=lambda: [
-            "add",
-            "sub",
-            "mul",
-            "div",
-            "pow",  # Enable a^x patterns like 2^x
-            "sin",
-            "cos",
-            "tan",
-            "asin",
-            "acos",
-            "atan",
-            "sinh",
-            "cosh",
-            "tanh",
-            "exp",
-            "log",  # Complex-capable log
-            "square",
-            "sqrt",  # Complex-capable sqrt
-            "neg",
-            "abs",
-            "bessel_j0",  # Bessel function J0(x)
-            "gamma",      # Gamma function
-            "prime_pi",   # Prime-Counting function
-            "bitwise_xor",
-            "bitwise_and",
-            "bitwise_or",
-            "lshift",
-            "rshift",
-            "floor",
-            "ceil",
-            "frac",
-        ]
-    )
-    # Weighted Complexity Config
-    # Default weight is 1.0. Higher weights penalize "cheating" operators.
-    operator_weights: dict[str, float] = field(
-                default_factory=lambda: {
-            "max": 5.0,  # Tier 3: Penalize Piecewise Cheating
-            "min": 5.0,  # Tier 3
-            "abs": 4.0,  # Tier 3: The "Gateway Drug" to max() - heavily penalized
-            
-            # Tier 5: Digital Logic (High penalty to prevent noise in continuous problems)
-            "bitwise_xor": 5.0,
-            "bitwise_and": 5.0,
-            "bitwise_or": 5.0,
-            "lshift": 5.0,
-            "rshift": 5.0,
-            
-            # Tier 2: Physics (Subsidized to match fundamental cost)
-            "sin": 1.0,
-            "cos": 1.0,
-            "tan": 1.0,
-            "asin": 1.0,
-            "acos": 1.0,
-            "atan": 1.0,
-            "exp": 1.0,
-            "log": 1.0,
-            "plog": 1.0,
-            "sqrt": 1.0,
-            "psqrt": 1.0,
-            "pow": 1.0,  # Make 2^x as cheap as 2*x
-            
-            # Tier 1: Fundamental
-            "add": 1.0,
-            "sub": 1.0,
-            "mul": 1.0,
-            "div": 1.0,
-            
-            # Tier 4: Special Functions (Slightly penalized to prevent overuse)
-            "bessel_j0": 2.0,
-            "bessel_j1": 2.0,
-            "gamma": 2.0,
-            "prime_pi": 2.0,
-            # Floor/Ceil should be slightly penalized but accessible
-            "floor": 1.5,
-            "ceil": 1.5,
-            "frac": 1.5,
-        }
-    )
-    default_complexity_weight: float = 1.0
-    
-    timeout: float | None = 60.0
-    seeds: list[str] = field(default_factory=list)  # Strategy 1: Seeding
-    early_stop_mse: float = 1e-10
-    
-    # Patience-Based Early Stopping (Fix "Zombie Mode")
-    patience: int = 10  # Generations to wait for improvement
-    min_improvement: float = 0.01  # Minimum relative improvement (1%)
-    
-    verbose: bool = True
-
-    # Advanced options
-    constant_optimization_rate: float = 0.1  # Rate of applying constant optimization
-    migration_rate: float = 0.1  # Rate of migration between islands
-    migration_interval: int = 10  # Generations between migrations
-    elitism: int = 5  # Number of best individuals to preserve
-    boosting_rounds: int = 1  # Strategy 7: Symbolic Gradient Boosting (1 = off/normal)
-    high_precision: bool = False  # Use arbitrary-precision arithmetic (50+ digits via mpmath)
-
-
-class GeneticSymbolicRegressor:
+class GeneticSymbolicRegressor(BaseEstimator, RegressorMixin):
     """Genetic Programming Symbolic Regression Engine.
-
-    Uses evolutionary algorithms to discover mathematical expressions that
-    fit the given data. Returns a Pareto front of solutions trading off
-    accuracy vs complexity.
-
-    Example:
-        >>> regressor = GeneticSymbolicRegressor()
-        >>> X = np.linspace(0, 10, 100).reshape(-1, 1)
-        >>> y = 3 * X[:, 0]**2 + 2 * X[:, 0] + 1
-        >>> pareto = regressor.fit(X, y, variable_names=['x'])
-        >>> print(pareto.get_best())
+    
+    Scikit-Learn compatible estimator for symbolic regression using genetic programming.
+    Can be used in sklearn pipelines and cross-validation.
+    
+    Refactored to use Strategy Pattern for maintainability.
     """
 
     def __init__(self, config: GeneticConfig | None = None):
-        """Initialize the regressor.
-
-        Args:
-            config: Configuration object (uses defaults if None)
-        """
         self.config = config or GeneticConfig()
-        self.pareto_front: ParetoFront = ParetoFront()
-        self.best_tree: ExpressionTree | None = None
-        self.generation: int = 0
-        self.history: list[dict] = []
+        self.pareto_front = ParetoFront()
+        self.best_tree = None
+        self._last_seeds = [] # State for equivalent checks
+        self.boosted_models = []  # List of (learning_rate, tree) for additive boosting
 
-        # Filter operators to only valid ones
-        self.unary_ops = [op for op in self.config.operators if op in UNARY_OPERATORS]
-        self.binary_ops = [op for op in self.config.operators if op in BINARY_OPERATORS]
-
-    def _calculate_smart_weights(self, X: np.ndarray, y: np.ndarray) -> np.ndarray:
-        """Calculate heuristic importance weights for data points.
+    def fit(self, X: np.ndarray, y: np.ndarray, variable_names: list[str] = None, sample_weight=None) -> ParetoFront:
+        """Fit the model using Boosting and Evolution strategies."""
         
-        Implements the "Vise Strategy" to solve the Parsimony Trap:
-        1. Prioritize vertex/origin (x=0) to prevent "lazy" Abs(x) fits.
-        2. Prioritize integer anchors (clean numbers) as they are likely ground truth.
-        """
-        if len(y) == 0:
-            return np.ones(0)
-
-        weights = np.ones(len(y), dtype=float)
-        
-        try:
-            # Handle multi-dimensional X
-            # Distance from zero (Euclidean norm)
-            if X.ndim == 1:
-                dist_zero = np.abs(X)
-            else:
-                dist_zero = np.linalg.norm(X, axis=1) # type: ignore
-                
-            # 1. VERTEX BONUS (The "Gravity Well")
-            # Points closest to 0 get massive boost
-            # Find points within reasonable epsilon of 0
-            # or just weight by 1/(1+dist)
-            
-            # Simple approach: Find the single closest point to 0 and boost it 5x
-            idx_min = np.argmin(dist_zero)
-            # Only if it's actually close (e.g. < 0.1 or normalized?)
-            # Let's say if it's the "vertex" representative.
-            weights[idx_min] = 5.0
-            
-            # 2. INTEGER ANCHOR BONUS
-            # If x is integer AND y is integer, they are "clean" points.
-            # Boost 3x.
-            
-            # Check X integers (all dims must be integer-ish)
-            is_x_int = np.all(np.abs(X - np.round(X)) < 1e-5, axis=1) if X.ndim > 1 else (np.abs(X - np.round(X)) < 1e-5)
-            
-            # Check Y integers
-            is_y_int = (np.abs(y - np.round(y)) < 1e-5)
-            
-            # Combined mask
-            is_anchor = is_x_int & is_y_int
-            
-            # Apply boost (additive or multiplicative? Multiplicative with base)
-            # We set these to 3.0, but if it was already vertex (5.0), keep 5.0?
-            # Max rule:
-            weights[is_anchor] = np.maximum(weights[is_anchor], 3.0)
-            
-            # Normalize? No, magnitude matters for "Stiffness" of the loss landscape
-            # but for weighted average it cancels out.
-            # Wait, np.average(..., weights) normalizes by sum(weights).
-            # So relative weights matter.
-            
-            if self.config.verbose:
-                n_anchors = np.sum(is_anchor)
-                max_w = np.max(weights)
-                if max_w > 1.0:
-                    print(f"Smart Weighting: Boosted {n_anchors} anchors (3x) and vertex (5x).")
-            
-        except Exception as e:
-            if self.config.verbose:
-                print(f"Smart Weighting failed: {e}. Using uniform weights.")
-            return np.ones(len(y))
-            
-        return weights
-
-    def _calculate_fitness(
-        self, 
-        tree: ExpressionTree, 
-        X: np.ndarray, 
-        y: np.ndarray, 
-        sample_weight: np.ndarray | None = None
-    ) -> float:
-        """Calculate fitness (MSE + parsimony penalty).
-
-        Args:
-            tree: Tree to evaluate
-            X: Input data
-            y: Target values
-
-        Returns:
-            Fitness value (lower is better)
-        """
-        try:
-            # PREVENTION: Skip overly complex expressions that cause SymPy hangs
-            # This is more reliable than timeout because Python threads can't be killed
-            complexity = tree.complexity(
-                weights=self.config.operator_weights, 
-                default_weight=self.config.default_complexity_weight
-            )
-            # Adjust limit for weighted complexity (approx 50 * 1.5 avg weight = 75)
-            if complexity > 100:  # Increased limit for weighted schema
-                return float("inf")
-
-            # Check expression for patterns that cause SymPy to hang
-            expr_str = str(tree.expression) if hasattr(tree, "expression") else ""
-
-            # Too many nested powers
-            if expr_str.count("**") > 5:
-                return float("inf")
-
-            # Large fractional exponents cause _integer_nthroot_python to hang
-            # Match patterns like x**(12345/67890) where numerator > 10000
-            import re
-
-            large_frac_pattern = re.compile(
-                r"\*\*\s*\(?(-?\d{5,})"
-            )  # 5+ digit numbers in power
-            if large_frac_pattern.search(expr_str):
-                return float("inf")
-
-            # Also check for nested power of power like (x**a)**b
-            if "**(" in expr_str and expr_str.count("**") > 2:
-                return float("inf")
-
-            # HIGH-PRECISION MODE: Available via _calculate_mse_high_precision()
-            # but NOT used during evolution due to extreme slowness (~100x slower).
-            # HP is only suitable for final result verification, not genetic search.
-            
-            # STANDARD MODE: Use numpy for fast evaluation
-            predictions = tree.evaluate(X)
-
-            # CRITICAL: Check for NaNs/Infs immediately
-            if not np.all(np.isfinite(predictions)):
-                return float("inf")
-
-            # Use Huber loss for robustness against outliers
-            # This prevents a single outlier from dominating the fitness
-            # Calculate raw element-wise loss
-            raw_loss = huber_loss(y, predictions, delta=1.35)
-            
-            # Apply weights if provided
-            if sample_weight is not None:
-                loss = np.average(raw_loss, weights=sample_weight)
-            else:
-                loss = np.mean(raw_loss)
-
-            # PERFECT FIT BYPASS (Agent Handoff Fix 2: Parsimony Trap)
-            # If the expression fits perfectly (loss < early_stop_mse), do NOT apply
-            # parsimony penalty. This ensures that high-complexity but CORRECT seeds
-            # (like floor(x) + frac(x)**2) are not outcompeted by simpler but WRONG
-            # expressions (like x) due to the complexity penalty.
-            if loss < self.config.early_stop_mse:
-                return loss  # No penalty for perfect fits
-
-            # Parsimony pressure: penalize complexity (only for non-perfect fits)
-            penalty = self.config.parsimony_coefficient * complexity
-
-            return loss + penalty
-
-        except Exception:
-            return float("inf")
-
-    def _calculate_mse(
-        self, 
-        tree: ExpressionTree, 
-        X: np.ndarray, 
-        y: np.ndarray,
-        sample_weight: np.ndarray | None = None
-    ) -> float:
-        """Calculate pure MSE without parsimony penalty.
-
-        Args:
-            tree: Tree to evaluate
-            X: Input data
-            y: Target values
-
-        Returns:
-            MSE value
-        """
-        try:
-            predictions = tree.evaluate(X)
-            
-            # CRITICAL: Check for NaNs/Infs immediately
-            if not np.all(np.isfinite(predictions)):
-                return float("inf")
-            # Clip predictions magnitude
-            # np.clip on complex numbers only supports real-part clipping in older numpy, 
-            # or raises error. Safe way: clip magnitude.
-            mag = np.abs(predictions)
-            mask = mag > 1e100
-            if np.any(mask):
-                 scale = np.ones_like(mag)
-                 scale[mask] = 1e100 / mag[mask]
-                 predictions = predictions * scale
-
-            # SCALE-INVARIANT FITNESS MODE
-            # When data spans many orders of magnitude (e.g., 1e-25 to 1e23),
-            # use relative error instead of absolute error. This makes all points
-            # contribute equally regardless of their scale.
-            if hasattr(self, '_use_relative_fitness') and self._use_relative_fitness:
-                # Adaptive epsilon based on median to avoid div-by-zero
-                epsilon = np.median(np.abs(y)) * 1e-10 if len(y) > 0 else 1e-10
-                epsilon = max(epsilon, 1e-100)  # Minimum epsilon
-                
-                # Relative error: (y_true - y_pred) / |y_true|
-                relative_error = (y - predictions) / (np.abs(y) + epsilon)
-                
-                # Use weighted MSE on relative errors
-                return weighted_mse(np.zeros_like(relative_error), relative_error, sample_weight)
-            
-            # STANDARD MSE MODE (for normal-range data)
-            diff = predictions - y
-            
-            # Phase-Aware Loss for Complex Log Scaling
-            # If we are in log domain, y*log(x) and log(x^y) differ by 2k*pi*i.
-            # We want to treat them as equal.
-            if hasattr(self, "_log_strategy") and self._log_strategy == "log" and np.iscomplexobj(diff):
-                if self._normalization:
-                     _, y_scale = self._normalization
-                     if y_scale != 0:
-                         # Un-normalize imaginary part
-                         raw_imag_diff = diff.imag * y_scale
-                         
-                         # Wrap to [-pi, pi]
-                         raw_imag_diff = (raw_imag_diff + np.pi) % (2 * np.pi) - np.pi
-                         
-                         # Re-normalize
-                         new_imag_diff = raw_imag_diff / y_scale
-                         
-                         # Reconstruct diff
-                         diff = diff.real + 1j * new_imag_diff
-
-            # Magnitude squared error
-            abs_diff = np.abs(diff)
-            np.clip(abs_diff, 0, 1e100, out=abs_diff)
-            
-            # Magnitude squared error
-            abs_diff = np.abs(diff)
-            np.clip(abs_diff, 0, 1e100, out=abs_diff)
-            
-            # Weighted average
-            if sample_weight is not None:
-                return float(np.average(abs_diff**2, weights=sample_weight))
-            return float(np.mean(abs_diff**2))
-        except (OverflowError, ValueError, RuntimeWarning):
-            return float("inf")
-        except Exception:
-            return float("inf")
-
-    def _calculate_mse_high_precision(
-        self,
-        tree: ExpressionTree,
-        X: np.ndarray,
-        y: np.ndarray,
-    ) -> float:
-        """Calculate MSE using SymPy's arbitrary-precision evalf.
-        
-        This is ~10x slower but handles extreme precision cases (50+ digits).
-        Only called when config.high_precision=True.
-        
-        Args:
-            tree: Tree to evaluate
-            X: Input data (as numpy array but treated as exact values)
-            y: Target values
-            
-        Returns:
-            MSE value with high precision
-        """
-        try:
-            from mpmath import mp, mpf
-            mp.dps = 50  # 50 decimal places
-            
-            # Get SymPy expression from tree
-            expr = tree.to_sympy()
-            if expr is None:
-                return float("inf")
-            
-            # Get variable symbols
-            var_names = tree.variable_names if hasattr(tree, 'variable_names') else ['x']
-            symbols = [sp.Symbol(v) for v in var_names]
-            
-            # Evaluate each row with high precision
-            predictions = []
-            for i, row in enumerate(X if X.ndim > 1 else X.reshape(-1, 1)):
-                try:
-                    # Create substitution dict with mpf values
-                    subs = {}
-                    for j, sym in enumerate(symbols):
-                        if j < len(row):
-                            # Convert to high-precision mpf
-                            subs[sym] = mpf(str(row[j]))
-                    
-                    # Evaluate with SymPy and convert to mpf
-                    result = expr.subs(subs)
-                    if hasattr(result, 'evalf'):
-                        result = result.evalf(50)
-                    
-                    # Convert to float for comparison
-                    predictions.append(float(complex(result).real))
-                except Exception:
-                    predictions.append(float('nan'))
-            
-            predictions = np.array(predictions)
-            
-            # Check for NaNs/Infs
-            if not np.all(np.isfinite(predictions)):
-                return float("inf")
-            
-            # Calculate MSE
-            diff = predictions - y
-            return float(np.mean(diff**2))
-            
-        except Exception:
-            return float("inf")
-
-    def _initialize_population(
-        self,
-        variables: list[str],
-        n_individuals: int,
-        seeds: list[str] | None = None,
-        X: np.ndarray | None = None,
-        y: np.ndarray | None = None,
-    ) -> list[ExpressionTree]:
-        """Initialize a population of random trees.
-
-        Uses ramped half-and-half initialization for diversity.
-
-        Args:
-            variables: Variable names
-            n_individuals: Number of trees to create
-            seeds: Optional list of seed strings (overrides config seeds)
-            X: Input data for anchor detection (optional)
-            y: Target data for anchor detection (optional)
-
-        Returns:
-            List of random ExpressionTrees
-        """
-        population = []
-
-        # PHASE 3: CONSTANT ANCHOR DETECTION
-        # Detect mathematical constants at integer inputs, generate hypothesis seeds
-        # Implements Gemini's strategy: recognize √3, reverse-engineer (x+1)^(1/x)
-        anchor_seeds = []
-        try:
-            from .constant_anchors import detect_anchors, generate_hypotheses
-            
-            if X is not None and y is not None:
-                anchors = detect_anchors(X, y, tolerance=1e-3)
-                
-                if anchors and self.config.verbose:
-                    print(f"\nDetected {len(anchors)} constant anchor(s):")
-                    for x_int, const_name, const_val in anchors:
-                        print(f"   f({x_int}) = {const_name} ≈ {const_val:.6f}")
-                
-                if anchors:
-                    anchor_seeds = generate_hypotheses(anchors, variables[0] if variables else 'x')
-                    if self.config.verbose and anchor_seeds:
-                        print(f"   Generated {len(anchor_seeds)} hypothesis expression(s)")
-                        for h in anchor_seeds[:5]:
-                            print(f"     • {h}")
-                        if len(anchor_seeds) > 5:
-                            print(f"     ... +{len(anchor_seeds) - 5} more")
-                        print()
-        except ImportError:
-            pass
-        except Exception as e:
-            if self.config.verbose:
-                print(f"Warning: Anchor detection failed: {e}")
-
-        # Strategy 1: Inject seeds but preserve diversity
-        # Limit seeds to at most 50% of population to ensure random diversity
-        max_seed_slots = n_individuals // 2
-        injected_count = 0
-
-        # Combine anchor-generated seeds with user-provided seeds
-        seeds_to_use = seeds if seeds is not None else self.config.seeds
-        if anchor_seeds:
-            seeds_to_use = anchor_seeds + (seeds_to_use if seeds_to_use else [])
-        
-        if seeds_to_use:
-            # 1. Parse all valid seeds first
-            parsed_trees = []
-            for seed_str in seeds_to_use:
-                try:
-                    import sympy as sp
-
-                    # Include variable symbols AND function names for seed parsing
-                    local_dict = {v: sp.Symbol(v) for v in variables}
-                    # Add trig functions for bipolar coordinate patterns
-                    local_dict.update({
-                        'atan': sp.atan, 'asin': sp.asin, 'acos': sp.acos,
-                        'cos': sp.cos, 'sin': sp.sin, 'tan': sp.tan,
-                        'exp': sp.exp, 'log': sp.log, 'sqrt': sp.sqrt,
-                        'abs': sp.Abs, 'floor': sp.floor, 'ceil': sp.ceiling,
-                        'atan2': sp.atan2,
-                    })
-                    expr = sp.sympify(seed_str, locals=local_dict)
-                    tree = ExpressionTree.from_sympy(expr, variables)
-                    tree.age = 0
-                    parsed_trees.append((seed_str, tree))
-                except Exception as e:
-                    if self.config.verbose:
-                        print(f"Warning: Failed to seed '{seed_str[:50]}...': {e}")
-            
-            # 2. Distribute slots among seeds
-            num_seeds = len(parsed_trees)
-            if num_seeds > 0:
-                # Calculate how many copies per seed we can afford
-                slots_per_seed = max(1, max_seed_slots // num_seeds)
-                
-                for seed_str, tree in parsed_trees:
-                    if len(population) >= max_seed_slots:
-                        break
-
-                    # Add original seed
-                    population.append(tree)
-                    injected_count += 1
-                    
-                    # Add mutated copies if budget allows
-                    copies_needed = slots_per_seed - 1
-                    
-                    # Cap copies if single seed to avoid dominating with just one idea
-                    if num_seeds < 5:
-                         copies_needed = min(copies_needed, n_individuals // 5)
-
-                    for i in range(copies_needed):
-                        if len(population) >= max_seed_slots:
-                            break
-                        
-                        copy = tree.copy()
-                        # Mutate copies to explore neighborhood
-                        from .operators import point_mutation
-                        
-                        # 30% mutation rate for copies
-                        copy = point_mutation(
-                            copy, mutation_rate=0.3, operators=self.config.operators
-                        )
-                        copy.age = 0
-                        population.append(copy)
-                        injected_count += 1
-
-            if self.config.verbose and injected_count > 0:
-                print(
-                    f"Injected {injected_count} seed expressions (including copies) into population (capped at 50%)"
-                )
-
-        # Ramped half-and-half: vary depth and method
-        depths = range(2, self.config.max_depth + 1)
-        methods = ["grow", "full"]
-
-        # Fill remaining slots
-        while len(population) < n_individuals:
-            i = len(population)
-            depth = depths[i % len(depths)]
-            method = methods[i % len(methods)]
-
-            tree = ExpressionTree.random_tree(
-                variables=variables,
-                max_depth=depth,
-                operators=self.config.operators,
-                method=method,
-            )
-            tree.age = 0
-            population.append(tree)
-
-        return population
-
-    def _evolve_population(
-        self,
-        population: list[ExpressionTree],
-        X: np.ndarray,
-        y: np.ndarray,
-        generation: int,
-        sample_weight: np.ndarray | None = None,
-    ) -> list[ExpressionTree]:
-        """Evolve one generation.
-
-        Args:
-            population: Current population
-            X: Input data
-            y: Target values
-            generation: Current generation number
-
-        Returns:
-            New population
-        """
-        # Evaluate fitness
-        for tree in population:
-            if tree.fitness is None or tree.age == 0:
-                tree.fitness = self._calculate_fitness(tree, X, y, sample_weight=sample_weight)
-            tree.age += 1
-
-        # Sort by fitness (elitism)
-        population.sort(key=lambda t: t.fitness)
-
-        new_population = []
-
-        # Elitism
-        new_population.extend([t.copy() for t in population[: self.config.elitism]])
-
-        # Selection and breeding
-        while len(new_population) < self.config.population_size:
-            # Tournament selection
-            parent1 = self._tournament_select(population)
-
-            if random.random() < self.config.crossover_rate:
-                parent2 = self._tournament_select(population)
-                offspring1, offspring2 = crossover(parent1, parent2)
-                offspring1.age = 0
-                new_population.append(offspring1)
-
-                if len(new_population) < self.config.population_size:
-                    offspring2.age = 0
-                    new_population.append(offspring2)
-            else:
-                # Mutation (try different types)
-                r = random.random()
-                parent = parent1.copy()
-
-                if r < 0.7:
-                    offspring = point_mutation(
-                        parent,
-                        self.config.mutation_rate,
-                        self.config.operators,
-                    )
-                elif r < 0.85:
-                    offspring = hoist_mutation(parent)
-                else:
-                    offspring = shrink_mutation(parent)
-
-                offspring.age = 0
-                new_population.append(offspring)
-
-        # Occasionally optimize constants (reduced rate to prevent timeout issues)
-        if random.random() < 0.02:  # Reduced from 0.1 to prevent long runs
-            for _i in range(min(2, len(new_population))):  # Reduced from 5
-                idx = random.randrange(len(new_population))
-                new_population[idx] = constant_optimization(
-                    new_population[idx],
-                    X,
-                    y,
-                    learning_rate=0.1,
-                    iterations=2,  # Reduced from 5
-                )
-
-        return new_population
-
-    def _tournament_select(self, population: list[ExpressionTree]) -> ExpressionTree:
-        """Select best individual from random tournament."""
-        tournament = random.sample(population, self.config.tournament_size)
-        return min(tournament, key=lambda t: t.fitness)
-
-    def _migrate(self, islands: list[list[ExpressionTree]]):
-        """Perform migration between islands.
-
-        Moves best individuals between island populations.
-
-        Args:
-            islands: List of island populations
-        """
-        if len(islands) < 2:
-            return
-
-        n_migrants = max(1, int(self.config.migration_rate * len(islands[0])))
-
-        # Ring topology migration
-        for i in range(len(islands)):
-            source = islands[i]
-            target = islands[(i + 1) % len(islands)]
-
-            # Sort source by fitness
-            source.sort(key=lambda t: t.fitness)
-
-            # Migrate best individuals
-            for j in range(n_migrants):
-                if j < len(source):
-                    migrant = source[j].copy()
-                    migrant.age = 0
-
-                    # Replace worst in target
-                    target.sort(key=lambda t: t.fitness)
-                    if len(target) > 0:
-                        target[-1] = migrant
-
-    def _update_pareto_front(
-        self, 
-        population: list[ExpressionTree], 
-        X: np.ndarray, 
-        y: np.ndarray,
-        sample_weight: np.ndarray | None = None
-    ):
-        """Update Pareto front with best solutions from population.
-
-        Args:
-            population: Current population
-            X: Input data
-            y: Target values
-        """
-        # Only consider top performers to avoid overhead
-        sorted_pop = sorted(population, key=lambda t: t.fitness)[:20]
-
-        for tree in sorted_pop:
-            mse = self._calculate_mse(tree, X, y, sample_weight=sample_weight)
-            if mse < 1e6 and np.isfinite(mse):
-                try:
-                    # Use simple string for complex trees
-                    expr_str = tree.to_pretty_string()
-
-                    # Skip SymPy conversion for complex trees
-                    if tree.complexity() > 15:
-                        sympy_expr = sp.sympify(0)  # Placeholder
-                    else:
-                        try:
-                            sympy_expr = tree.to_sympy()
-                        except Exception:
-                            sympy_expr = sp.sympify(0)
-
-                    solution = ParetoSolution(
-                        expression=expr_str,
-                        sympy_expr=sympy_expr,
-                        mse=mse,
-                        complexity=tree.complexity(
-                            weights=self.config.operator_weights, 
-                            default_weight=self.config.default_complexity_weight
-                        ),
-                        tree=tree.copy(),
-                    )
-                    self.pareto_front.add(solution)
-                except Exception:
-                    pass
-
-    def _denormalize_result(self, front: ParetoFront) -> ParetoFront:
-        """Denormalize results if normalization was applied."""
-        if not self._normalization:
-            return front
-
-        y_min, y_scale = self._normalization
-        new_front = ParetoFront(max_size=front.max_size)
-
-        for sol in front.solutions:
-            try:
-                # Transform: raw = norm * scale + min
-                # Note: sympy_expr is normalized
-                raw_expr = sol.sympy_expr * y_scale + y_min
-                
-                # Inverse Transform from Log Domain
-                if hasattr(self, "_log_strategy") and self._log_strategy:
-                    if self._log_strategy == "log":
-                         raw_expr = sp.exp(raw_expr)
-                    elif self._log_strategy == "arcsinh":
-                         raw_expr = sp.sinh(raw_expr)
-                    elif self._log_strategy == "linear":
-                         pass
-                
-                # Simplify to clean up constants
-                # Simplify to clean up constants
-                # E.g. (cosh(x)-min)/scale * scale + min -> cosh(x)
-                raw_expr = sp.simplify(raw_expr)
-                
-                # CLEANUP: Drop negligible additive constants (normalized noise)
-                # Since we know y_scale, any constant term significantly smaller than y_scale
-                # (e.g. 1e-10 * y_scale) is likely numerical noise from the [0,1] fit.
-                
-                # Extract constant term
-                if raw_expr.is_Add:
-                    # Strategy: Separate constant part from variable part
-                    # as_coeff_Add returns (constant, rest)
-                    coeff, rest = raw_expr.as_coeff_Add()
-                    
-                    if coeff != 0:
-                        # Check magnitude relative to data scale
-                        # If constant is < 1e-9 of the data range, drop it
-                        # For y_range=80000, this drops constants < 0.00008, which is safe
-                        # The observed artifact was 5e-8, which is 6e-13 * scale.
-                        # We can be quite aggressive here for "clean" results.
-                        
-                        relative_mag = abs(float(coeff)) / y_scale
-                        if relative_mag < 1e-9:
-                           raw_expr = rest
-                
-                # We need a new tree for the raw expr
-                # Use variables from original tree
-                variables = sol.tree.variables
-                new_tree = ExpressionTree.from_sympy(raw_expr, variables)
-
-                # Recalculate MSE approximate (New MSE = Old MSE * scale^2)
-                # Actual MSE might differ slightly due to simplification numericals,
-                # but good enough for Pareto ranking preservation.
-                new_mse = sol.mse * (y_scale**2)
-
-                new_sol = ParetoSolution(
-                    expression=new_tree.to_pretty_string(),
-                    sympy_expr=raw_expr,
-                    mse=new_mse,
-                    complexity=new_tree.complexity(
-                        weights=self.config.operator_weights, 
-                        default_weight=self.config.default_complexity_weight
-                    ),
-                    tree=new_tree,
-                )
-                new_front.add(new_sol)
-            except Exception:
-                # If conversion fails, fallback is tricky.
-                # Assuming simplification usually works.
-                pass
-
-        return new_front
-
-    def fit(
-        self, 
-        X: np.ndarray, 
-        y: np.ndarray, 
-        variable_names: list[str] | None = None,
-        sample_weight: np.ndarray | None = None
-    ) -> ParetoFront:
-        """Fit the symbolic regressor to data (supports Boosting).
-
-        Args:
-            X: Input data of shape (n_samples, n_features)
-            y: Target values of shape (n_samples,)
-            variable_names: Names of input variables (default: ['x0', 'x1', ...])
-
-        Returns:
-        """
-        self._sample_weight = sample_weight  # Store for use in internal methods if needed? 
-                                             # Actually we pass it down.
-        
-        # --- SMART WEIGHTING (The "Vise Strategy" Automation) ---
-        # If no weights, calculate them heuristically to solve Parsimony Trap
-        if sample_weight is None:
-            sample_weight = self._calculate_smart_weights(X, y)
+        # 1. Initialization
         if variable_names is None:
             variable_names = [f"x{i}" for i in range(X.shape[1])]
-
-        # Ensure correct shape
-        if len(y.shape) == 1:
-            y = y.flatten()
-
-        if self.config.verbose:
-            try:
-                with open("debug_genetic_fit.log", "w") as f_log:
-                    f_log.write(f"DEBUG FIT: X shape={X.shape} range=[{np.min(X):.3g}, {np.max(X):.3g}]\n")
-                    f_log.write(f"DEBUG FIT: y shape={y.shape} range=[{np.min(y):.3g}, {np.max(y):.3g}]\n")
-                    if len(y) < 20:
-                        f_log.write(f"DEBUG FIT: X={X.flatten()}\n")
-                        f_log.write(f"DEBUG FIT: y={y}\n")
-            except:
-                pass
-
-        # Strategy 7: Symbolic Gradient Boosting Loop
+        if len(y.shape) == 1: y = y.flatten()
+        
+        self.strategies = {
+            'boosting': BoostingStrategy(self.config),
+            'evolution': EvolutionStrategy(self.config)
+        }
+        
+        # 2. Smart Weighting (The Vise Strategy)
+        if sample_weight is None:
+            sample_weight = self.strategies['boosting'].calculate_weights(X, y)
+            
+        # 3. Data Split
+        X_train, X_val, y_train, y_val = self._split_data(X, y)
+        
+        # 4. Boosting Loop
         current_model_tree = None
-        y_residual = y.copy()
-
-        interrupted = False
+        y_residual = y_train.copy()
+        
         rounds = self.config.boosting_rounds
-        if rounds < 1:
-            rounds = 1
-
-        final_front = ParetoFront()
-
-        # Data split strategy (skip if too few samples)
-        # BUG FIX: Increased threshold from 5 to 20. With only 5-7 samples,
-        # test_size=0.2 creates a tiny validation set (1-2 points) which can
-        # cause false MSE=0 if those points happen to be zeros.
-        if len(y) < 20:
-            # Not enough data for split/validation, use all for training
-            X_train, y_train = X, y
-            X_val, y_val = X, y
-        else:
-            try:
-                from sklearn.model_selection import train_test_split
-
-                X_train, X_val, y_train, y_val = train_test_split(
-                    X, y, test_size=0.2, random_state=42
-                )
-            except ImportError:
-                X_train, y_train = X, y
-                X_val, y_val = X, y
-
-        # Normalize y if value range is very large (>1000)
-        # This prevents MSE from becoming astronomically large for high-degree polynomials
-        # Normalize y if value range is very large (>1000)
-        # This prevents MSE from becoming astronomically large for high-degree polynomials
+        if rounds < 1: rounds = 1
         
-        # Handle complex min/max safely
-        if np.iscomplexobj(y):
-             y_min = 0 # Concept of min/max flawed for complex
-             y_max = np.max(np.abs(y)) # Use max magnitude
-             y_range = y_max # Range is effectively radius
-        else:
-             y_min, y_max = y.min(), y.max()
-             y_range = y_max - y_min
-        self._normalization = None
-        self._log_strategy = None  # "log" or "arcsinh"
-        y_max_log = y_max  # Initialize to avoid Unresolved reference
-        
-        # Robust Scaling Strategy (Rule 5: No partial fixes)
-        # If data spans many orders of magnitude, linear normalization sucks. 
-        # Use simple heuristic: if max > 1000 * median (absolute), it's skewed.
-        
-        y_abs = np.abs(y)
-        y_median = np.median(y_abs) if len(y) > 0 else 1.0
-        if y_median == 0: y_median = 1e-10 # Prevent div by zero
-        skew_ratio = y_max / y_median if y_max > 0 else 0
-        
-        
-        if skew_ratio > 1000 or (y_range > 1e6):
-            # SCALE-INVARIANT FITNESS MODE
-            # Instead of transforming data (which changes the problem from x^y to y*log(x)),
-            # we use relative error fitness. This allows the algorithm to search in the
-            # original space while handling wide value ranges gracefully.
-            self._use_relative_fitness = True
-            
-            if self.config.verbose:
-                print(f"Data skew detected (ratio {skew_ratio:.1f}). Using scale-invariant fitness.")
-                print(f"  → Algorithm will discover functions in original form (e.g., x^y not y*log(x))")
-            
-            # No data transform needed - fitness function handles scale
-            self._normalization = None
-            self._log_strategy = None
-        
-        # Apply minimal normalization only if still needed (for moderate ranges)
-        if y_range > 1000 and not hasattr(self, '_use_relative_fitness'):
-            # Normalize to [0,1] range for moderate data (not extreme)
-            y_scale = y_range + 1e-10
-            y_train = (y_train - y_min) / y_scale
-            y_val = (y_val - y_min) / y_scale
-            y_residual = (y_residual - y_min) / y_scale
-            self._normalization = (y_min, y_scale)
-            if self.config.verbose:
-                y_top = y_max_log if self._log_strategy else y_max
-                print(f"Data normalized ({self._log_strategy or 'linear'}): y range {y_min:.2f} to {y_top:.2f} → [0,1]")
-        
-        # Prepare seeds (Normalize if needed)
-        eff_seeds = self.config.seeds
-        
-        # Store for equivalent forms checking later
-        self._last_seeds = eff_seeds or []
-        self._last_X = X_train.copy() if X_train is not None else None
-        self._last_y = y_train.copy() if y_train is not None else None
-        self._last_var_names = variable_names
-        if self._normalization and eff_seeds:
-            y_min, y_scale = self._normalization
-            new_seeds = []
-            for s in self.config.seeds:
-                if self._log_strategy == "log":
-                     # log(seed) - min / scale
-                     # Need to be careful about seed <= 0. Assuming seeds match data distrib.
-                     # Just wrap in log()
-                     s_trans = f"(log({s}) - {y_min}) / {y_scale}"
-                elif self._log_strategy == "arcsinh":
-                     s_trans = f"(asinh({s}) - {y_min}) / {y_scale}"
-                else:
-                     s_trans = f"(({s}) - {y_min}) / ({y_scale})"
-                new_seeds.append(s_trans)
-            eff_seeds = new_seeds
-
-        # Track the absolute best solution across ALL boosting rounds
-        global_best_solution = None
-        global_best_mse = float('inf')
-
         for round_idx in range(rounds):
             if self.config.verbose and rounds > 1:
                 print(f"--- Boosting Round {round_idx + 1}/{rounds} ---")
-
-            # Reset state for this round
-            self.pareto_front = ParetoFront()
-            self.best_tree = None
-            self.generation = 0
-            self.history = []
-
-            # Initialize islands
+                
+            # Initialize Islands
             islands = []
             for _ in range(self.config.n_islands):
-                island = self._initialize_population(
-                    variable_names, self.config.population_size, seeds=eff_seeds, X=X_train, y=y_train
+                pop = self.strategies['evolution'].initialize_population(
+                    variable_names, self.config.population_size, 
+                    seeds=self.config.seeds, X=X_train, y=y_residual
                 )
-                islands.append(island)
-
-            # Evolution loop
+                islands.append(pop)
+                
+            # Evolution Loop
             start_time = time.time()
-            if self.config.verbose:
-                print(
-                    f"Starting evolution with {self.config.n_islands} islands, "
-                    f"{self.config.population_size} individuals each..."
-                )
-
-            # Patience tracking
-            patience_counter = 0
             best_mse_observed = float('inf')
-
-            try:
-                for gen in range(self.config.generations):
-                    self.generation = gen
-
-                    # Check timeout
-                    if (
-                        self.config.timeout
-                        and (time.time() - start_time) > self.config.timeout
-                    ):
-                        if self.config.verbose:
-                            print(f"Timeout after {gen} generations")
-                        break
-
-                    # Evolve each island
-                    for i, island in enumerate(islands):
-                        # Finer timeout check (responsiveness)
-                        if (
-                            self.config.timeout
-                            and (time.time() - start_time) > self.config.timeout
-                        ):
-                            break
-
-                        islands[i] = self._evolve_population(
-                            island, 
-                            X_train, 
-                            y_train, 
-                            gen, 
-                            sample_weight=sample_weight if len(y_train)==len(y) else None # Simple split handling
-                        ) # Train on Residual
-
-                    # Migration
-                    if gen > 0 and gen % self.config.migration_interval == 0:
-                        self._migrate(islands)
-
-                    # Update Pareto front
-                    for i, island in enumerate(islands):
-                        self._update_pareto_front(
-                            island, 
-                            X_val, 
-                            y_val, 
-                            sample_weight=sample_weight if len(y_val)==len(y) else None
-                        )
-
-                    # Verbose progress output (every 5 generations)
-                    if self.config.verbose and gen % 5 == 0:
-                        best_res = self.pareto_front.get_best()
-                        if best_res:
-                            # Truncate expression if too long
-                            expr_str = best_res.expression
-                            if len(expr_str) > 40:
-                                expr_str = expr_str[:37] + "..."
-                            print(f"Generation {gen}: Best MSE {best_res.mse:.2e} ({expr_str})")
-
-                    # Early stop check (on Residual)
-                    best_res = self.pareto_front.get_best()
+            patience_counter = 0
+            
+            for gen in range(self.config.generations):
+                # Timeout Check
+                if self.config.timeout and (time.time() - start_time > self.config.timeout):
+                    break
                     
-                    if best_res:
-                        current_mse = best_res.mse
+                # Evolve Islands
+                for i in range(len(islands)):
+                    islands[i] = self.strategies['evolution'].evolve(
+                        islands[i], X_train, y_residual, gen, sample_weight
+                    )
+                    
+                # Migration
+                if gen > 0 and gen % self.config.migration_interval == 0:
+                    self.strategies['evolution'].migrate(islands)
+                    
+                # Update Pareto Front
+                self._update_pareto_front(islands, X_val, y_val)
+                
+                # Periodic GC to prevent memory fragmentation (every 50 generations)
+                if gen > 0 and gen % 50 == 0:
+                    gc.collect()
+                
+                # Check Convergence / Early Stop
+                best_sol = self.pareto_front.get_best()
+                if best_sol:
+                    if best_sol.mse < self.config.early_stop_mse:
+                        if self.config.verbose: print(f"Early stop: Perfect fit MSE {best_sol.mse:.2e}")
+                        break
                         
-                        # Perfect Solution check
-                        if current_mse < self.config.early_stop_mse:
-                            if self.config.verbose:
-                                print(f"Early stop: MSE {current_mse:.2e}")
+                    # Patience Logic
+                    if best_sol.mse < best_mse_observed * (1 - self.config.min_improvement):
+                        best_mse_observed = best_sol.mse
+                        patience_counter = 0
+                    else:
+                        patience_counter += 1
+                        if patience_counter >= self.config.patience:
                             break
-                        
-                        # Patience-Based Early Stopping (Zombie Mode Fix)
-                        # Check for percentage improvement
-                        threshold = best_mse_observed * (1 - self.config.min_improvement)
-                        
-                        if current_mse < threshold:
-                            # Significant improvement found
-                            best_mse_observed = current_mse
-                            patience_counter = 0
-                        else:
-                            # Stagnation
-                            patience_counter += 1
-                            if patience_counter >= self.config.patience:
-                                if self.config.verbose:
-                                    print(f"Early stop: Patience limit reached (no improvement >{self.config.min_improvement*100}% for {self.config.patience} gens)")
-                                break
-
-            except KeyboardInterrupt:
-                if self.config.verbose:
-                    print("\nEvolution interrupted by user. Stopping current round.")
-                interrupted = True
-
-            # End of Round
-            # 1. Get best model from this round
+                            
+            # End of Round: Update Residuals for Boosting
             best_round = self.pareto_front.get_best()
-            if not best_round:
+            if not best_round: break
+            
+            # (Simplification: If boosting is disabled, we are done)
+            if rounds == 1:
+                self.best_tree = best_round.tree
+                break
+                
+            # ====== BOOSTING MODEL SUMMATION ======
+            # Store current model with learning rate
+            learning_rate = getattr(self.config, 'learning_rate', 0.1)
+            self.boosted_models.append((learning_rate, best_round.tree))
+            
+            # Update residuals: y_new = y_old - η * F_k(X)
+            try:
+                predictions = best_round.tree.evaluate(X_train)
+                if isinstance(predictions, np.ndarray):
+                    y_residual = y_residual - learning_rate * predictions
+                else:
+                    y_residual = y_residual - learning_rate * float(predictions)
+                    
                 if self.config.verbose:
-                    print("Warning: No solution found in this round.")
-                break
-            
-            # Track global best across all rounds
-            if best_round.mse < global_best_mse:
-                global_best_mse = best_round.mse
-                global_best_solution = best_round
-
-            # 2. Merge into composite model
-            if current_model_tree is None:
-                current_model_tree = best_round.tree
-            else:
-                # Merge: F_new = F_old + f_round
-                from .expression_tree import ExpressionNode
-                from .expression_tree import NodeType
-
-                # Create 'add' node
-                root = ExpressionNode(
-                    NodeType.BINARY_OP,
-                    "add",
-                    [
-                        current_model_tree.root.copy_subtree(),
-                        best_round.tree.root.copy_subtree(),
-                    ],
-                )
-                root.children[0].parent = root
-                root.children[1].parent = root
-
-                # Careful: variable names from original context
-                current_model_tree = ExpressionTree(root, variable_names)
-
-            # 3. Update residual
-            # y_residual = y_original - current_model_pred
-            preds = current_model_tree.evaluate(X)
-            y_residual = y - preds
-
-            final_mse = np.mean(y_residual**2)
-            if final_mse < self.config.early_stop_mse:
+                    residual_mse = np.mean(y_residual ** 2)
+                    print(f"Round {round_idx + 1}: Residual MSE = {residual_mse:.4e}")
+            except (ValueError, TypeError):
                 if self.config.verbose:
-                    print(f"Boosting converged. Final MSE: {final_mse:.6e}")
+                    print(f"Round {round_idx + 1}: Failed to update residuals, stopping")
                 break
-
-            if interrupted:
-                break
-
-        # Return final result
-        if rounds > 1:
-            # Boosting was used - use the GLOBAL best solution from all rounds
-            # NOT the final boosted model which might be degraded
-            if global_best_solution:
-                # Restore the global best to pareto front
-                self.pareto_front = ParetoFront()
-                self.pareto_front.add(global_best_solution)
-                result_front = self._denormalize_result(self.pareto_front)
-            else:
-                # Fallback: use current pareto front
-                result_front = self._denormalize_result(self.pareto_front)
-        else:
-            result_front = self._denormalize_result(self.pareto_front)
+                
+            # Clear Pareto front for next round (fresh search on residuals)
+            self.pareto_front = ParetoFront()
             
-        # Update internal state so predict() works
-        self.pareto_front = result_front
-        best_sol = self.pareto_front.get_best()
-        if best_sol:
-            self.best_tree = best_sol.tree
+        # Final model is the sum of all boosted trees
+        if hasattr(self, 'boosted_models') and self.boosted_models:
+            self.best_tree = self.boosted_models[-1][1]  # Use last tree as representative
             
-        return result_front
+        return self.pareto_front
+
+    def _split_data(self, X, y):
+        """Simple data splitter."""
+        if len(y) < 20: return X, X, y, y
+        try:
+            from sklearn.model_selection import train_test_split
+            return train_test_split(X, y, test_size=0.2, random_state=42)
+        except ImportError:
+            return X, X, y, y
+
+    def _update_pareto_front(self, islands, X, y):
+        """Update Pareto front from all islands."""
+        all_inds = [ind for island in islands for ind in island]
+        # Only check top 20 to save time
+        all_inds.sort(key=lambda t: t.fitness)
+        
+        for tree in all_inds[:20]:
+            try:
+                # Use cached MSE if available, otherwise recalculate
+                if tree._cached_mse < float('inf'):
+                    mse = tree._cached_mse
+                else:
+                    mse = self.strategies['evolution'].calculate_fitness(tree, X, y)
+                    tree._cached_mse = mse  # Cache for next time
+                
+                if mse < 1e6:
+                    sol = ParetoSolution(
+                        expression=tree.to_pretty_string(),
+                        sympy_expr=None, # Lazy load later
+                        mse=mse,
+                        complexity=tree.complexity(),
+                        tree=tree.copy()
+                    )
+                    self.pareto_front.add(sol)
+            except (ValueError, OverflowError, TypeError, AttributeError):
+                pass
+
+    def get_expression(self) -> str:
+        best = self.pareto_front.get_best()
+        return best.expression if best else ""
 
     def predict(self, X: np.ndarray) -> np.ndarray:
-        """Predict using the best evolved model.
-
+        """Predict using the fitted model.
+        
+        For boosting: F(x) = Σ η * T_i(x) (sum of all trees weighted by learning rate)
+        For single-round: Uses best_tree directly.
+        
         Args:
-            X: Input data
-
+            X: Input data of shape (n_samples, n_features)
+            
         Returns:
-            Predictions
+            Predictions of shape (n_samples,)
         """
-        if self.best_tree is None:
-            raise ValueError("Model not fitted. Call fit() first.")
-        return self.best_tree.evaluate(X)
-
-    def get_expression(self, complexity_budget: int | None = None) -> str:
-        """Get the best expression as a string.
-
-        Args:
-            complexity_budget: Maximum allowed complexity
-
-        Returns:
-            String representation of the best expression
-        """
-        solution = self.pareto_front.get_best(complexity_budget)
-        if solution:
-            return solution.expression
-        return ""
-
-    def get_sympy(self, complexity_budget: int | None = None) -> sp.Expr:
-        """Get the best expression as a SymPy object.
-
-        Args:
-            complexity_budget: Maximum allowed complexity
-
-        Returns:
-            SymPy expression
-        """
-        solution = self.pareto_front.get_best(complexity_budget)
-        if solution:
-            return solution.sympy_expr
-        return sp.Integer(0)
-
-    def fit_with_transformations(
-        self,
-        X: np.ndarray,
-        y: np.ndarray,
-        variable_names: list[str] | None = None,
-    ) -> tuple[str, float, str]:
-        """Run evolution in multiple transformed spaces simultaneously.
-        
-        Makes complex functions discoverable by transforming into simpler spaces.
-        For example, (1+x)^(1/x) becomes (1/x)*log(1+x) in log-space.
-        
-        Transformations:
-        1. Direct: y = f(x)
-        2. Log: log(y) = g(x), then y = exp(g(x))
-        3. Inverse: 1/y = h(x), then y = 1/h(x)
-        
-        Returns:
-            Tuple of (best_expression, best_mse, best_space_name)
-        """
-        if variable_names is None:
-            variable_names = [f"x{i}" for i in range(X.shape[1])]
-        
-        spaces = []
-        
-        # Space 1: Direct (always valid)
-        spaces.append({
-            'name': 'direct',
-            'X': X,
-            'y': y,
-            'mask': np.ones(len(y), dtype=bool),
-            'transform_back': lambda expr: expr
-        })
-        
-        # Space 2: Log (only if y > 0)
-        y_positive_mask = y > 1e-10
-        if np.sum(y_positive_mask) > len(y) * 0.5:
-            spaces.append({
-                'name': 'log',
-                'X': X[y_positive_mask],
-                'y': np.log(np.maximum(y[y_positive_mask], 1e-10)),
-                'mask': y_positive_mask,
-                'transform_back': lambda expr: f"exp({expr})"
-            })
-        
-        # Space 3: Inverse (only if y != 0 and 1/y is reasonable)
-        # Prevent massive values (e.g. 1e20) which cause overflow hangs in evolution
-        with np.errstate(divide='ignore'):
-            y_inv_candidate = 1.0 / y
+        if X.ndim == 1:
+            X = X.reshape(-1, 1)
             
-        y_inverse_mask = (np.abs(y) > 1e-6) & np.isfinite(y_inv_candidate) & (np.abs(y_inv_candidate) < 1e8)
-        
-        if np.sum(y_inverse_mask) > len(y) * 0.5:
-            spaces.append({
-                'name': 'inverse',
-                'X': X[y_inverse_mask],
-                'y': y_inv_candidate[y_inverse_mask],
-                'mask': y_inverse_mask,
-                'transform_back': lambda expr: f"1/({expr})"
-            })
-        
-        if self.config.verbose:
-            print(f"Running in {len(spaces)} spaces: {[s['name'] for s in spaces]}")
-        
-        # Run evolution in each space
-        results = []
-        for space in spaces:
-            if self.config.verbose:
-                print(f"\n{'='*70}")
-                print(f"Evolving in {space['name'].upper()} space...")
-                print(f"{'='*70}")
+        # If we have boosted models, sum their contributions
+        if self.boosted_models:
+            result = np.zeros(X.shape[0])
+            for learning_rate, tree in self.boosted_models:
+                try:
+                    pred = tree.evaluate(X)
+                    if np.isscalar(pred):
+                        pred = np.full(X.shape[0], pred)
+                    result += learning_rate * np.asarray(pred)
+                except (ValueError, TypeError):
+                    continue
+            return result
             
-            # PERFORMANCE FIX: Reduce generations for transformed spaces
-            # Direct space gets full search, others get quick exploration
-            if space['name'] != 'direct':
-                # Create config with 1/3 generations for transformed spaces
-                reduced_config = GeneticConfig(
-                    population_size=self.config.population_size,
-                    generations=max(30, self.config.generations // 3),  # At least 30, max 1/3
-                    n_islands=self.config.n_islands,
-                    verbose=self.config.verbose,
-                    parsimony_coefficient=self.config.parsimony_coefficient,
-                    operators=self.config.operators,
-                    timeout=self.config.timeout // 3 if self.config.timeout else None
-                )
-                temp_regressor = GeneticSymbolicRegressor(reduced_config)
-            else:
-                # Direct space uses full config
-                temp_regressor = GeneticSymbolicRegressor(self.config)
-            
-            temp_regressor.fit(space['X'], space['y'], variable_names)
-            
-            # Copy stored data for equivalent forms checking
-            if space['name'] == 'direct' and hasattr(temp_regressor, '_last_seeds'):
-                self._last_seeds = temp_regressor._last_seeds
-                self._last_X = temp_regressor._last_X
-                self._last_y = temp_regressor._last_y
-                self._last_var_names = temp_regressor._last_var_names
-                self.pareto_front = temp_regressor.pareto_front
-            
-            # Get best and transform back
-            best_expr = temp_regressor.get_expression()
-            if not best_expr:
-                mse = float('inf')
-                results.append({'space': space['name'], 'expression': "", 'mse': mse})
-                if self.config.verbose:
-                    print(f"MSE in original space: {mse:.6e} (no solution found in {space['name']} space)")
-                continue
-
-            transformed = space['transform_back'](best_expr)
-            
-            # SIMPLIFICATION: Clean up artifacts like exp(log(f(x))) -> f(x)
+        # Single tree mode
+        if self.best_tree is not None:
             try:
-                # Use project's existing sympy import (assumed 'sp') or import locally
-                import sympy as sp
+                pred = self.best_tree.evaluate(X)
+                if np.isscalar(pred):
+                    return np.full(X.shape[0], pred)
+                return np.asarray(pred)
+            except (ValueError, TypeError):
+                return np.zeros(X.shape[0])
                 
-                # 1. Parse string expression
-                sym_expr = sp.sympify(transformed)
-                
-                # 2. Simplify
-                # Use 'rational=True' to help with float artifacts if needed, 
-                # but standard simplify is best for structural cleanups (log/exp)
-                simplified_sym = sp.simplify(sym_expr)
-                
-                # 3. Convert back to string
-                # Remove spaces for consistency
-                transformed = str(simplified_sym).replace(' ', '')
-                if self.config.verbose:
-                    # Print without using f-string in case it's huge
-                    pass
-            except Exception as e:
-                # If simplification fails (parsing, timeout), use original
-                if self.config.verbose:
-                    print(f"Simplification failed: {e}")
-                pass            
-            # Evaluate MSE in original space
-            # Use Pareto front's best solution tree, not temp_regressor.best_tree
-            # (best_tree might be overwritten by boosting)
-            best_solution = temp_regressor.pareto_front.get_best()
-            if not best_solution or not best_solution.tree:
-                mse = float('inf')
-                results.append({'space': space['name'], 'expression': transformed, 'mse': mse})
-                if self.config.verbose:
-                    print(f"MSE in original space: {mse:.6e} (no valid tree)")
-                continue
-                
-            try:
-                # Decide on validity threshold (90% requirement to prevent "Survival Bias")
-                # Models that fail on >10% of data (e.g. large numbers) should be disqualified
-                min_valid_ratio = 0.9
-                
-                if space['name'] == 'direct':
-                    # Direct space: use tree directly
-                    # IMPORTANT: Filter out complex values - floor/ceiling operators fail on complex
-                    real_mask = np.ones(len(y), dtype=bool)
-                    if np.iscomplexobj(X):
-                        real_mask &= ~np.any(np.abs(np.imag(X)) > 1e-9, axis=1 if X.ndim > 1 else 0)
-                    if np.iscomplexobj(y):
-                        real_mask &= np.abs(np.imag(y)) < 1e-9
-                    
-                    X_real = np.real(X[real_mask]) if np.any(~real_mask) else X
-                    y_real = np.real(y[real_mask]) if np.any(~real_mask) else y
-                    
-                    pred = best_solution.tree.evaluate(X_real)
-                    valid = ~np.isnan(pred) & ~np.isinf(pred)
-                    valid_ratio = np.sum(valid) / len(y_real)
-                    
-                    if valid_ratio < min_valid_ratio:
-                        mse = float('inf')
-                    if valid_ratio < min_valid_ratio:
-                        mse = float('inf')
-                    elif hasattr(self, '_use_relative_fitness') and self._use_relative_fitness:
-                        # Use Relative Square Error for high-variance data
-                        # Add epsilon to denominator to avoid division by zero
-                        denom = np.abs(y_real[valid])
-                        denom[denom < 1e-10] = 1.0 # avoid div/0
-                        diff_rel = (pred[valid] - y_real[valid]) / denom
-                        mse = np.mean(np.abs(diff_rel)**2)
-                        
-                        # DEBUG PRINT
-                        if self.config.verbose and np.random.rand() < 0.01: # Sample occasionally
-                             print(f"DEBUG MSE REL: Pred={pred[valid][:3]} Y={y_real[valid][:3]} DiffRel={diff_rel[:3]} MSE={mse}")
-                    else:
-                        mse = np.mean(np.abs(pred[valid] - y_real[valid])**2)
-                        
-                else:
-                    # Transformed spaces: evaluate original tree, then transform
-                    with np.errstate(divide='ignore', invalid='ignore'):
-                        # Evaluate on FULL X to test generalization to filtered points (e.g. negative values)
-                        pred_transformed = best_solution.tree.evaluate(X)
-                        valid_transformed = ~np.isnan(pred_transformed) & ~np.isinf(pred_transformed)
-                        
-                        # Apply inverse transform safely to all valid predictions
-                        pred = np.zeros_like(y) * np.nan
-                        # Only transform valid outputs
-                        if np.any(valid_transformed):
-                             # Catch warnings during transform (overflows etc)
-                             try:
-                                 pred[valid_transformed] = space['transform_back_func'](pred_transformed[valid_transformed])
-                             except:
-                                 pass # pred remains NaN
-                        
-                        valid = ~np.isnan(pred) & ~np.isinf(pred)
-                        valid_ratio = np.sum(valid) / len(y)
-                        
-                        if valid_ratio < min_valid_ratio:
-                            mse = float('inf')
-                        elif hasattr(self, '_use_relative_fitness') and self._use_relative_fitness:
-                            # Relative Error
-                            denom = np.abs(y[valid])
-                            denom[denom < 1e-10] = 1.0
-                            diff_rel = (pred[valid] - y[valid]) / denom
-                            mse = np.mean(np.abs(diff_rel)**2)
-                        else:
-                            mse = np.mean(np.abs(pred[valid] - y[valid])**2)
-                        
-                        # Determine dtype to avoid ComplexWarning
-                        target_dtype = np.complex128 if np.iscomplexobj(pred_transformed) else np.float64
-                        
-                        # Apply inverse transformation
-                        if space['name'] == 'log':
-                            # Transform back: exp(log_pred)
-                            pred = np.exp(pred_transformed)
-                            full_pred = pred
-                        elif space['name'] == 'inverse':
-                            # Transform back: 1/inv_pred
-                            pred = 1.0 / pred_transformed
-                            full_pred = pred
-                    
-                    # Evaluate MSE
-                    valid = ~np.isnan(full_pred) & ~np.isinf(full_pred)
-                    if np.sum(valid) > len(y) * 0.5:
-                        # Use abs()**2 to handle complex errors correctly (magnitude squared)
-                        mse = np.mean(np.abs(full_pred[valid] - y[valid])**2)
-                    else:
-                        mse = 1e10
-            except Exception as e:
-                if self.config.verbose:
-                    print(f"Error evaluating in original space: {e}")
-                mse = 1e10
+        return np.zeros(X.shape[0])
 
-            # Use the calculated REAL MSE, not the space-specific fitness
-            # mse = best_solution.mse  <-- This was the bug (using log-error as real-error)
-            fitness = best_solution.mse # Keep for debug/logging if needed
-            
-            results.append({'space': space['name'], 'expression': transformed, 'mse': mse})
-            
-            if self.config.verbose:
-                print(f"MSE in original space: {mse:.6e}")
-                
-            # EARLY EXIT: If we found a perfect solution in Direct space, 
-            # skip subsequent spaces (like inverse) which might be unstable or slow.
-            if space['name'] == 'direct' and mse < 1e-9:
-                if self.config.verbose:
-                    print(f"Perfect solution found (MSE < 1e-9). Skipping transformed spaces optimization.")
-                break
-        
-        # Return best
-        best = min(results, key=lambda r: r['mse'])
-        
-        
-        # Helper to normalize expressions for consistent comparison
-        def normalize_expr(expr_obj_or_str):
-            try:
-                s = str(expr_obj_or_str)
-                # Quick string normalization first
-                return s.replace(' ', '')
-            except:
-                return str(expr_obj_or_str)
-
-        # Collect equivalent forms (all results with MSE < 1e-9)
-        equivalent_forms = []
-        seen_exprs = set()
-        
-        for r in results:
-            if r['mse'] < 1e-9:
-                norm = normalize_expr(r['expression'])
-                if norm not in seen_exprs:
-                    seen_exprs.add(norm)
-                    equivalent_forms.append(r)
-        
-        # Algo check if there are other near-perfect seeds in the Pareto front
-        if hasattr(self, 'pareto_front') and self.pareto_front.solutions:
-            for sol in self.pareto_front.solutions:
-                if sol.mse < 1e-9:
-                    expr_sympy = sol.tree.to_sympy()
-                    norm = normalize_expr(expr_sympy)
-                    
-                    if norm not in seen_exprs:
-                        seen_exprs.add(norm)
-                        equivalent_forms.append({
-                            'space': 'pareto',
-                            'expression': expr_sympy,
-                            'mse': sol.mse
-                        })
-        
-        # When perfect solution found, check if other seeds also match perfectly
-        if best['mse'] < 1e-9 and hasattr(self, '_last_seeds'):
-            X_check = results[0].get('X', None) if results else None
-            y_check = results[0].get('y', None) if results else None
-            if X_check is None and hasattr(self, '_last_X'):
-                X_check = self._last_X
-                y_check = self._last_y
-                
-            if X_check is not None and y_check is not None:
-                import sympy as sp
-                local_dict = {
-                    'x': sp.Symbol('x'), 'y': sp.Symbol('y'),
-                    'atan': sp.atan, 'atan2': sp.atan2, 'cos': sp.cos, 'sin': sp.sin,
-                    'tan': sp.tan, 'exp': sp.exp, 'log': sp.log, 'sqrt': sp.sqrt,
-                    'abs': sp.Abs, 'Abs': sp.Abs,
-                }
-                from .expression_tree import ExpressionTree
-                
-                # Check ALL seeds
-                for seed_str in self._last_seeds:
-                    try:
-                        # Fast pre-check
-                        if normalize_expr(seed_str) in seen_exprs:
-                            continue
-
-                        parsed = sp.sympify(seed_str, locals=local_dict)
-                        tree = ExpressionTree.from_sympy(parsed, self._last_var_names)
-                        preds = tree.evaluate(X_check)
-                        
-                        valid_mask = np.isfinite(preds)
-                        n_valid = np.sum(valid_mask)
-                        
-                        if n_valid < 0.9 * len(preds):
-                            continue                        # Compute MSE on valid points only
-                        mse = float(np.mean((preds[valid_mask] - y_check[valid_mask]) ** 2))
-                        
-                        if mse < 1e-9:
-                            # 2. Candidate found! Check for string duplicates only
-                            # We WANT to show mathematically equivalent forms if they look different (e.g. Rational vs Trig)
-                            is_duplicate = False
-                            norm_parsed = normalize_expr(parsed)
-                            
-                            if norm_parsed in seen_exprs:
-                                is_duplicate = True
-                            
-                            if not is_duplicate:
-                                seen_exprs.add(norm_parsed)
-                                entry = {
-                                    'space': 'seed',
-                                    'expression': parsed,
-                                    'mse': mse
-                                }
-                                # Tag singular solutions
-                                if n_valid < len(preds):
-                                    entry['note'] = f"(Singularities at {len(preds)-n_valid} points)"
-                                equivalent_forms.append(entry)
-                                
-                    except Exception:
-                        pass  # Skip failed seeds
-        
-        if self.config.verbose:
-            print(f"\n{'='*70}")
-            print(f"BEST: {best['space']} space")
-            print(f"Expression: {best['expression']}")
-            
-            # Display equivalent forms if any
-            if len(equivalent_forms) > 1:
-                print(f"\n📐 EQUIVALENT FORMS DISCOVERED ({len(equivalent_forms)} total):")
-                for i, eq in enumerate(equivalent_forms):
-                    marker = "→" if str(eq['expression']) == str(best['expression']) else " "
-                    note = eq.get('note', "")
-                    print(f"  {marker} [{i+1}] {eq['expression']} {note}")
-                print(f"  (All have MSE < 1e-9, mathematically equivalent)")
-            
-            print(f"{'='*70}")
-        
-        return best['expression'], best['mse'], best['space']
-
-
-def discover_equation(
-    X: np.ndarray,
-    y: np.ndarray,
-    variable_names: list[str] | None = None,
-    timeout: float = 30.0,
-    verbose: bool = True,
-) -> tuple[str, float, ParetoFront]:
-    """Convenience function to discover an equation from data.
-
+def discover_equation(X: np.ndarray, y: np.ndarray, **kwargs) -> ParetoFront:
+    """Legacy wrapper for discovering equations.
+    
     Args:
         X: Input data
-        y: Target values
-        variable_names: Variable names
-        timeout: Maximum seconds to run
-        verbose: Print progress
-
+        y: Target data
+        **kwargs: Configuration parameters for GeneticConfig
+        
     Returns:
-        Tuple of (best expression string, MSE, full Pareto front)
+        ParetoFront containing discovered solutions
     """
-    config = GeneticConfig(
-        population_size=200,
-        n_islands=2,
-        generations=100,
-        timeout=timeout,
-        verbose=verbose,
-    )
-
+    config_params = {}
+    # Filter kwargs that match GeneticConfig fields
+    import inspect
+    sig = inspect.signature(GeneticConfig)
+    for k, v in kwargs.items():
+        if k in sig.parameters:
+            config_params[k] = v
+            
+    config = GeneticConfig(**config_params)
     regressor = GeneticSymbolicRegressor(config)
-    pareto = regressor.fit(X, y, variable_names)
-
-    best = pareto.get_knee_point() or pareto.get_best()
-    if best:
-        return best.expression, best.mse, pareto
-    return "", float("inf"), pareto
+    return regressor.fit(X, y)

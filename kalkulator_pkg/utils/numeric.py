@@ -1,11 +1,48 @@
 import json
 import logging
 import re
+import signal
+import threading
 from math import gcd
 
 import sympy as sp
 
 logger = logging.getLogger(__name__)
+
+
+def safe_simplify(expr, timeout_seconds: float = 2.0, fallback=None):
+    """SymPy simplify with timeout protection.
+    
+    Prevents hangs on pathological expressions (e.g., nested radicals).
+    
+    Args:
+        expr: SymPy expression to simplify
+        timeout_seconds: Maximum time to allow (default 2s)
+        fallback: Value to return on timeout (default: original expr)
+        
+    Returns:
+        Simplified expression, or fallback/original on timeout
+    """
+    if fallback is None:
+        fallback = expr
+        
+    result = [fallback]  # Use list to allow mutation in thread
+    
+    def worker():
+        try:
+            result[0] = sp.simplify(expr)
+        except Exception:
+            pass  # Keep fallback
+    
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    thread.join(timeout=timeout_seconds)
+    
+    if thread.is_alive():
+        logger.warning(f"safe_simplify timed out after {timeout_seconds}s")
+        return fallback
+    
+    return result[0]
 
 # Helper for Python < 3.9 compatibility
 try:

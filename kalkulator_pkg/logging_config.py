@@ -1,9 +1,15 @@
 """Structured logging configuration for Kalkulator."""
 
+import atexit
 import logging
+import logging.handlers
+import queue
 import sys
 from datetime import datetime
 from typing import Optional
+
+# Global queue listener for cleanup
+_queue_listener: Optional[logging.handlers.QueueListener] = None
 
 
 class StructuredFormatter(logging.Formatter):
@@ -15,35 +21,70 @@ class StructuredFormatter(logging.Formatter):
 
 
 def setup_logging(
-    level: str = "INFO", log_file: Optional[str] = None
+    level: str = "INFO", log_file: Optional[str] = None, async_mode: bool = True
 ) -> logging.Logger:
     """Set up structured logging for the application.
+    
+    Supports async mode (default) to prevent I/O blocking in performance-critical code.
 
     Args:
         level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
         log_file: Optional file path to write logs (if None, logs to stderr)
+        async_mode: If True, use QueueHandler for non-blocking logging
 
     Returns:
         Configured logger instance
     """
+    global _queue_listener
+    
     logger = logging.getLogger("kalkulator")
     logger.setLevel(getattr(logging, level.upper(), logging.INFO))
 
     # Remove existing handlers
     logger.handlers.clear()
 
+    # Create actual handlers
+    handlers = []
+    
     # Console handler
     console_handler = logging.StreamHandler(sys.stderr)
     console_handler.setFormatter(StructuredFormatter())
-    logger.addHandler(console_handler)
+    handlers.append(console_handler)
 
     # File handler (if specified)
     if log_file:
         file_handler = logging.FileHandler(log_file)
         file_handler.setFormatter(StructuredFormatter())
-        logger.addHandler(file_handler)
+        handlers.append(file_handler)
+
+    if async_mode:
+        # Use QueueHandler for non-blocking logging
+        log_queue = queue.Queue(-1)  # No limit
+        queue_handler = logging.handlers.QueueHandler(log_queue)
+        logger.addHandler(queue_handler)
+        
+        # Start QueueListener in background thread
+        _queue_listener = logging.handlers.QueueListener(
+            log_queue, *handlers, respect_handler_level=True
+        )
+        _queue_listener.start()
+        
+        # Ensure cleanup on exit
+        atexit.register(_shutdown_logging)
+    else:
+        # Direct handlers (synchronous)
+        for handler in handlers:
+            logger.addHandler(handler)
 
     return logger
+
+
+def _shutdown_logging():
+    """Shutdown the async logging listener."""
+    global _queue_listener
+    if _queue_listener is not None:
+        _queue_listener.stop()
+        _queue_listener = None
 
 
 def get_logger(name: str = "kalkulator") -> logging.Logger:

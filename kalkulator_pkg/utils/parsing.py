@@ -70,10 +70,10 @@ def eval_to_float(val):
             # Last ditch: simple python eval (risky but restricted?)
             # No, avoid eval() for safety unless sanitized.
             # sympify usually handles most math.
-            raise ValueError(f"Could not convert '{val}' to float/complex: {e}")
+            raise ValueError(f"Could not convert '{val}' to float/complex: {e}") from e
             
     # Try converting other types
     try:
         return float(val)
     except Exception as e:
-        raise ValueError(f"Could not convert {type(val)} to float: {e}")
+        raise ValueError(f"Could not convert {type(val)} to float: {e}") from e

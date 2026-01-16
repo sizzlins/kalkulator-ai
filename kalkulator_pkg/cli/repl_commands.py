@@ -34,6 +34,22 @@ from ..symbolic_regression.forensic_analysis import generate_pattern_seeds
 logger = logging.getLogger(__name__)
 
 
+
+# Regex Constants
+POINT_PATTERN = re.compile(r"^([a-zA-Z_]\w*)\s*\(([^)]+)\)\s*=\s*(.+)$")
+FIND_PATTERN = re.compile(r"^find\s+([a-zA-Z_]\w*)\s*(?:\(([^)]+)\))?$")
+SEED_PATTERN = re.compile(r'--seed\s+["\']([^"\']+)["\']')
+BOOST_PATTERN = re.compile(r"--boost(?:[=\s]+(\d+))?")
+BAN_PATTERN = re.compile(r'--ban\s+([a-zA-Z0-9_,]+)')
+FILE_PATTERN = re.compile(r"--file\s+[\"']?([^\"'\s]+)[\"']?")
+EVOLVE_EXPLICIT_PATTERN = re.compile(r"evolve\s+(\w+)\s*=\s*(\w+)\s*\(([^)]+)\)(?:\s+from\s+(.+))?$", re.IGNORECASE)
+EVOLVE_PATTERN = re.compile(r"evolve\s+(\w+)\s*\(([^)]+)\)\s+from\s+(.+)", re.IGNORECASE)
+EVOLVE_IMPLICIT_PATTERN = re.compile(r"evolve\s+(\w+)\s*\(([^)]+)\)\s*$", re.IGNORECASE)
+DIRECT_POINT_PATTERN = re.compile(r"(\w+)\s*\([^)]+\)\s*=")
+ARRAY_ASSIGN_PATTERN = re.compile(r"(\w+)\s*=\s*(?:\[([^\]]+)\]|(\w+))")
+FUNC_START_PATTERN = re.compile(r"(\w+)\s*\(")
+FIND_FUNC_CLAUSE_PATTERN = re.compile(r"find\s+(\w+)\s*\(([^)]+)\)", re.IGNORECASE)
+
 def _find_matching_paren(s: str, start: int) -> int:
     """Find matching closing parenthesis for opening paren at start position.
     
@@ -417,16 +433,15 @@ def _handle_evolve(text, variables=None):
         # Strategy 1: Seeding
         # Parse "--seed 'expr'" or "--seed "expr""
         seeds = []
-        seed_pattern = re.compile(r'--seed\s+["\']([^"\']+)["\']')
-        matches = seed_pattern.findall(text)
+        matches = SEED_PATTERN.findall(text)
         if matches:
             seeds.extend(matches)
-            text = seed_pattern.sub("", text)
+            text = SEED_PATTERN.sub("", text)
 
         # Strategy 7: Boosting
         # Parse "--boost <N>", "--boost=N", or just "--boost" (default 5)
         boosting_rounds = 1
-        boost_match = re.search(r"--boost(?:[=\s]+(\d+))?", text)
+        boost_match = BOOST_PATTERN.search(text)
         if boost_match:
             if boost_match.group(1):
                 boosting_rounds = int(boost_match.group(1))
@@ -434,7 +449,7 @@ def _handle_evolve(text, variables=None):
                 boosting_rounds = 5 # Default to 5 rounds if flag present but no number
             
             # Remove flag from text
-            text = re.sub(r"--boost(?:[=\s]+\d+)?", "", text)
+            text = BOOST_PATTERN.sub("", text)
 
         # Strategy 8: Hybrid (find → evolve)
         # Parse "--hybrid" flag
@@ -472,11 +487,11 @@ def _handle_evolve(text, variables=None):
         # Constraint-Based Search
         # Parse "--ban func1,func2,..." to restrict operator search space
         banned_operators = []
-        ban_match = re.search(r'--ban\s+([a-zA-Z0-9_,]+)', text)
+        ban_match = BAN_PATTERN.search(text)
         if ban_match:
             banned_str = ban_match.group(1)
             banned_operators = [f.strip().lower() for f in banned_str.split(',') if f.strip()]
-            text = re.sub(r'--ban\s+[a-zA-Z0-9_,]+', '', text)
+            text = BAN_PATTERN.sub('', text)
             print(f"   [Constraint] Banned functions: {banned_operators}")
 
         # Polynomial Mode: Ban all transcendentals, force pure polynomial evolution
@@ -537,7 +552,7 @@ def _handle_evolve(text, variables=None):
 
         # Strategy 10: File Input
         # Parse "--file 'path'" to load data into variables
-        file_match = re.search(r"--file\s+[\"']?([^\"'\s]+)[\"']?", text)
+        file_match = FILE_PATTERN.search(text)
         if file_match:
             file_path = file_match.group(1)
             try:
@@ -550,24 +565,18 @@ def _handle_evolve(text, variables=None):
             except Exception as e:
                 print(f"Error loading file '{file_path}': {e}")
                 return
-            text = re.sub(r"--file\s+[\"']?[^\"'\s]+[\"']?", "", text)
+            text = FILE_PATTERN.sub("", text)
 
         # Parse: evolve f(x) from x=[...], y=[...]
         # or: evolve f(x,y) from x=[...], y=[...], z=[...]
-        # Parse: evolve f(x) from x=[...], y=[...]
-        # or: evolve f(x,y) from x=[...], y=[...], z=[...]
         # Parse: evolve y = f(x) (Explicit target syntax)
-        # Parse: evolve f(x) from x=[...], y=[...]
-        # or: evolve f(x,y) from x=[...], y=[...], z=[...]
         
         explicit_target_var = None
         
         # Check for explicit target syntax: evolve y = f(x) [from ...]
-        match_explicit = re.match(r"evolve\s+(\w+)\s*=\s*(\w+)\s*\(([^)]+)\)(?:\s+from\s+(.+))?$", text, re.IGNORECASE)
+        match_explicit = EVOLVE_EXPLICIT_PATTERN.match(text)
 
-        match = re.match(
-            r"evolve\s+(\w+)\s*\(([^)]+)\)\s+from\s+(.+)", text, re.IGNORECASE
-        )
+        match = EVOLVE_PATTERN.match(text)
 
         is_implicit = False
         data_part = None
@@ -589,9 +598,7 @@ def _handle_evolve(text, variables=None):
             data_part = match.group(3)
         else:
             # Try implicit context: evolve f(x)
-            match_implicit = re.match(
-                r"evolve\s+(\w+)\s*\(([^)]+)\)\s*$", text, re.IGNORECASE
-            )
+            match_implicit = EVOLVE_IMPLICIT_PATTERN.match(text)
             if match_implicit:
                 func_name = match_implicit.group(1)
                 input_var_names = [
@@ -604,12 +611,12 @@ def _handle_evolve(text, variables=None):
             else:
                 # Try direct data points: evolve f(-4)=0.04, f(-3)=-0.56, ..., find f(x)
                 # This pattern looks for f(value)=result pairs without 'from' keyword
-                direct_match = re.search(r"(\w+)\s*\([^)]+\)\s*=", text)
+                direct_match = DIRECT_POINT_PATTERN.search(text)
                 if direct_match:
                     func_name = direct_match.group(1)
                     
                     # Try to extract variable names from "find func(var1, var2)" clause
-                    find_match = re.search(r"find\s+(\w+)\s*\(([^)]+)\)", text, re.IGNORECASE)
+                    find_match = FIND_FUNC_CLAUSE_PATTERN.search(text)
                     if find_match and find_match.group(1) == func_name:
                         # Extract variable names from find clause
                         input_var_names = [v.strip() for v in find_match.group(2).split(",")]
@@ -668,14 +675,21 @@ def _handle_evolve(text, variables=None):
                     # If it looks like a list
                     if "[" in val or "array" in val:
                         try:
-                            # Evaluate in safe context with numpy
-                            safe_dict = {
-                                "__builtins__": {},
-                                "np": np,
-                                "array": np.array,
-                            }
-                            val_eval = eval(val, safe_dict)
-                            arr = np.array(val_eval)
+                            # SAFE PARSING: No eval()
+                            import ast
+                            cleaned = val.strip()
+                            # Handle np.array([...]) or array([...]) wrapper
+                            if "array(" in cleaned:
+                                # Extract content inside outermost parens?
+                                # Simple heuristic for common case: np.array([1,2])
+                                start = cleaned.find("[")
+                                end = cleaned.rfind("]")
+                                if start != -1 and end != -1:
+                                    cleaned = cleaned[start:end+1]
+                            
+                            val_parsed = ast.literal_eval(cleaned)
+                            arr = np.array(val_parsed)
+
                             if arr.dtype.kind in "iuf":  # Integer, Unsigned, Float
                                 data_dict[name] = arr
                             else:
@@ -695,9 +709,8 @@ def _handle_evolve(text, variables=None):
             # Modified pattern to support BOTH literal arrays [1,2] AND variable references x=my_var
             # Group 2 is literal array content
             # Group 3 is variable name reference
-            array_pattern = re.compile(r"(\w+)\s*=\s*(?:\[([^\]]+)\]|(\w+))")
             
-            for m in array_pattern.finditer(data_part):
+            for m in ARRAY_ASSIGN_PATTERN.finditer(data_part):
                 var = m.group(1)
                 
                 if m.group(2): # Literal array [1,2,3]
@@ -727,8 +740,7 @@ def _handle_evolve(text, variables=None):
 
                 # Use balanced paren matching instead of regex to handle nested parens
                 # Pattern: find "funcname(" then match balanced parens, then "= value"
-                func_start_pattern = re.compile(r"(\w+)\s*\(")
-                for m in func_start_pattern.finditer(data_part):
+                for m in FUNC_START_PATTERN.finditer(data_part):
                     p_func = m.group(1)
                     if p_func != func_name:
                         continue
@@ -1769,9 +1781,7 @@ def handle_find_command_raw(text: str, ctx: Any) -> bool:
     target_vars = []
 
     # Regex to parse data points: name(arg1, arg2) = value
-    point_pattern = re.compile(r"^([a-zA-Z_]\w*)\s*\(([^)]+)\)\s*=\s*(.+)$")
     # Regex to parse find command: find name(vars)
-    find_pattern = re.compile(r"^find\s+([a-zA-Z_]\w*)\s*(?:\(([^)]+)\))?$")
 
     for p in parts:
         p = p.strip()
@@ -1782,7 +1792,7 @@ def handle_find_command_raw(text: str, ctx: Any) -> bool:
         p_clean = p.replace("--auto-evolve", "").strip()
 
         # Check for FIND command
-        m_find = find_pattern.match(p_clean)
+        m_find = FIND_PATTERN.match(p_clean)
         if m_find and "find" in p_clean.lower():
             target_func = m_find.group(1)
             if m_find.group(2):
@@ -1791,7 +1801,7 @@ def handle_find_command_raw(text: str, ctx: Any) -> bool:
 
         # Check for DATA point
         # Also try matching dirty p just in case, but clean is safer
-        m_point = point_pattern.match(p_clean)
+        m_point = POINT_PATTERN.match(p_clean)
         if m_point:
             name = m_point.group(1)
             args_str = m_point.group(2)

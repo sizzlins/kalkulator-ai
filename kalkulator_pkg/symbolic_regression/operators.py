@@ -253,7 +253,7 @@ def constant_optimization(
         diff = pred - y
         np.clip(diff, -1e100, 1e100, out=diff)  # Guard square
         current_mse = np.mean(diff**2)
-    except Exception:
+    except (ValueError, OverflowError, TypeError, FloatingPointError):
         return new_tree
 
     for _ in range(iterations):
@@ -286,7 +286,7 @@ def constant_optimization(
                         const_node.value = original_value
                 except (OverflowError, ValueError, RuntimeWarning):
                     const_node.value = original_value
-                except Exception:
+                except (OverflowError, ValueError, RuntimeWarning, FloatingPointError):
                     const_node.value = original_value
 
             # Robust Integer Snapping (Agent Handoff Rule 5: Root Cause)
@@ -325,9 +325,110 @@ def constant_optimization(
                     else:
                         # Revert if integer is significantly worse
                         const_node.value = current_val
-                except Exception:
+                except (ValueError, OverflowError, TypeError, FloatingPointError):
                     const_node.value = current_val
 
+    return new_tree
+
+
+def optimize_constants_bfgs(
+    tree: ExpressionTree,
+    X: np.ndarray,
+    y: np.ndarray,
+    max_iter: int = 50,
+) -> ExpressionTree:
+    """Optimize constants in the tree using BFGS (scipy.optimize).
+    
+    Much faster and more accurate than hill-climbing for finding optimal constants.
+    Uses gradient-based optimization to find optimal values in few iterations.
+    
+    Args:
+        tree: Tree to optimize
+        X: Input data
+        y: Target values
+        max_iter: Maximum optimization iterations
+        
+    Returns:
+        Tree with optimized constants
+    """
+    try:
+        from scipy.optimize import minimize
+    except ImportError:
+        # Fallback to hill-climbing if scipy not available
+        return constant_optimization(tree, X, y)
+    
+    new_tree = tree.copy()
+    new_tree.fold_constants()
+    
+    # Find all constant nodes
+    nodes = new_tree.get_all_nodes()
+    constants = [n for n in nodes if n.node_type == NodeType.CONSTANT]
+    
+    if not constants:
+        return new_tree
+    
+    # Extract initial values
+    x0 = np.array([float(c.value) if not isinstance(c.value, complex) else c.value.real 
+                   for c in constants])
+    
+    if len(x0) == 0:
+        return new_tree
+    
+    # Define objective function
+    def objective(params):
+        # Inject parameters into tree
+        for i, c in enumerate(constants):
+            c.value = params[i]
+        
+        try:
+            pred = new_tree.evaluate(X)
+            if not np.all(np.isfinite(pred)):
+                return 1e10
+            mse = np.mean((pred - y) ** 2)
+            return float(mse) if np.isfinite(mse) else 1e10
+        except (ValueError, OverflowError, TypeError):
+            return 1e10
+    
+    # Run BFGS optimization
+    try:
+        result = minimize(
+            objective,
+            x0,
+            method='L-BFGS-B',  # Bounded version, more robust
+            options={'maxiter': max_iter, 'disp': False}
+        )
+        
+        # Apply optimal values
+        if result.success or result.fun < objective(x0):
+            for i, c in enumerate(constants):
+                c.value = result.x[i]
+                
+        # Integer snapping (same as hill-climbing)
+        for const_node in constants:
+            current_val = const_node.value
+            if isinstance(current_val, complex):
+                continue
+            try:
+                nearest_int = round(current_val)
+                if abs(current_val - nearest_int) < 0.05:
+                    # Test if integer is acceptable
+                    const_node.value = nearest_int
+                    pred = new_tree.evaluate(X)
+                    mse_int = np.mean((pred - y) ** 2)
+                    
+                    const_node.value = current_val
+                    pred = new_tree.evaluate(X)
+                    mse_float = np.mean((pred - y) ** 2)
+                    
+                    if mse_int <= mse_float * 1.05:
+                        const_node.value = nearest_int
+            except (ValueError, TypeError, OverflowError):
+                pass
+                
+    except (ValueError, RuntimeError):
+        # BFGS failed, return original tree
+        pass
+    
     return new_tree
 
 

@@ -30,6 +30,12 @@ from .config import SQRT_UNICODE_REGEX
 from .config import TRANSFORMATIONS
 from .types import ValidationError
 
+# Pre-compiled regex patterns (module-level for performance)
+# Smart √ to sqrt() conversion: √x -> sqrt(x), √(expr) -> sqrt(expr)
+SQRT_PATTERN = re.compile(r'√(\([^)]+\)|\w+|\d+\.?\d*)')
+# Parenthesized sub-expression pattern for cache lookup
+PAREN_PATTERN = re.compile(r"\(([^()]+)\)")
+
 # Minimal globals for SymPy literals to prevent namespace pollution
 SAFE_GLOBALS = {
     "Symbol": sp.Symbol,
@@ -484,7 +490,7 @@ def _strip_comments(text: str) -> str:
     return "".join(out)
 
 
-def preprocess(
+def preprocess_expression(
     input_str: str,
     skip_exponent_conversion: bool = False,
     allowed_functions: frozenset[str] | None = None,
@@ -527,386 +533,31 @@ def preprocess(
     # We'll temporarily replace commas in function calls with a special marker
     import re
 
-    processed_str = input_str
-    protected_funcs = []
-    target_funcs = {"integrate", "diff", "limit", "sum", "product", "min", "max"}
+    processed_str = input_str.strip()
 
-    # Scan for function calls manually to handle nested parentheses correctly
-    # Regex like `diff\(([^)]+)\)` fails on `diff(f(x), x)` because it stops at the first `)`
-    i = 0
-    result_parts = []
-    last_pos = 0
-
-    while i < len(processed_str):
-        # Check for function names
-        found_func = None
-        for func in target_funcs:
-            if processed_str.startswith(func, i):
-                # Check boundaries (must be whole word)
-                end_func = i + len(func)
-                if (
-                    end_func == len(processed_str)
-                    or not processed_str[end_func].isalnum()
-                ) and (i == 0 or not processed_str[i - 1].isalnum()):
-                    # Check if followed by (
-                    j = end_func
-                    while j < len(processed_str) and processed_str[j].isspace():
-                        j += 1
-                    if j < len(processed_str) and processed_str[j] == "(":
-                        found_func = (func, end_func, j)
-                        break
-
-        if found_func:
-            func_name, end_func_pos, open_paren_pos = found_func
-
-            # Find matching closing parenthesis
-            depth = 1
-            j = open_paren_pos + 1
-            args_start = j
-
-            while j < len(processed_str) and depth > 0:
-                if processed_str[j] == "(":
-                    depth += 1
-                elif processed_str[j] == ")":
-                    depth -= 1
-                j += 1
-
-            if depth == 0:
-                # Found valid function call
-                args_end = j - 1
-                args = processed_str[args_start:args_end]
-
-                # Check if args contain a comma (at the top level)
-                arg_depth = 0
-                has_top_comma = False
-                for char in args:
-                    if char == "(":
-                        arg_depth += 1
-                    elif char == ")":
-                        arg_depth -= 1
-                    elif char == "," and arg_depth == 0:
-                        has_top_comma = True
-                        break
-
-                if has_top_comma:
-                    # Protect commas
-                    marker = f" __COMMA_SEP_{len(protected_funcs)}__ "
-                    protected_args = ""
-                    arg_depth = 0
-                    for char in args:
-                        if char == "(":
-                            arg_depth += 1
-                            protected_args += char
-                        elif char == ")":
-                            arg_depth -= 1
-                            protected_args += char
-                        elif char == "," and arg_depth == 0:
-                            protected_args += marker
-                        else:
-                            protected_args += char
-
-                    protected_funcs.append((func_name, args, marker))
-
-                    # Add everything before this call
-                    result_parts.append(processed_str[last_pos:i])
-                    # Add the protected call
-                    result_parts.append(f"{func_name}({protected_args})")
-
-                    last_pos = j
-                    i = j
-                    continue
-
-            # If depth != 0 (unbalanced) or no top comma, just continue scanning
-            i = open_paren_pos + 1
-        else:
-            i += 1
-
-    result_parts.append(processed_str[last_pos:])
-    processed_str = "".join(result_parts)
-
-    if not input_str:
-        raise ValidationError("Input cannot be empty", "EMPTY_INPUT")
-    if len(input_str) > MAX_INPUT_LENGTH:
-        raise ValidationError(
-            f"Input too long (>{MAX_INPUT_LENGTH} characters)", "TOO_LONG"
-        )
-
-    # Check for unterminated quotes (common syntax error)
-    if input_str.count('"') % 2 != 0:
-        raise ValidationError(
-            "Unmatched double quotes detected. Check that all opening quotes have matching closing quotes.",
-            "UNMATCHED_QUOTES",
-        )
-    if input_str.count("'") % 2 != 0:
-        raise ValidationError(
-            "Unmatched single quotes detected. Check that all opening quotes have matching closing quotes.",
-            "UNMATCHED_QUOTES",
-        )
-
-    # Check for REPL command names appearing in expressions (common paste error)
-    input_lower = input_str.lower()
-    found_commands = []
-    for cmd in REPL_COMMANDS:
-        # Check if command appears as a whole word (not part of another word)
-        # Use word boundaries or check that it's not part of a valid identifier
-
-        pattern = r"\b" + re.escape(cmd) + r"\b"
-        if re.search(pattern, input_lower, re.IGNORECASE):
-            # Make sure it's not part of a longer valid identifier or function
-            # Check context: should not be preceded/followed by alphanumeric or underscore
-            matches = list(re.finditer(pattern, input_lower, re.IGNORECASE))
-            for match in matches:
-                start, end = match.span()
-                # Check if it's actually a standalone word
-                if (start == 0 or not input_str[start - 1].isalnum()) and (
-                    end == len(input_str)
-                    or not (input_str[end].isalnum() or input_str[end] == "_")
-                ):
-                    found_commands.append(cmd)
-                    break
-    if found_commands:
-        commands_str = ", ".join(sorted(set(found_commands)))
-        raise ValidationError(
-            f"Command name(s) detected in expression: {commands_str}. "
-            "Commands cannot be used in mathematical expressions. "
-            "Did you paste multiple commands? Please enter them separately, one per line.",
-            "COMMAND_IN_EXPRESSION",
-        )
-
-    lowered = input_str.strip().lower()
-    for tok in FORBIDDEN_TOKENS:
-        if tok in lowered:
-            # Audit log blocked input
-            try:
-                from .logging_config import get_logger
-
-                logger = get_logger("parser")
-                logger.warning(
-                    "Blocked input containing forbidden token",
-                    extra={
-                        "forbidden_token": tok,
-                        "input_length": len(input_str),
-                        "input_preview": (
-                            input_str[:100]
-                            if len(input_str) <= 100
-                            else input_str[:100] + "..."
-                        ),
-                    },
-                )
-            except ImportError:
-                pass
-            raise ValidationError(
-                f"Input contains forbidden token: {tok}", "FORBIDDEN_TOKEN"
-            )
-
-    # Note: processed_str may have been modified by function comma protection above
-    if "processed_str" not in locals():
-        processed_str = input_str.strip()
+    # Basic unicode/symbol replacements BEFORE tokenization
     processed_str = processed_str.replace("−", "-").replace("–", "-")
     processed_str = processed_str.replace("Δ", "Delta")
-    processed_str = processed_str.replace("π", "pi")  # Convert Greek π to pi
-
-    # Replace i with I (imaginary unit) and e with E (Euler's number) if they are standalone words
-    # This ensures they are treated as constants, not variables
-    processed_str = re.sub(r"\bi\b", "I", processed_str)
-    processed_str = re.sub(r"\be\b", "E", processed_str)
-
+    processed_str = processed_str.replace("π", "pi")
     processed_str = processed_str.replace(":", "/")
     processed_str = processed_str.replace("×", "*")
     processed_str = processed_str.replace("=>", ">=")
     processed_str = processed_str.replace("=<", "<=")
-
-    # Handle 'mod' operator (e.g. "x mod y" -> "Mod(x, y)")
-    # Must be done BEFORE implicit multiplication to avoid "x*mod*y"
-    # Negative lookbehind to ensure we don't match 'mod' in 'model' or 'mode' if those become vars
-    # But 'mod' is a common operator. We'll require whitespace around it or clear boundaries.
-    # Pattern: something mod something
-    # We use a robust regex that captures the operands.
-    # Note: This is a simple infix to prefix conversion. Nested mods might need more care, but this covers standard usage.
-    # We use re.sub with a function to handle potential nesting if we processed right-to-left, but simple replacement works for single level.
-    # To be safe against "model", we use \bmod\b
-
-    # We need to capture the operands. This is tricky with simple regex because operands can be complex expressions.
-    # Simplified approach: Replace " mod " with ", " and wrap in Mod() is hard.
-    # Better approach: Replace "\bmod\b" with "%" which SymPy might handle? No, SymPy uses % for Mod on integers but Mod(a,b) is safer for symbolic.
-    # Actually, let's just replace " mod " with "%". preprocess will later handle "%" ?
-    # Wait, existing code has PERCENT_REGEX.sub(r"(\1/100)", processed_str).
-    # Does SymPy parse "a % b" as Mod(a, b)? Yes, Python syntax.
-    # Let's test this hypothesis with a script? No, I'll trust standard Python/SymPy behavior for %.
-    # So "x mod y" -> "x % y".
-    # BUT we must NOT replace "mod(" (function call) with "%(" (invalid syntax).
-    # Regex: mod word boundary, NOT followed by optional space and (
-    processed_str = re.sub(r"\bmod\b(?!\s*\()", "%", processed_str, flags=re.IGNORECASE)
-
-    if not skip_exponent_conversion:
-        processed_str = processed_str.replace("^", "**")
-        from_superscript_map = {
-            "⁰": "0",
-            "¹": "1",
-            "²": "2",
-            "³": "3",
-            "⁴": "4",
-            "⁵": "5",
-            "⁶": "6",
-            "⁷": "7",
-            "⁸": "8",
-            "⁹": "9",
-            "⁻": "-",
-            "ⁿ": "n",
-        }
-        pattern = re.compile(f"([{''.join(from_superscript_map.keys())}]+)")
-
-        def from_superscript_converter(m):
-            normal_str = "".join([from_superscript_map[char] for char in m.group(1)])
-            return f"**{normal_str}"
-
-        processed_str = pattern.sub(from_superscript_converter, processed_str)
-
-    processed_str = PERCENT_REGEX.sub(r"(\1/100)", processed_str)
-    processed_str = SQRT_UNICODE_REGEX.sub("sqrt(", processed_str)
-
-    # AMBIG_FRACTION_REGEX.sub(r"((\1)/(\2))", processed_str)
-    # Use a callback to prevent matching across protected commas
-    def normalize_fraction(match):
-        full_match = match.group(0)
-        # If the match spans across a protected comma, do NOT transform it
-        if "__COMMA_SEP_" in full_match:
-            return full_match
-        g1 = match.group(1)
-        g2 = match.group(2)
-        return f"(({g1})/({g2}))"
-
-    processed_str = AMBIG_FRACTION_REGEX.sub(normalize_fraction, processed_str)
-
-    # Detect and handle hexadecimal numbers BEFORE implicit multiplication
-    # This prevents "123edc09f2" from becoming "123*e*d*c*0*9*f*2"
-    # SymPy doesn't handle hex numbers well, so we convert to decimal before parsing
-
-    # Also handle hex numbers with 0x prefix first - convert to decimal for SymPy compatibility
-    hex_with_prefix_pattern = re.compile(r"\b0x([0-9a-fA-F]+)\b")
-
-    def convert_0x_hex(match):
-        """Convert 0x hex number to decimal."""
-        hex_digits = match.group(1)
-        try:
-            decimal_val = int(hex_digits, 16)
-            return str(decimal_val)
-        except ValueError:
-            return match.group(0)
-
-    processed_str = hex_with_prefix_pattern.sub(convert_0x_hex, processed_str)
-
-    # Detect hex numbers in assignment contexts (e.g., "var = 123edc09f2")
-    # Also detect standalone hex numbers (e.g., just "123edc09f2")
-    # This must happen BEFORE implicit multiplication
-    # Pattern: hex digits (4+ chars) with at least one letter (a-f), in numeric context
-    hex_standalone_pattern = re.compile(r"\b([0-9a-fA-F]{4,})\b")
-
-    def convert_hex_if_valid(match):
-        """Convert hex number to decimal if it looks like one."""
-        hex_digits = match.group(1)
-        start_pos = match.start()
-        end_pos = match.end()
-
-        # Check for preceding dot (part of float)
-        if start_pos > 0 and processed_str[start_pos - 1] == ".":
-            return match.group(0)
-
-        # Only convert if it has letters (a-f) - this distinguishes hex from decimal
-        if (
-            len(hex_digits) >= 4
-            and any(c in "abcdefABCDEF" for c in hex_digits)
-            and all(c in "0123456789abcdefABCDEF" for c in hex_digits)
-        ):
-            # Check context: must be in a numeric context (not part of a variable name)
-            # Check if followed by alphanumeric (would be part of variable) or preceded by letter/underscore
-            if end_pos < len(processed_str) and (
-                processed_str[end_pos].isalnum() or processed_str[end_pos] == "_"
-            ):
-                # Part of a longer identifier, don't convert
-                return match.group(0)
-            if start_pos > 0 and (
-                processed_str[start_pos - 1].isalnum()
-                or processed_str[start_pos - 1] == "_"
-            ):
-                # Preceded by letter/underscore, might be part of variable
-                return match.group(0)
-            try:
-                # Convert hex to decimal
-                decimal_val = int(hex_digits, 16)
-                return str(decimal_val)
-            except ValueError:
-                return match.group(0)
-        return match.group(0)
-
-    # Apply hex conversion to standalone hex numbers
-    processed_str = hex_standalone_pattern.sub(convert_hex_if_valid, processed_str)
-
-    # Also handle hex in assignment contexts explicitly (for clarity)
-    hex_context_pattern = re.compile(r"=\s*([0-9a-fA-F]{4,})(?=[\s\+\-\*/\)\s,;]|$)")
-
-    def convert_hex_in_assignment(match):
-        """Convert hex number after = sign to decimal."""
-        hex_digits = match.group(1)
-        # Only convert if it looks like a hex number (has letters a-f)
-        if (
-            len(hex_digits) >= 4
-            and any(c in "abcdefABCDEF" for c in hex_digits)
-            and all(c in "0123456789abcdefABCDEF" for c in hex_digits)
-        ):
-            try:
-                # Convert hex to decimal
-                decimal_val = int(hex_digits, 16)
-                return f"= {decimal_val}"
-            except ValueError:
-                return match.group(0)
-        return match.group(0)
-
-    # Apply hex conversion in assignment contexts (shouldn't be needed if standalone pattern works, but for safety)
-    processed_str = hex_context_pattern.sub(convert_hex_in_assignment, processed_str)
-
-    # Protect "find" from implicit multiplication conversion
-    # "find" is a keyword for function finding, not a mathematical expression
     
-    def implicit_mult_replacement(match):
-        """Handle implicit multiplication, respecting scientific notation."""
-        digit = match.group(1)
-        char = match.group(2)
-        
-        # If the character is 'e' or 'E', check if it looks like scientific notation
-        if char.lower() == 'e':
-            # Look ahead in the string to see if it's followed by digits or +,- then digits
-            # Note: Regex sub only gives us the match, not the full context easily without passing string
-            # But the match object has .string and .end()
-            full_str = match.string
-            end_idx = match.end()
-            
-            # Check characters immediately following 'e'
-            if end_idx < len(full_str):
-                next_char = full_str[end_idx]
-                if next_char.isdigit() or next_char in ('+', '-'):
-                    # If +, -, verify subsequent digit
-                    if next_char in ('+', '-'):
-                        if end_idx + 1 < len(full_str) and full_str[end_idx + 1].isdigit():
-                            return match.group(0) # Keep as is (scientific notation)
-                    else:
-                        return match.group(0) # Keep as is (e followed by digit)
-
-        return f"{digit}*{char}"
-
-    if "find" in processed_str.lower():
-        # Temporarily replace "find" with a placeholder
-        processed_str = re.sub(
-            r"\bfind\b", "___FIND_KEYWORD___", processed_str, flags=re.IGNORECASE
-        )
-        # Apply implicit multiplication with smart handler
-        processed_str = DIGIT_LETTERS_REGEX.sub(implicit_mult_replacement, processed_str)
-        # Restore "find"
-        processed_str = processed_str.replace("___FIND_KEYWORD___", "find")
-    else:
-        processed_str = DIGIT_LETTERS_REGEX.sub(implicit_mult_replacement, processed_str)
-
-    processed_str = re.sub(r"\s+", " ", processed_str).strip()
+    # Smart √ to sqrt() conversion
+    # Regex captures: √x -> sqrt(x), √(expr) -> sqrt(expr), √123 -> sqrt(123)
+    # Pattern: √ followed by (word | parens | number)
+    processed_str = SQRT_PATTERN.sub(r'sqrt(\1)', processed_str)
+    # Fallback for bare √ (unlikely but safe)
+    processed_str = processed_str.replace("√", "sqrt(")
+    
+    # Use Safe Tokenizer for robust structural transformation
+    # Handles: Implicit mult, Forbidden tokens, Syntax sugar (^, mod)
+    try:
+        from .tokenizer import transform_input
+        processed_str = transform_input(processed_str)
+    except Exception as e:
+        raise ValidationError(f"Parsing error: {str(e)}", "TOKENIZER_ERROR") from e
 
     # Apply sub-expression caching: replace cached sub-expressions with their values
     # This speeds up expressions like "(2+2)/2" by using cached "2+2" -> "4"
@@ -916,12 +567,11 @@ def preprocess(
 
         # Strategy: Find parenthesized sub-expressions and check cache
         # Process from innermost to outermost to handle nested expressions
-        paren_pattern = re.compile(r"\(([^()]+)\)")
         max_iterations = 10  # Prevent infinite loops
         iteration = 0
 
         while iteration < max_iterations:
-            matches = list(paren_pattern.finditer(processed_str))
+            matches = list(PAREN_PATTERN.finditer(processed_str))
             if not matches:
                 break  # No more parentheses
 
@@ -1630,3 +1280,4 @@ def expand_function_calls(expr_str: str) -> str:
     except Exception:
         # Any other error, return original
         return expr_str
+preprocess = preprocess_expression

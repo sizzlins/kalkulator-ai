@@ -56,14 +56,36 @@ def _detect_integer_patterns(X, y):
     seeds = []
     var_name = "x"
     
-    indices = []
-    for i, x_val in enumerate(x_flat):
-        if np.iscomplex(x_val) or (hasattr(x_val, 'imag') and abs(x_val.imag) > 1e-9): continue
-        try:
-            real_val = float(x_val.real if hasattr(x_val, 'real') else x_val)
-            if abs(real_val - round(real_val)) < 1e-9 and abs(real_val) > 1 and abs(real_val) < 10:
-                indices.append(i)
-        except: continue
+    
+    # Vectorized Candidate Search
+    # 1. Filter Non-Complex, Finite
+    try:
+        # Handle complex arrays - only consider points with Im(x) ~ 0
+        if np.iscomplexobj(x_flat):
+            real_mask = np.abs(np.imag(x_flat)) < 1e-9
+            # Keep indices aligned
+            candidate_indices = np.where(real_mask)[0]
+            x_real = np.real(x_flat[real_mask])
+        else:
+            x_real = x_flat
+            candidate_indices = np.arange(len(x_flat))
+            
+        if len(x_real) == 0: return []
+
+        # 2. Check for Integers
+        x_rounded = np.round(x_real)
+        is_int = np.abs(x_real - x_rounded) < 1e-9
+        
+        # 3. Check Range (|x| > 1 and |x| < 10)
+        abs_x = np.abs(x_real)
+        in_range = (abs_x > 1) & (abs_x < 10)
+        
+        # Combine masks
+        candidates = is_int & in_range
+        indices = candidate_indices[candidates]
+        
+    except Exception:
+        indices = []
     
     for i in indices[:5]:
         try:

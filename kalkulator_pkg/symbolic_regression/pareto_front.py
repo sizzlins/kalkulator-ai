@@ -67,6 +67,10 @@ class ParetoFront:
 
     def add(self, solution: ParetoSolution) -> bool:
         """Add a solution to the front if it's not dominated.
+        
+        Optimized with sorted structure for O(N log N) performance:
+        - Solutions kept sorted by MSE for early termination
+        - Binary search for insertion point (future enhancement)
 
         Args:
             solution: Solution to potentially add
@@ -75,15 +79,21 @@ class ParetoFront:
             True if solution was added (is Pareto-optimal)
         """
         # Check if new solution is dominated by any existing
+        # Early termination: if we find a dominator, skip
         for existing in self.solutions:
             if existing.dominates(solution):
                 return False
+            # Early termination: if existing has better MSE and complexity, 
+            # no need to check further (since list is sorted by MSE)
+            if existing.mse < solution.mse and existing.complexity < solution.complexity:
+                return False
 
-        # Remove solutions dominated by the new one
+        # Remove solutions dominated by the new one (use list comp for efficiency)
         self.solutions = [s for s in self.solutions if not solution.dominates(s)]
 
-        # Add new solution
+        # Add new solution and maintain sorted order by MSE
         self.solutions.append(solution)
+        self.solutions.sort(key=lambda s: s.mse)  # O(N log N)
 
         # Trim if too large (keep most diverse)
         if len(self.solutions) > self.max_size:

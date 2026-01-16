@@ -1,2 +1,2 @@
-DEBUG FIT: X shape=(128, 2) range=[-20, 20]
-DEBUG FIT: y shape=(128,) range=[-0.999, 1]
+DEBUG FIT: X shape=(36, 1) range=[1, 4.5]
+DEBUG FIT: y shape=(36,) range=[1.46, 2]

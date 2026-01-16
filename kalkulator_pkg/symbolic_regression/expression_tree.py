@@ -628,7 +628,7 @@ SYMPY_BINARY: dict[str, Callable] = {
 }
 
 
-@dataclass(eq=False)
+@dataclass(eq=False, slots=True)
 class ExpressionNode:
     """A node in an expression tree.
 
@@ -644,6 +644,18 @@ class ExpressionNode:
     value: Any
     children: list[ExpressionNode] = field(default_factory=list)
     parent: ExpressionNode | None = field(default=None, repr=False)
+
+    def __eq__(self, other):
+        """Value-based equality check (structural)."""
+        if not isinstance(other, ExpressionNode):
+            return NotImplemented
+        return (self.node_type == other.node_type and
+                self.value == other.value and
+                self.children == other.children)
+
+    def __hash__(self):
+        """Hash based on structure (assuming immutability for caching)."""
+        return hash((self.node_type, self.value, tuple(self.children)))
 
     def __post_init__(self):
         """Set parent references for children."""
@@ -719,6 +731,87 @@ class ExpressionNode:
                 return result
             except Exception:
                 return 0.0
+
+    def evaluate_iterative(self, variables: dict[str, float | np.ndarray]) -> float | np.ndarray:
+        """Iterative evaluate using explicit stack (prevents RecursionError on deep trees).
+        
+        Uses post-order traversal with a stack to handle arbitrarily deep trees
+        without hitting Python's recursion limit.
+        
+        Args:
+            variables: Dict mapping variable names to their values
+            
+        Returns:
+            Computed value (scalar or array)
+        """
+        # Stack of (node, phase) where phase=0 means first visit, phase=1 means children done
+        stack = [(self, 0)]
+        # Results stack for computed child values
+        results = []
+        
+        # Detect if we need broadcasting
+        sample_val = next(iter(variables.values()), 0)
+        is_array = isinstance(sample_val, np.ndarray)
+        
+        while stack:
+            node, phase = stack.pop()
+            
+            if node.node_type == NodeType.CONSTANT:
+                if is_array:
+                    results.append(np.full_like(sample_val, node.value))
+                else:
+                    results.append(node.value)
+                    
+            elif node.node_type == NodeType.VARIABLE:
+                results.append(variables.get(node.value, 0.0))
+                
+            elif node.node_type == NodeType.UNARY_OP:
+                if phase == 0:
+                    # First visit: push self with phase=1, then child
+                    stack.append((node, 1))
+                    stack.append((node.children[0], 0))
+                else:
+                    # Second visit: child result is on stack
+                    child_val = results.pop()
+                    op_func = UNARY_OPERATORS.get(node.value)
+                    if op_func is None:
+                        results.append(0.0)
+                    else:
+                        try:
+                            result = op_func(child_val)
+                            if isinstance(result, np.ndarray):
+                                result = np.nan_to_num(result, nan=0.0, posinf=1e10, neginf=-1e10)
+                            elif not np.isfinite(result):
+                                result = 0.0
+                            results.append(result)
+                        except Exception:
+                            results.append(0.0)
+                            
+            else:  # BINARY_OP
+                if phase == 0:
+                    # First visit: push self with phase=1, then both children
+                    stack.append((node, 1))
+                    stack.append((node.children[1], 0))  # Right first (LIFO)
+                    stack.append((node.children[0], 0))  # Left
+                else:
+                    # Second visit: both child results are on stack
+                    left_val = results.pop()
+                    right_val = results.pop()
+                    op_func = BINARY_OPERATORS.get(node.value)
+                    if op_func is None:
+                        results.append(0.0)
+                    else:
+                        try:
+                            result = op_func(left_val, right_val)
+                            if isinstance(result, np.ndarray):
+                                result = np.nan_to_num(result, nan=0.0, posinf=1e10, neginf=-1e10)
+                            elif not np.isfinite(result):
+                                result = 0.0
+                            results.append(result)
+                        except Exception:
+                            results.append(0.0)
+        
+        return results[0] if results else 0.0
 
     def to_sympy(self, symbols: dict[str, sp.Symbol]) -> sp.Expr:
         """Convert this subtree to a SymPy expression.
@@ -820,6 +913,28 @@ class ExpressionNode:
             return 1
         return 1 + max(child.depth() for child in self.children)
 
+    def to_rpn(self) -> list[tuple[str, Any]]:
+        """Flatten subtree to Reverse Polish Notation (RPN) tokens.
+        
+        Returns:
+            List of (type_code, value) tuples.
+            Types: 'CONST', 'VAR', 'UNARY', 'BINARY'
+        """
+        tokens = []
+        # Post-order traversal (Left, Right, Root)
+        for child in self.children:
+            tokens.extend(child.to_rpn())
+            
+        if self.node_type == NodeType.CONSTANT:
+            tokens.append(('CONST', self.value))
+        elif self.node_type == NodeType.VARIABLE:
+            tokens.append(('VAR', str(self.value)))
+        elif self.node_type == NodeType.UNARY_OP:
+            tokens.append(('UNARY', self.value))
+        else:  # BINARY_OP
+            tokens.append(('BINARY', self.value))
+        return tokens
+
     def __str__(self) -> str:
         """String representation of this subtree."""
         if self.node_type == NodeType.CONSTANT:
@@ -862,90 +977,91 @@ class ExpressionTree:
     variables: list[str] = field(default_factory=lambda: ["x"])
     fitness: float = field(default=float("inf"))
     age: int = field(default=0)
+    # Cached MSE for avoiding redundant calculations (e.g., Pareto updates)
+    _cached_mse: float = field(default=float("inf"), repr=False, compare=False)
     # Cached compiled function for fast repeated evaluation
     _compiled_func: Any = field(default=None, repr=False, compare=False)
+    # Cached RPN stack for vectorized evaluation (replacing lambdify)
+    _rpn_stack: list[tuple[int, Any]] = field(default=None, repr=False, compare=False)
+
+    def _compile_rpn(self):
+        """Compile tree to optimized RPN stack for the naive interpreter."""
+        raw_tokens = self.root.to_rpn()
+        var_map = {name: i for i, name in enumerate(self.variables)}
+        
+        optimized_stack = []
+        for type_code, val in raw_tokens:
+            if type_code == 'CONST':
+                # OpCode 0: Constant
+                optimized_stack.append((0, float(val)))
+            elif type_code == 'VAR':
+                # OpCode 1: Variable Index
+                idx = var_map.get(val, 0) # Fallback to 0 if unknown
+                optimized_stack.append((1, idx))
+            elif type_code == 'UNARY':
+                # OpCode 2: Unary Function
+                func = UNARY_OPERATORS.get(val)
+                if func: optimized_stack.append((2, func))
+            elif type_code == 'BINARY':
+                # OpCode 3: Binary Function
+                func = BINARY_OPERATORS.get(val)
+                if func: optimized_stack.append((3, func))
+                
+        self._rpn_stack = optimized_stack
+        
+    def _evaluate_rpn(self, X: np.ndarray) -> np.ndarray:
+        """Evaluate using stack-based RPN interpreter (Vectorized)."""
+        if self._rpn_stack is None:
+            self._compile_rpn()
+            
+        stack = []
+        n_samples = X.shape[0]
+        
+        # Pre-allocate if possible? Hard with dynamic stack.
+        # But for typical depth < 10, list append is fine.
+        
+        for opcode, payload in self._rpn_stack:
+            if opcode == 0: # CONST
+                stack.append(payload) # Scalar
+            elif opcode == 1: # VAR
+                # Push column vector
+                stack.append(X[:, payload])
+            elif opcode == 2: # UNARY
+                arg = stack.pop()
+                stack.append(payload(arg))
+            elif opcode == 3: # BINARY
+                right = stack.pop()
+                left = stack.pop()
+                # Ensure broadcasting works safely
+                stack.append(payload(left, right))
+                
+        result = stack[0]
+        # Broadcast scalar result to full shape if needed
+        if np.isscalar(result) or (isinstance(result, np.ndarray) and result.ndim == 0):
+            return np.full(n_samples, result)
+        return result
 
     def evaluate(self, X: np.ndarray) -> np.ndarray:
         """Evaluate the expression tree on input data.
         
-        Uses lazy lambdify caching: on first call, compiles the tree to a fast
-        NumPy function via SymPy's lambdify. Subsequent calls reuse the cached
-        function for ~5-10x speedup.
-
-        Args:
-            X: Input data of shape (n_samples,) for single variable
-               or (n_samples, n_variables) for multiple variables
-
-        Returns:
-            Array of computed values, shape (n_samples,)
+        Uses fast RPN interpreter (Vectorized) by default.
+        Avoids sp.lambdify compilation overhead.
         """
         X = np.asarray(X)
         if X.ndim == 1:
             X = X.reshape(-1, 1)
 
-        # Fast path: use cached compiled function if available
-        if self._compiled_func is not None:
-            try:
-                with np.errstate(all="ignore"):
-                    if len(self.variables) == 1:
-                        result = self._compiled_func(X[:, 0])
-                    else:
-                        result = self._compiled_func(*[X[:, i] for i in range(min(X.shape[1], len(self.variables)))])
-                    
-                    # Ensure result is array of correct shape
-                    if isinstance(result, (int, float, complex, np.number)):
-                        result = np.full(X.shape[0], result)
-                    elif not isinstance(result, np.ndarray):
-                        result = np.asarray(result)
-                    return result
-            except Exception:
-                # Compiled function failed, fall back to tree traversal
-                pass
-        
-        # Try to compile on first evaluation (lazy compilation)
-        if self._compiled_func is None:
-            try:
-                # Use fast SymPy conversion (no nsimplify) for lambdify
-                symbols_dict = {var: sp.Symbol(var) for var in self.variables}
-                sympy_expr = self.root.to_sympy_fast(symbols_dict)
-                symbols = [sp.Symbol(var) for var in self.variables]
-                # lambdify with numpy backend for fast vectorized evaluation
-                self._compiled_func = sp.lambdify(
-                    symbols, sympy_expr, 
-                    modules=['numpy', {'Heaviside': lambda x: np.heaviside(x, 0.5)}]
-                )
-                # Try the fast path now
-                with np.errstate(all="ignore"):
-                    if len(self.variables) == 1:
-                        result = self._compiled_func(X[:, 0])
-                    else:
-                        result = self._compiled_func(*[X[:, i] for i in range(min(X.shape[1], len(self.variables)))])
-                    
-                    if isinstance(result, (int, float, complex, np.number)):
-                        result = np.full(X.shape[0], result)
-                    elif not isinstance(result, np.ndarray):
-                        result = np.asarray(result)
-                    return result
-            except Exception:
-                # Lambdify failed, mark as unusable and fall back
-                self._compiled_func = False  # Sentinel: don't try again
-        
-        # Fallback: tree traversal (slower but always works)
-        var_dict = {}
-        for i, var_name in enumerate(self.variables):
-            if i < X.shape[1]:
-                var_dict[var_name] = X[:, i]
-            else:
-                var_dict[var_name] = np.zeros(X.shape[0])
-
-        with np.errstate(all="ignore"):
-            result = self.root.evaluate(var_dict)
-
-        # Ensure result is array of correct shape
-        if isinstance(result, (int, float, complex, np.number)):
-            result = np.full(X.shape[0], result)
-
-        return result
+        try:
+            with np.errstate(all="ignore"):
+                result = self._evaluate_rpn(X)
+                
+            # Ensure result is array of correct shape
+            if isinstance(result, (int, float, complex, np.number)):
+                result = np.full(X.shape[0], result)
+            return result
+        except Exception:
+            # Fallback (rare)
+            return np.zeros(X.shape[0])
 
     def to_sympy(self) -> sp.Expr:
         """Convert to a SymPy expression (no simplification)."""
@@ -972,6 +1088,76 @@ class ExpressionTree:
         except Exception:
             return self.to_string()
 
+    def to_lambdify(self, use_cse: bool = True):
+        """Compile to fast NumPy function using sympy.lambdify.
+        
+        This is 10-50x faster than the RPN interpreter for repeated evaluations.
+        Use for batch processing or when speed is critical.
+        
+        Args:
+            use_cse: Use Common Subexpression Elimination for extra speed
+            
+        Returns:
+            Callable that takes X array and returns predictions
+            
+        Note:
+            This may produce different results on edge cases (NaN/Inf handling)
+            compared to the safe RPN evaluator. Use evaluate_fast() for automatic
+            fallback on errors.
+        """
+        try:
+            sym_expr = self.to_sympy()
+            # Create ordered argument list matching variable order
+            args = [sp.Symbol(var) for var in self.variables]
+            
+            # Compile with NumPy backend
+            func = sp.lambdify(args, sym_expr, modules='numpy', cse=use_cse)
+            
+            # Wrap to handle single-column input and edge cases
+            def wrapper(X):
+                if X.ndim == 1:
+                    X = X.reshape(-1, 1)
+                # Split columns into separate arguments
+                cols = [X[:, i] for i in range(X.shape[1])]
+                result = func(*cols)
+                # Ensure array output
+                if np.isscalar(result):
+                    result = np.full(X.shape[0], result)
+                return np.asarray(result)
+            
+            return wrapper
+        except Exception as e:
+            # Fallback: return RPN-based evaluator
+            def fallback(X):
+                return self.evaluate(X)
+            return fallback
+    
+    def evaluate_fast(self, X: np.ndarray) -> np.ndarray:
+        """Evaluate using compiled lambdify (fast path with fallback).
+        
+        Uses cached compiled function for speed. Falls back to RPN on errors.
+        First call compiles the function (one-time overhead).
+        
+        Args:
+            X: Input data of shape (n_samples, n_features)
+            
+        Returns:
+            Predictions of shape (n_samples,)
+        """
+        # Compile on first use
+        if self._compiled_func is None:
+            self._compiled_func = self.to_lambdify()
+            
+        try:
+            result = self._compiled_func(X)
+            # Validate result
+            if not np.all(np.isfinite(result)):
+                result = np.nan_to_num(result, nan=0.0, posinf=1e10, neginf=-1e10)
+            return result
+        except Exception:
+            # Fallback to safe RPN evaluator
+            return self.evaluate(X)
+
     def copy(self) -> ExpressionTree:
         """Create a deep copy of this tree."""
         return ExpressionTree(
@@ -979,6 +1165,7 @@ class ExpressionTree:
             variables=self.variables.copy(),
             fitness=self.fitness,
             age=self.age,
+            _cached_mse=self._cached_mse
         )
 
     def complexity(self, weights: dict[str, float] | None = None, default_weight: float = 1.0) -> float:

@@ -29,6 +29,7 @@ license: mit
 - **Genetic Programming**: Evolves complex functional forms via mutation/crossover.
 - **Calculus**: Symbolic differentiation (`diff`) and integration (`integrate`).
 - **Agentic Discovery**: Intelligent feature selection logic.
+- **Equivalent Forms**: Visualizes multiple mathematical representations (Trig vs Rational) for the same function.
 
 ## 🏆 Trophy Case: Solved Functions
 
@@ -53,6 +54,7 @@ These demonstrate Kalkulator's ability to discover functions that defeat standar
 | `abs(x - round(x))`     | Triangle Wave           | Triangle wave detector (distance to nearest integer) |
 | `sin(x^2)`              | Chirp Signal            | Zero-crossing analysis finds accelerating frequency  |
 | `sign(x)`               | Signum Function         | Amplitude constant detector                          |
+| `cos(2*atan2(y, x+2))`  | Double Atan2            | Discovers Trig and Rational forms simultaneously     |
 
 ## Installation
 
@@ -126,6 +128,15 @@ MSE: 0, Complexity: 7.0
 ```
 >>> f(4)=2, f(27)=3, f(256)=4, find f(x)
 Discovered: f(x) = exp(LambertW(log(x)))
+```
+
+**Equivalent Forms (Trig vs Algebra)**
+
+```
+>>> altv f(...) ... # Complex 2D dataset
+📐 EQUIVALENT FORMS DISCOVERED (2 total):
+  → [1] cos(2*atan2(y,x+2)+2*atan2(x-2,y))
+  → [2] (16*y**2 - (x**2 + y**2 - 4)**2)/(16*y**2 + (x**2 + y**2 - 4)**2) (Singularities at 1 points)
 ```
 
 **Exponential Decay** (requires 3+ points)
