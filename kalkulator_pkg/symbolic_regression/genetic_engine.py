@@ -1533,8 +1533,8 @@ class GeneticSymbolicRegressor:
                     equivalent_forms.append(r)
         
         # Also check if there are other near-perfect seeds in the Pareto front
-        if hasattr(self, 'pareto_front') and self.pareto_front.front:
-            for sol in self.pareto_front.front:
+        if hasattr(self, 'pareto_front') and self.pareto_front.solutions:
+            for sol in self.pareto_front.solutions:
                 if sol.mse < 1e-9:
                     expr_str = str(sol.tree.to_sympy())
                     existing = [str(e['expression']) for e in equivalent_forms]
