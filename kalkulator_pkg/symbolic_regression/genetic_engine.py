@@ -1307,14 +1307,19 @@ class GeneticSymbolicRegressor:
                 'transform_back': lambda expr: f"exp({expr})"
             })
         
-        # Space 3: Inverse (only if y != 0)
-        y_nonzero_mask = np.abs(y) > 1e-10
-        if np.sum(y_nonzero_mask) > len(y) * 0.5:
+        # Space 3: Inverse (only if y != 0 and 1/y is reasonable)
+        # Prevent massive values (e.g. 1e20) which cause overflow hangs in evolution
+        with np.errstate(divide='ignore'):
+            y_inv_candidate = 1.0 / y
+            
+        y_inverse_mask = (np.abs(y) > 1e-6) & np.isfinite(y_inv_candidate) & (np.abs(y_inv_candidate) < 1e8)
+        
+        if np.sum(y_inverse_mask) > len(y) * 0.5:
             spaces.append({
                 'name': 'inverse',
-                'X': X[y_nonzero_mask],
-                'y': 1.0 / y[y_nonzero_mask],
-                'mask': y_nonzero_mask,
+                'X': X[y_inverse_mask],
+                'y': y_inv_candidate[y_inverse_mask],
+                'mask': y_inverse_mask,
                 'transform_back': lambda expr: f"1/({expr})"
             })
         
