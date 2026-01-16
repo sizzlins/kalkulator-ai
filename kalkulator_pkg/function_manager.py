@@ -2052,7 +2052,7 @@ def find_function_from_data(
             # --- RATIONAL ANALYSIS SVD (Poles Robust) ---
             # Try to solve P(x)/Q(x) = y using SVD on linearized form.
             # This handles poles like (x^2+10)/(x^2-10) correctly.
-            from .function_finder_advanced import solve_rational_function_svd
+            from .experimental.function_finder_advanced import solve_rational_function_svd
 
             X_data_svd = [
                 (
@@ -2234,7 +2234,7 @@ def find_function_from_data(
                     else:
                         # Try symbolic constant detection for 'a'
                         try:
-                            from .function_finder_advanced import (
+                            from .experimental.function_finder_advanced import (
                                 detect_symbolic_constant,
                             )
 
@@ -2256,7 +2256,7 @@ def find_function_from_data(
     # Check for simple relationships like y = A*e^(Bx) or y = A*x^B
     if n_params == 1:
         try:
-            from .function_finder_advanced import check_log_linear_transformations
+            from .experimental.function_finder_advanced import check_log_linear_transformations
 
             # Extract X and y data - evaluate symbolic constants
             # p[0] is a tuple/list of x values for this data point

@@ -2170,9 +2170,9 @@ def _handle_find_ode(text: str):
         
         # Import SINDy
         try:
-            from ..dynamics_discovery.sindy import SINDy, SINDyConfig
+            from ..experimental.dynamics_discovery.sindy import SINDy, SINDyConfig
         except ImportError:
-            print("Error: SINDy module not available (kalkulator_pkg.dynamics_discovery).")
+            print("Error: SINDy module not available (kalkulator_pkg.experimental.dynamics_discovery).")
             return
             
         # Run SINDy

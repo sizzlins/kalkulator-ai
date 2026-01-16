@@ -138,7 +138,9 @@ def run_single_benchmark(
     n_samples: int = 100,
     noise_std: float = 0.0,
     timeout: float = 60.0,
+    timeout: float = 60.0,
     verbose: bool = False,
+    seed: int | None = 42,
 ) -> BenchmarkResult:
     """Run benchmark on a single equation.
 
@@ -149,10 +151,16 @@ def run_single_benchmark(
         noise_std: Standard deviation of noise (relative to signal)
         timeout: Maximum time in seconds
         verbose: Print progress
-
-    Returns:
-        BenchmarkResult
+        seed: Random seed for reproducibility
     """
+    # Set seed for reproducibility
+    if seed is not None:
+        try:
+            import random
+            random.seed(seed)
+            np.random.seed(seed)
+        except Exception:
+            pass
     # Generate data
     X, y = equation.generate_data(n_samples=n_samples, noise_std=noise_std)
 
