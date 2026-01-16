@@ -314,6 +314,12 @@ def _detect_triangle_wave(X, y, verbose=False):
 def _detect_rapid_growth_poly(X, y, verbose=False):
     """Detect high-degree polynomials like 1 - x^8 via log-slope analysis."""
     seeds = []
+    
+    # 2025-01-16 Fix: Handle multivariate data (prevent broadcast error)
+    # This heuristic is designed for univariate analysis.
+    if X.ndim > 1 and X.shape[1] > 1:
+        return []
+
     # Filter for large values where x^n dominates
     mask = (np.abs(y) > 100) & (np.abs(X.flatten()) > 1.5)
     if np.sum(mask) < 3: return []
