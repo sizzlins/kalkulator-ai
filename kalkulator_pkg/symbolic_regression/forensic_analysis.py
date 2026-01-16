@@ -124,6 +124,97 @@ def _detect_chirp_patterns(X, y, variable_names=None, verbose=False): return []
 def _detect_newton_polynomial(X, y, variable_names=None, verbose=False): return []
 def _detect_sub_epsilon_patterns(X, y, variable_names=None, verbose=False): return []
 
+def _detect_bipolar_poles(X, y, variable_names=None, verbose=False):
+    """Detect bipolar coordinate patterns from singularities.
+    
+    Looks for poles where y becomes non-finite (AccumBounds, nan, inf).
+    For 2D data: generates atan(y/(x-pole)), atan((x-pole)/y), and
+    cos(k*(...)) wrapped versions for various multipliers k.
+    
+    This enables discovery of interference patterns like:
+        cos(16*(atan((x-2)/y) + atan(y/(x+2))))
+    """
+    if X.ndim == 1:
+        X = X.reshape(-1, 1)
+    
+    # Only for 2D functions
+    n_vars = X.shape[1]
+    if n_vars < 2:
+        return []
+    
+    seeds = []
+    
+    # Get variable names
+    if variable_names and len(variable_names) >= 2:
+        v0, v1 = variable_names[0], variable_names[1]
+    else:
+        v0, v1 = "x", "y"
+    
+    # Find rows with non-finite y (poles)
+    bad_mask = ~np.isfinite(y)
+    if not np.any(bad_mask):
+        return []
+    
+    # Analyze poles in first dimension (x)
+    bad_x_vals = X[bad_mask, 0]
+    if len(bad_x_vals) > 0:
+        # Find unique pole locations
+        unique_poles = np.unique(np.round(bad_x_vals, 6))
+        for pole in unique_poles:
+            if np.isfinite(pole) and abs(pole) < 100:
+                pole_int = int(pole) if pole == int(pole) else pole
+                # Generate atan seeds with this pole
+                if pole_int >= 0:
+                    seeds.append(f"atan({v1}/({v0}-{pole_int}))")  # atan(y/(x-pole))
+                    seeds.append(f"atan(({v0}-{pole_int})/{v1})")  # atan((x-pole)/y)
+                    seeds.append(f"atan({v1}/({v0}+{abs(pole_int)}))")  # atan(y/(x+pole))
+                else:
+                    seeds.append(f"atan({v1}/({v0}+{abs(pole_int)}))")
+                    seeds.append(f"atan(({v0}+{abs(pole_int)})/{v1})")
+    
+    # Analyze poles in second dimension (y)
+    bad_y_vals = X[bad_mask, 1]
+    if len(bad_y_vals) > 0:
+        unique_y_poles = np.unique(np.round(bad_y_vals, 6))
+        for pole in unique_y_poles:
+            if np.isfinite(pole) and abs(pole) < 100:
+                pole_int = int(pole) if pole == int(pole) else pole
+                if pole_int >= 0:
+                    seeds.append(f"atan({v0}/({v1}-{pole_int}))")
+                    seeds.append(f"atan(({v1}-{pole_int})/{v0})")
+                else:
+                    seeds.append(f"atan({v0}/({v1}+{abs(pole_int)}))")
+                    seeds.append(f"atan(({v1}+{abs(pole_int)})/{v0})")
+    
+    # Check if output is bounded (suggests cos/sin wrapper)
+    y_finite = y[np.isfinite(y)]
+    if len(y_finite) > 0:
+        y_min, y_max = np.min(y_finite), np.max(y_finite)
+        is_bounded = -1.5 < y_min < -0.5 and 0.5 < y_max < 1.5
+        
+        if is_bounded and len(seeds) > 0:
+            # Generate cos(k*...) wrapped versions for various multipliers
+            wrapped = []
+            base_seeds = seeds.copy()
+            for multiplier in [2, 4, 8, 16]:  # Common angular multipliers
+                for seed in base_seeds[:4]:  # Only wrap first few
+                    wrapped.append(f"cos({multiplier}*{seed})")
+                    wrapped.append(f"sin({multiplier}*{seed})")
+            
+            # Also try sums of atans for bipolar patterns
+            if len(base_seeds) >= 2:
+                for k in [8, 16]:
+                    # atan1 + atan2 pattern (bipolar interference)
+                    wrapped.append(f"cos({k}*({base_seeds[0]}+{base_seeds[1]}))")
+                    wrapped.append(f"cos({k}*({base_seeds[0]}-{base_seeds[1]}))")
+            
+            seeds.extend(wrapped)
+    
+    if verbose and seeds:
+        print(f"  -> Bipolar poles detected, generated {len(seeds)} atan-based seeds")
+    
+    return list(set(seeds))  # Remove duplicates
+
 def _detect_power_peeling(X, y):
     """Detect if y = Base(x)^x via Rational Analysis on y^(1/x)."""
     # Skip for multivariate data - this is a 1D-only heuristic
@@ -399,6 +490,15 @@ def generate_pattern_seeds(X, y, variable_names=None, verbose=False):
             seeds.extend(triangle_seeds)
     except Exception as e:
         if verbose: print(f"  -> Triangle Wave error: {e}")
+
+    # 4. Bipolar Coordinate Detection (NEW)
+    # For 2D functions with poles, generate atan-based seeds
+    try:
+        bipolar_seeds = _detect_bipolar_poles(X, y, variable_names=derived_vars, verbose=verbose)
+        if bipolar_seeds:
+            seeds.extend(bipolar_seeds)
+    except Exception as e:
+        if verbose: print(f"  -> Bipolar detection error: {e}")
 
     # 1.5 Peeling Heuristic (Inverse Composition)
     # Check if peeling off an outer function reveals a simple integer pattern

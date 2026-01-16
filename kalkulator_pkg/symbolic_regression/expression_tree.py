@@ -547,6 +547,9 @@ UNARY_OPERATORS: dict[str, Callable[[float], float]] = {
     "heaviside": safe_heaviside,    # Step function (0 for x<0, 1 for x>0)
     "fibonacci": safe_fibonacci,
     "lucas": safe_lucas,
+    "atan": np.arctan,           # Arctangent (bipolar coordinates)
+    "asin": np.arcsin,           # Arcsine
+    "acos": np.arccos,           # Arccosine
 }
 
 BINARY_OPERATORS: dict[str, Callable[[float, float], float]] = {
@@ -563,6 +566,7 @@ BINARY_OPERATORS: dict[str, Callable[[float, float], float]] = {
     "lshift": np.vectorize(safe_lshift),
     "rshift": np.vectorize(safe_rshift),
     "mod": safe_mod,                # Modulo operation
+    "atan2": np.arctan2,             # Two-argument arctangent (bipolar coordinates)
 }
 
 # SymPy equivalents for symbolic conversion
@@ -600,6 +604,9 @@ SYMPY_UNARY = {
     "heaviside": lambda x: sp.Heaviside(x, sp.Rational(1, 2)),
     "fibonacci": sp.fibonacci,
     "lucas": sp.lucas,
+    "atan": sp.atan,
+    "asin": sp.asin,
+    "acos": sp.acos,
 }
 
 SYMPY_BINARY: dict[str, Callable] = {
@@ -617,6 +624,7 @@ SYMPY_BINARY: dict[str, Callable] = {
     "lshift": sp.Function("lshift"),
     "rshift": sp.Function("rshift"),
     "mod": sp.Mod,
+    "atan2": sp.atan2,
 }
 
 
