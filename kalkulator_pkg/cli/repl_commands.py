@@ -1388,7 +1388,8 @@ def _handle_evolve(text, variables=None):
             if len(y) >= 10:
                 is_even, _ = check_even_spacing(X[:, 0])
                 # Also allow approximately even spacing
-                if is_even or len(y) >= 15:
+                # Only run ODE discovery for 1D functions
+                if X.shape[1] == 1 and (is_even or len(y) >= 15):
                     ode_config = ODEConfig(
                         population_size=100,
                         generations=20,
