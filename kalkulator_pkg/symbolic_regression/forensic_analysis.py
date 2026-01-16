@@ -171,6 +171,16 @@ def _detect_bipolar_poles(X, y, variable_names=None, verbose=False):
                 else:
                     seeds.append(f"atan({v1}/({v0}+{abs(pole_int)}))")
                     seeds.append(f"atan(({v0}+{abs(pole_int)})/{v1})")
+                    
+                # Complementary pole: if we found -2, also try +2 (hidden pole)
+                comp_pole = -pole_int
+                if abs(comp_pole) < 100:
+                    if comp_pole >= 0:
+                        seeds.append(f"atan({v1}/({v0}-{comp_pole}))")
+                        seeds.append(f"atan(({v0}-{comp_pole})/{v1})")
+                    else:
+                        seeds.append(f"atan({v1}/({v0}+{abs(comp_pole)}))")
+                        seeds.append(f"atan(({v0}+{abs(comp_pole)})/{v1})")
     
     # Analyze poles in second dimension (y)
     bad_y_vals = X[bad_mask, 1]
@@ -197,14 +207,21 @@ def _detect_bipolar_poles(X, y, variable_names=None, verbose=False):
             wrapped = []
             base_seeds = seeds.copy()
             for multiplier in [2, 4, 8, 16]:  # Common angular multipliers
-                for seed in base_seeds[:4]:  # Only wrap first few
+                for seed in base_seeds[:6]:  # Wrap first 6 base seeds
                     wrapped.append(f"cos({multiplier}*{seed})")
                     wrapped.append(f"sin({multiplier}*{seed})")
             
-            # Also try sums of atans for bipolar patterns
+            # EXPLICIT bipolar combinations: atan(y/(x+a)) + atan((x-a)/y)
+            # This is the key pattern for interference functions
+            for a in [2, 3, 4]:  # Common pole separations
+                for k in [4, 8, 16, 32]:
+                    wrapped.append(f"cos({k}*(atan({v1}/({v0}+{a}))+atan(({v0}-{a})/{v1})))")
+                    wrapped.append(f"cos({k}*(atan({v1}/({v0}-{a}))+atan(({v0}+{a})/{v1})))")
+                    wrapped.append(f"cos({k}*(atan({v1}/({v0}+{a}))-atan(({v0}-{a})/{v1})))")
+            
+            # Also try sums of detected atans for bipolar patterns
             if len(base_seeds) >= 2:
                 for k in [8, 16]:
-                    # atan1 + atan2 pattern (bipolar interference)
                     wrapped.append(f"cos({k}*({base_seeds[0]}+{base_seeds[1]}))")
                     wrapped.append(f"cos({k}*({base_seeds[0]}-{base_seeds[1]}))")
             
