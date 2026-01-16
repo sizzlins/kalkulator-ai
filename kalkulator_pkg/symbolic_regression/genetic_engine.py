@@ -1569,11 +1569,9 @@ class GeneticSymbolicRegressor:
                 X_check = self._last_X
                 y_check = self._last_y
             if X_check is not None and y_check is not None:
-                for seed_str in self._last_seeds[:100]:  # Check first 100 seeds
+                # Check ALL seeds (rational seeds may be late in the list)
+                for seed_str in self._last_seeds:
                     try:
-                        seed_expr = str(seed_str)
-                        if seed_expr in [str(e['expression']) for e in equivalent_forms]:
-                            continue
                         # Try to evaluate this seed
                         from .expression_tree import ExpressionTree
                         import sympy as sp
@@ -1584,6 +1582,16 @@ class GeneticSymbolicRegressor:
                             'abs': sp.Abs, 'Abs': sp.Abs,
                         }
                         parsed = sp.sympify(seed_str, locals=local_dict)
+                        
+                        # Use simplified form for duplicate detection (ignore spacing)
+                        simplified = sp.simplify(parsed)
+                        existing_simplified = [sp.simplify(e['expression']) for e in equivalent_forms]
+                        
+                        # Check if already exists 
+                        is_duplicate = any(sp.simplify(simplified - ex) == 0 for ex in existing_simplified)
+                        if is_duplicate:
+                            continue
+                            
                         tree = ExpressionTree.from_sympy(parsed, self._last_var_names)
                         preds = tree.evaluate(X_check)
                         if np.all(np.isfinite(preds)):
