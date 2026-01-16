@@ -1606,12 +1606,15 @@ class GeneticSymbolicRegressor:
                         n_valid = np.sum(valid_mask)
                         
                         if n_valid < 0.9 * len(preds):
-                            continue 
-                            
+                            continue                        # Compute MSE on valid points only
                         mse = float(np.mean((preds[valid_mask] - y_check[valid_mask]) ** 2))
                         
+                        # DEBUG: Print rational seeds for inspection
+                        if '/' in str(parsed) and self.config.verbose:
+                            print(f"[DEBUG] Checked Rational Seed: {str(parsed)[:50]}... MSE={mse:.2e} (Valid={n_valid}/{len(preds)})")
+
                         if mse < 1e-9:
-                            # Robust duplicate check
+                            # 2. Candidate found! NOW check for duplicates using robust logic
                             is_duplicate = False
                             norm_parsed = normalize_expr(parsed)
                             
