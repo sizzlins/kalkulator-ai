@@ -1569,18 +1569,40 @@ class GeneticSymbolicRegressor:
                 X_check = self._last_X
                 y_check = self._last_y
             if X_check is not None and y_check is not None:
-                # Track expressions we've seen (normalized strings)
+                # Track expressions we've seen (normalized via SymPy str)
                 seen_exprs = set()
-                for eq in equivalent_forms:
-                    # Normalize: remove spaces for comparison
-                    seen_exprs.add(str(eq['expression']).replace(' ', ''))
                 
-                # Check seeds (limit to 50 to avoid hanging on large seed lists)
-                # Prioritize rational seeds which are typically at the end
-                seeds_to_check = self._last_seeds[:30] + self._last_seeds[-20:]
-                for seed_str in seeds_to_check:
+                # Helper to normalize expressions
+                def normalize_expr(expr_obj_or_str):
                     try:
-                        # Try to evaluate this seed
+                        s = str(expr_obj_or_str)
+                        # Quick string normalization first
+                        s_basic = s.replace(' ', '')
+                        # Try SymPy normalization if possible (more robust)
+                        import sympy as sp
+                        local_dict = {
+                            'x': sp.Symbol('x'), 'y': sp.Symbol('y'),
+                            'atan': sp.atan, 'atan2': sp.atan2, 'cos': sp.cos, 'sin': sp.sin,
+                            'tan': sp.tan, 'exp': sp.exp, 'log': sp.log, 'sqrt': sp.sqrt,
+                            'abs': sp.Abs, 'Abs': sp.Abs,
+                        }
+                        # Use evaluate=False to preserve structure but normalize printing
+                        return str(sp.sympify(s, locals=local_dict))
+                    except:
+                        # Fallback to basic string normalization
+                        return s.replace(' ', '')
+
+                for eq in equivalent_forms:
+                    seen_exprs.add(normalize_expr(eq['expression']))
+                
+                # Check ALL seeds (no limit)
+                for seed_str in self._last_seeds:
+                    try:
+                        # Fast pre-check with basic string normalization
+                        if str(seed_str).replace(' ', '') in [s.replace(' ', '') for s in seen_exprs]:
+                            continue
+
+                        # Parse and clean check
                         from .expression_tree import ExpressionTree
                         import sympy as sp
                         local_dict = {
@@ -1591,9 +1613,9 @@ class GeneticSymbolicRegressor:
                         }
                         parsed = sp.sympify(seed_str, locals=local_dict)
                         
-                        # Fast duplicate check (normalize by removing spaces)
-                        expr_normalized = str(parsed).replace(' ', '')
-                        if expr_normalized in seen_exprs:
+                        # Check normalized against seen
+                        norm = str(parsed)
+                        if norm in seen_exprs:
                             continue
                             
                         tree = ExpressionTree.from_sympy(parsed, self._last_var_names)
@@ -1601,7 +1623,7 @@ class GeneticSymbolicRegressor:
                         if np.all(np.isfinite(preds)):
                             mse = float(np.mean((preds - y_check) ** 2))
                             if mse < 1e-9:
-                                seen_exprs.add(expr_normalized)
+                                seen_exprs.add(norm)
                                 equivalent_forms.append({
                                     'space': 'seed',
                                     'expression': parsed,
