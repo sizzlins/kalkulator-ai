@@ -573,7 +573,16 @@ class GeneticSymbolicRegressor:
                 try:
                     import sympy as sp
 
+                    # Include variable symbols AND function names for seed parsing
                     local_dict = {v: sp.Symbol(v) for v in variables}
+                    # Add trig functions for bipolar coordinate patterns
+                    local_dict.update({
+                        'atan': sp.atan, 'asin': sp.asin, 'acos': sp.acos,
+                        'cos': sp.cos, 'sin': sp.sin, 'tan': sp.tan,
+                        'exp': sp.exp, 'log': sp.log, 'sqrt': sp.sqrt,
+                        'abs': sp.Abs, 'floor': sp.floor, 'ceil': sp.ceiling,
+                        'atan2': sp.atan2,
+                    })
                     expr = sp.sympify(seed_str, locals=local_dict)
                     tree = ExpressionTree.from_sympy(expr, variables)
                     tree.age = 0
