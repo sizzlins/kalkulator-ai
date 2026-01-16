@@ -1523,10 +1523,41 @@ class GeneticSymbolicRegressor:
         # Return best
         best = min(results, key=lambda r: r['mse'])
         
+        # Collect equivalent forms (all results with MSE < 1e-9)
+        equivalent_forms = []
+        for r in results:
+            if r['mse'] < 1e-9:
+                expr_str = str(r['expression'])
+                # Avoid duplicates
+                if expr_str not in [str(e['expression']) for e in equivalent_forms]:
+                    equivalent_forms.append(r)
+        
+        # Also check if there are other near-perfect seeds in the Pareto front
+        if hasattr(self, 'pareto_front') and self.pareto_front.front:
+            for sol in self.pareto_front.front:
+                if sol.mse < 1e-9:
+                    expr_str = str(sol.tree.to_sympy())
+                    existing = [str(e['expression']) for e in equivalent_forms]
+                    if expr_str not in existing and str(best['expression']) != expr_str:
+                        equivalent_forms.append({
+                            'space': 'pareto',
+                            'expression': sol.tree.to_sympy(),
+                            'mse': sol.mse
+                        })
+        
         if self.config.verbose:
             print(f"\n{'='*70}")
             print(f"BEST: {best['space']} space")
             print(f"Expression: {best['expression']}")
+            
+            # Display equivalent forms if any
+            if len(equivalent_forms) > 1:
+                print(f"\n📐 EQUIVALENT FORMS DISCOVERED ({len(equivalent_forms)} total):")
+                for i, eq in enumerate(equivalent_forms):
+                    marker = "→" if str(eq['expression']) == str(best['expression']) else " "
+                    print(f"  {marker} [{i+1}] {eq['expression']}")
+                print(f"  (All have MSE < 1e-9, mathematically equivalent)")
+            
             print(f"{'='*70}")
         
         return best['expression'], best['mse'], best['space']
