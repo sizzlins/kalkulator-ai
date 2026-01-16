@@ -1569,8 +1569,16 @@ class GeneticSymbolicRegressor:
                 X_check = self._last_X
                 y_check = self._last_y
             if X_check is not None and y_check is not None:
-                # Check ALL seeds (rational seeds may be late in the list)
-                for seed_str in self._last_seeds:
+                # Track expressions we've seen (normalized strings)
+                seen_exprs = set()
+                for eq in equivalent_forms:
+                    # Normalize: remove spaces for comparison
+                    seen_exprs.add(str(eq['expression']).replace(' ', ''))
+                
+                # Check seeds (limit to 50 to avoid hanging on large seed lists)
+                # Prioritize rational seeds which are typically at the end
+                seeds_to_check = self._last_seeds[:30] + self._last_seeds[-20:]
+                for seed_str in seeds_to_check:
                     try:
                         # Try to evaluate this seed
                         from .expression_tree import ExpressionTree
@@ -1583,13 +1591,9 @@ class GeneticSymbolicRegressor:
                         }
                         parsed = sp.sympify(seed_str, locals=local_dict)
                         
-                        # Use simplified form for duplicate detection (ignore spacing)
-                        simplified = sp.simplify(parsed)
-                        existing_simplified = [sp.simplify(e['expression']) for e in equivalent_forms]
-                        
-                        # Check if already exists 
-                        is_duplicate = any(sp.simplify(simplified - ex) == 0 for ex in existing_simplified)
-                        if is_duplicate:
+                        # Fast duplicate check (normalize by removing spaces)
+                        expr_normalized = str(parsed).replace(' ', '')
+                        if expr_normalized in seen_exprs:
                             continue
                             
                         tree = ExpressionTree.from_sympy(parsed, self._last_var_names)
@@ -1597,6 +1601,7 @@ class GeneticSymbolicRegressor:
                         if np.all(np.isfinite(preds)):
                             mse = float(np.mean((preds - y_check) ** 2))
                             if mse < 1e-9:
+                                seen_exprs.add(expr_normalized)
                                 equivalent_forms.append({
                                     'space': 'seed',
                                     'expression': parsed,
