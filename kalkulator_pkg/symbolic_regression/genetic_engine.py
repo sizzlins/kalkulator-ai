@@ -1609,26 +1609,14 @@ class GeneticSymbolicRegressor:
                             continue                        # Compute MSE on valid points only
                         mse = float(np.mean((preds[valid_mask] - y_check[valid_mask]) ** 2))
                         
-                        # DEBUG: Print rational seeds for inspection
-                        if '/' in str(parsed) and self.config.verbose:
-                            print(f"[DEBUG] Checked Rational Seed: {str(parsed)[:50]}... MSE={mse:.2e} (Valid={n_valid}/{len(preds)})")
-
                         if mse < 1e-9:
-                            # 2. Candidate found! NOW check for duplicates using robust logic
+                            # 2. Candidate found! Check for string duplicates only
+                            # We WANT to show mathematically equivalent forms if they look different (e.g. Rational vs Trig)
                             is_duplicate = False
                             norm_parsed = normalize_expr(parsed)
                             
                             if norm_parsed in seen_exprs:
                                 is_duplicate = True
-                            else:
-                                simplified_candidate = sp.simplify(parsed)
-                                for existing in equivalent_forms:
-                                    try:
-                                        if sp.simplify(simplified_candidate - sp.simplify(existing['expression'])) == 0:
-                                            is_duplicate = True
-                                            seen_exprs.add(norm_parsed) # Mark as seen to avoid re-check
-                                            break
-                                    except: pass
                             
                             if not is_duplicate:
                                 seen_exprs.add(norm_parsed)
@@ -1637,11 +1625,13 @@ class GeneticSymbolicRegressor:
                                     'expression': parsed,
                                     'mse': mse
                                 }
+                                # Tag singular solutions
                                 if n_valid < len(preds):
                                     entry['note'] = f"(Singularities at {len(preds)-n_valid} points)"
                                 equivalent_forms.append(entry)
-                    except:
-                        pass
+                                
+                    except Exception:
+                        pass  # Skip failed seeds
         
         if self.config.verbose:
             print(f"\n{'='*70}")
