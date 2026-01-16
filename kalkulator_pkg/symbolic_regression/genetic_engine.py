@@ -1022,6 +1022,12 @@ class GeneticSymbolicRegressor:
         
         # Prepare seeds (Normalize if needed)
         eff_seeds = self.config.seeds
+        
+        # Store for equivalent forms checking later
+        self._last_seeds = eff_seeds or []
+        self._last_X = X_train.copy() if X_train is not None else None
+        self._last_y = y_train.copy() if y_train is not None else None
+        self._last_var_names = variable_names
         if self._normalization and eff_seeds:
             y_min, y_scale = self._normalization
             new_seeds = []
@@ -1544,6 +1550,44 @@ class GeneticSymbolicRegressor:
                             'expression': sol.tree.to_sympy(),
                             'mse': sol.mse
                         })
+        
+        # When perfect solution found, check if other seeds also match perfectly
+        # This helps find algebraic alternatives to trigonometric forms
+        if best['mse'] < 1e-9 and hasattr(self, '_last_seeds'):
+            X_check = results[0].get('X', None) if results else None
+            y_check = results[0].get('y', None) if results else None
+            # Get original X, y from the direct space evolution
+            if X_check is None and hasattr(self, '_last_X'):
+                X_check = self._last_X
+                y_check = self._last_y
+            if X_check is not None and y_check is not None:
+                for seed_str in self._last_seeds[:100]:  # Check first 100 seeds
+                    try:
+                        seed_expr = str(seed_str)
+                        if seed_expr in [str(e['expression']) for e in equivalent_forms]:
+                            continue
+                        # Try to evaluate this seed
+                        from .expression_tree import ExpressionTree
+                        import sympy as sp
+                        local_dict = {
+                            'x': sp.Symbol('x'), 'y': sp.Symbol('y'),
+                            'atan': sp.atan, 'atan2': sp.atan2, 'cos': sp.cos, 'sin': sp.sin,
+                            'tan': sp.tan, 'exp': sp.exp, 'log': sp.log, 'sqrt': sp.sqrt,
+                            'abs': sp.Abs, 'Abs': sp.Abs,
+                        }
+                        parsed = sp.sympify(seed_str, locals=local_dict)
+                        tree = ExpressionTree.from_sympy(parsed, self._last_var_names)
+                        preds = tree.evaluate(X_check)
+                        if np.all(np.isfinite(preds)):
+                            mse = float(np.mean((preds - y_check) ** 2))
+                            if mse < 1e-9:
+                                equivalent_forms.append({
+                                    'space': 'seed',
+                                    'expression': parsed,
+                                    'mse': mse
+                                })
+                    except:
+                        pass  # Skip seeds that can't be evaluated
         
         if self.config.verbose:
             print(f"\n{'='*70}")
