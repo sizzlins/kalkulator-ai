@@ -26,9 +26,7 @@ from ..function_manager import load_functions
 from ..function_manager import save_functions
 from ..solver.dispatch import solve_single_equation
 from ..symbolic_regression import GeneticConfig, GeneticSymbolicRegressor
-from ..symbolic_regression.expression_tree import symbolify_constants
 from ..utils.formatting import format_solution
-from ..utils.formatting import print_result_pretty
 from ..utils.formatting import print_result_pretty
 from ..worker import clear_caches
 from ..symbolic_regression.forensic_analysis import generate_pattern_seeds
@@ -389,6 +387,9 @@ def _handle_benchmark(text: str):
 # [Orphaned definitions deleted]
 def _handle_evolve(text, variables=None):
     """Handle the 'evolve' command for genetic symbolic regression."""
+    # Local import to resolve circular/scoping issues with IDE
+    from ..symbolic_regression.expression_tree import symbolify_constants
+    
     try:
         # SHORTCUT COMMANDS: Expand to full evolve syntax
         text_lower = text.lower().strip()
