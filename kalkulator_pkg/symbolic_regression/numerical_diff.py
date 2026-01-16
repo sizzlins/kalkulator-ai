@@ -10,6 +10,7 @@ Key Functions:
 """
 
 import numpy as np
+import warnings
 
 
 def check_even_spacing(x: np.ndarray, tolerance: float = 1e-6) -> tuple[bool, float]:

@@ -126,6 +126,10 @@ def _detect_sub_epsilon_patterns(X, y, variable_names=None, verbose=False): retu
 
 def _detect_power_peeling(X, y):
     """Detect if y = Base(x)^x via Rational Analysis on y^(1/x)."""
+    # Skip for multivariate data - this is a 1D-only heuristic
+    if X.ndim > 1 and X.shape[1] > 1:
+        return []
+
     # 1. Compute z = y^(1/x)
     # Filter to valid points where calculation is possible
     valid_points = []

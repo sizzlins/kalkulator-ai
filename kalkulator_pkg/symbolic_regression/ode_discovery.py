@@ -11,6 +11,7 @@ This allows the engine to "rediscover trigonometry" from first principles.
 
 import numpy as np
 import sympy as sp
+import warnings
 from dataclasses import dataclass, field
 
 from .numerical_diff import compute_derivatives, resample_to_even_spacing, check_even_spacing
