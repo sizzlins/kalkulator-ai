@@ -6,7 +6,7 @@ from .genetic_config import GeneticConfig
 from .expression_tree import ExpressionTree, UNARY_OPERATORS, BINARY_OPERATORS
 from .operators import (
     crossover, point_mutation, hoist_mutation, shrink_mutation, 
-    constant_optimization
+    optimize_constants_bfgs
 )
 from .constant_anchors import detect_anchors, generate_hypotheses
 
@@ -90,8 +90,8 @@ class EvolutionStrategy:
             if expr_str.count("**") > self.config.max_nested_powers:
                 return float("inf")
 
-            # 2. Evaluation
-            predictions = tree.evaluate(X)
+            # 2. Evaluation (using fast compiled path with fallback)
+            predictions = tree.evaluate_fast(X)
             if not np.all(np.isfinite(predictions)):
                 return float("inf")
 
@@ -201,11 +201,11 @@ class EvolutionStrategy:
                 child.age = 0
                 new_pop.append(child)
                 
-        # 4. Constant Optimization (Stochastic Hill Climbing)
+        # 4. Constant Optimization (BFGS - fast gradient-based)
         if random.random() < self.config.constant_optimization_rate:
             idx = random.randrange(len(new_pop))
-            new_pop[idx] = constant_optimization(
-                new_pop[idx], X, y, learning_rate=0.1, iterations=2
+            new_pop[idx] = optimize_constants_bfgs(
+                new_pop[idx], X, y, max_iter=10
             )
             
         return new_pop
