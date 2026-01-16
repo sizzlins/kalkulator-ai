@@ -124,6 +124,78 @@ def _detect_chirp_patterns(X, y, variable_names=None, verbose=False): return []
 def _detect_newton_polynomial(X, y, variable_names=None, verbose=False): return []
 def _detect_sub_epsilon_patterns(X, y, variable_names=None, verbose=False): return []
 
+def _detect_rational_form(X, y, variable_names=None, verbose=False):
+    """Detect if outputs are simple fractions, suggesting a rational function.
+    
+    If outputs like 0.28 (7/25), 0.6 (3/5), 1 (1/1) are detected,
+    generates polynomial ratio seeds like:
+        (a*x² + b*y² + c) / (d*x² + e*y² + f)
+        (A - B²) / (A + B²) where A, B are polynomials
+    
+    This enables discovery of rational forms equivalent to trig expressions.
+    """
+    if X.ndim == 1:
+        X = X.reshape(-1, 1)
+    
+    n_vars = X.shape[1]
+    if n_vars < 2:
+        return []
+    
+    seeds = []
+    
+    # Get variable names
+    if variable_names and len(variable_names) >= 2:
+        v0, v1 = variable_names[0], variable_names[1]
+    else:
+        v0, v1 = "x", "y"
+    
+    # Check if outputs look like simple fractions
+    y_finite = y[np.isfinite(y)]
+    if len(y_finite) < 5:
+        return []
+    
+    # Count how many outputs are close to simple fractions (p/q with q <= 100)
+    fraction_count = 0
+    for val in y_finite[:50]:  # Sample first 50 points
+        if abs(val) > 10:  # Skip large values
+            continue
+        # Try to find a simple fraction approximation
+        for q in range(1, 101):
+            p = round(val * q)
+            if abs(val - p/q) < 1e-9:
+                fraction_count += 1
+                break
+    
+    fraction_ratio = fraction_count / min(len(y_finite), 50)
+    
+    # If >50% of outputs are simple fractions, generate rational seeds
+    if fraction_ratio > 0.5:
+        if verbose:
+            print(f"  -> Rational form suspected ({fraction_ratio*100:.0f}% simple fractions)")
+        
+        # Generate polynomial ratio seeds
+        # Pattern: (A - B²) / (A + B²) - common in angle-based functions
+        for coef in [4, 16]:  # Different scaling factors
+            # (coef*y² - (x²+y²-coef)²) / (coef*y² + (x²+y²-coef)²)
+            A = f"{coef}*{v1}**2"
+            B = f"({v0}**2+{v1}**2-{coef})"
+            seeds.append(f"({A}-{B}**2)/({A}+{B}**2)")
+            seeds.append(f"({A}-{B}**2)/({A}+{B}**2+1)")  # Offset variant
+            
+            # Also try with absolute values for stability
+            seeds.append(f"({A}-abs({B})**2)/({A}+abs({B})**2)")
+        
+        # Simpler quadratic ratios
+        seeds.append(f"({v0}**2-{v1}**2)/({v0}**2+{v1}**2)")  # Hyperbolic-like
+        seeds.append(f"(4*{v1}**2-{v0}**2)/(4*{v1}**2+{v0}**2)")  # Scaled
+        seeds.append(f"({v0}*{v1})/({v0}**2+{v1}**2)")  # Product ratio
+        
+        # Distance-based ratios (inspired by bipolar coordinates)
+        for a in [2, 4]:
+            seeds.append(f"(({v0}-{a})**2+{v1}**2-({v0}+{a})**2-{v1}**2)/(({v0}-{a})**2+{v1}**2+({v0}+{a})**2+{v1}**2)")
+    
+    return seeds
+
 def _detect_bipolar_poles(X, y, variable_names=None, verbose=False):
     """Detect bipolar coordinate patterns from singularities.
     
@@ -520,6 +592,15 @@ def generate_pattern_seeds(X, y, variable_names=None, verbose=False):
             seeds.extend(bipolar_seeds)
     except Exception as e:
         if verbose: print(f"  -> Bipolar detection error: {e}")
+
+    # 5. Rational Form Detection (NEW)
+    # If outputs are simple fractions, generate polynomial ratio seeds
+    try:
+        rational_seeds = _detect_rational_form(X, y, variable_names=derived_vars, verbose=verbose)
+        if rational_seeds:
+            seeds.extend(rational_seeds)
+    except Exception as e:
+        if verbose: print(f"  -> Rational form detection error: {e}")
 
     # 1.5 Peeling Heuristic (Inverse Composition)
     # Check if peeling off an outer function reveals a simple integer pattern
