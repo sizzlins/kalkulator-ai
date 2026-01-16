@@ -211,13 +211,17 @@ def _detect_bipolar_poles(X, y, variable_names=None, verbose=False):
                     wrapped.append(f"cos({multiplier}*{seed})")
                     wrapped.append(f"sin({multiplier}*{seed})")
             
-            # EXPLICIT bipolar combinations: atan(y/(x+a)) + atan((x-a)/y)
-            # This is the key pattern for interference functions
+            # EXPLICIT bipolar combinations using atan2 to avoid division by zero
+            # atan2(a, b) = atan(a/b) but handles b=0 gracefully
+            # Pattern: cos(k*(atan2(y, x+a) + atan2(x-a, y)))
             for a in [2, 3, 4]:  # Common pole separations
                 for k in [4, 8, 16, 32]:
+                    # Using atan2 for division-free evaluation
+                    wrapped.append(f"cos({k}*(atan2({v1},{v0}+{a})+atan2({v0}-{a},{v1})))")
+                    wrapped.append(f"cos({k}*(atan2({v1},{v0}-{a})+atan2({v0}+{a},{v1})))")
+                    wrapped.append(f"cos({k}*(atan2({v1},{v0}+{a})-atan2({v0}-{a},{v1})))")
+                    # Also keep atan versions for cases where y≠0 (better simplification)
                     wrapped.append(f"cos({k}*(atan({v1}/({v0}+{a}))+atan(({v0}-{a})/{v1})))")
-                    wrapped.append(f"cos({k}*(atan({v1}/({v0}-{a}))+atan(({v0}+{a})/{v1})))")
-                    wrapped.append(f"cos({k}*(atan({v1}/({v0}+{a}))-atan(({v0}-{a})/{v1})))")
             
             # Also try sums of detected atans for bipolar patterns
             if len(base_seeds) >= 2:
