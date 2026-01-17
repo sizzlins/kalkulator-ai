@@ -8,13 +8,13 @@ from ..function_manager import define_function
 from ..function_manager import define_variable
 from ..function_manager import parse_function_definition
 from ..parser import split_top_level_commas
-from ..solver import solve_single_equation
-from ..solver import solve_system
-from ..config import ALLOWED_SYMPY_NAMES
+# Lazy loaded imports
+# from ..solver import solve_system
+from .. import config
 from ..utils.formatting import format_solution
 from ..utils.formatting import print_result_pretty
-from ..utils.numeric import solve_modulo_system_if_applicable
-from ..worker import evaluate_safely
+# from ..utils.numeric import solve_modulo_system_if_applicable
+# from ..worker import evaluate_safely
 from .context import ReplContext
 
 import sys
@@ -74,11 +74,11 @@ class REPL:
         Useful for function finding (e.g., 'f(1)=2').
         """
         # Find pattern 'name('
-        # exclude specific keywords if needed, but ALLOWED_SYMPY_NAMES handles most
+        # exclude specific keywords if needed, but config.ALLOWED_SYMPY_NAMES handles most
         candidates = set()
         for match in re.finditer(r"\b([a-zA-Z_]\w*)\s*\(", text):
             name = match.group(1)
-            if name not in ALLOWED_SYMPY_NAMES and name not in self.variables:
+            if name not in config.ALLOWED_SYMPY_NAMES and name not in self.variables:
                 candidates.add(name)
 
         return frozenset(candidates) if candidates else None
@@ -460,6 +460,7 @@ class REPL:
 
         if same_variable_system:
             # Delegate to modulo solver
+            from ..utils.numeric import solve_modulo_system_if_applicable
             var = parts[0].split("=", 1)[0].strip()
             solved, _ = solve_modulo_system_if_applicable(parts, var, "human")
             if solved:
@@ -568,6 +569,7 @@ class REPL:
             self._execute_chain(parts)
         else:
             # System solver
+            from ..solver import solve_system
             subbed_text = self._substitute_variables(raw_text)
             allowed = self._get_allowed_functions(raw_text)
             res = solve_system(subbed_text, None, allowed_functions=allowed)
@@ -641,13 +643,14 @@ class REPL:
         var_name = raw_part.split("=", 1)[0].strip()
         
         # Check for shadowing built-ins
-        if var_name in ALLOWED_SYMPY_NAMES:
+        if var_name in config.ALLOWED_SYMPY_NAMES:
             self.results_buffer.append(f"Error: Cannot assign to reserved name '{var_name}'")
             return
 
         # The RHS is what needs substitution
         rhs_subbed = subbed_part.split("=", 1)[1].strip()
 
+        from ..worker import evaluate_safely
         res = evaluate_safely(rhs_subbed)
         if res.get("ok"):
             val_str = res.get("result")
@@ -674,10 +677,12 @@ class REPL:
         # Treat as expression OR legacy command (like find z)
         # If persistence works, solve_single_equation("z") fails if no =.
         if "=" in subbed_part:
+            from ..solver import solve_single_equation
             allowed = self._get_allowed_functions(raw_part)
             res = solve_single_equation(subbed_part, None, allowed_functions=allowed)
         else:
             # Just evaluate e.g. "z" or "x+y"
+            from ..worker import evaluate_safely
             res = evaluate_safely(subbed_part)
             if res.get("ok"):
                 val = format_solution(res.get("result", ""))  # result is string
@@ -713,7 +718,7 @@ class REPL:
                 name, params, body = func_def
                 
                 # Check for shadowing built-ins
-                if name in ALLOWED_SYMPY_NAMES:
+                if name in config.ALLOWED_SYMPY_NAMES:
                     self.print(f"Error: Cannot redefine reserved function '{name}'")
                     return
 
@@ -739,13 +744,14 @@ class REPL:
             rhs = rhs.strip()
 
             if VAR_NAME_RE.match(lhs):
-                if lhs in ALLOWED_SYMPY_NAMES:
+                if lhs in config.ALLOWED_SYMPY_NAMES:
                     self.print(f"Error: Cannot assign to reserved name '{lhs}'")
                     return
 
                 # It is an assignment!
                 # Substitute RHS
                 rhs_subbed = self._substitute_variables(rhs)
+                from ..worker import evaluate_safely
                 res = evaluate_safely(rhs_subbed)
                 if res.get("ok"):
                     val_str = res.get("result")
@@ -765,6 +771,7 @@ class REPL:
             bound_vars = self._detect_bound_variables(text)
             text_subbed = self._substitute_variables(text, exclude=bound_vars)
             allowed = self._get_allowed_functions(text)
+            from ..solver import solve_single_equation
             res = solve_single_equation(
                 text_subbed, None, allowed_functions=allowed
             )  # Or inequality solver
@@ -779,6 +786,7 @@ class REPL:
 
         if "=" in text_subbed or force_solve:
             allowed = self._get_allowed_functions(text)
+            from ..solver import solve_single_equation
             res = solve_single_equation(text_subbed, None, allowed_functions=allowed)
             print_result_pretty(
                 res, printer=self.print
@@ -788,6 +796,7 @@ class REPL:
             allowed = self._get_allowed_functions(text)
 
             t0 = time.perf_counter()
+            from ..worker import evaluate_safely
             res = evaluate_safely(text_subbed, allowed_functions=allowed)
             dt = time.perf_counter() - t0
 

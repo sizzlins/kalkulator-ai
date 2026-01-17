@@ -8,6 +8,13 @@ from .operators import (
     crossover, point_mutation, hoist_mutation, shrink_mutation, 
     optimize_constants_bfgs
 )
+try:
+    from .nsga2 import assign_nsga2_ranks, tournament_select_ranked
+except ImportError:
+    # Fallback if nsga2 module issues
+    def assign_nsga2_ranks(pop): pass
+    def tournament_select_ranked(pop, size): return random.choice(pop)
+
 from .constant_anchors import detect_anchors, generate_hypotheses
 
 class BoostingStrategy:
@@ -31,24 +38,25 @@ class BoostingStrategy:
                 dist_zero = np.linalg.norm(X, axis=1)
                 
             # VERTEX BONUS: Boost point closest to 0
-            idx_min = np.argmin(dist_zero)
-            weights[idx_min] = self.config.vertex_bonus
-            
-            # 2. INTEGER ANCHOR BONUS
-            # Check X integers (using configurable tolerance)
-            tol = self.config.integer_tolerance
-            is_x_int = np.all(np.abs(X - np.round(X)) < tol, axis=1) if X.ndim > 1 else (np.abs(X - np.round(X)) < tol)
-            # Check Y integers
-            is_y_int = (np.abs(y - np.round(y)) < tol)
-            
-            is_anchor = is_x_int & is_y_int
-            weights[is_anchor] = np.maximum(weights[is_anchor], self.config.anchor_bonus)
-            
-            if self.config.verbose:
-                n_anchors = np.sum(is_anchor)
-                max_w = np.max(weights)
-                if max_w > 1.0:
-                    print(f"Smart Weighting: Boosted {n_anchors} anchors and vertex.")
+            if self.config.use_integer_anchoring:
+                idx_min = np.argmin(dist_zero)
+                weights[idx_min] = self.config.vertex_bonus
+                
+                # 2. INTEGER ANCHOR BONUS
+                # Check X integers (using configurable tolerance)
+                tol = self.config.integer_tolerance
+                is_x_int = np.all(np.abs(X - np.round(X)) < tol, axis=1) if X.ndim > 1 else (np.abs(X - np.round(X)) < tol)
+                # Check Y integers
+                is_y_int = (np.abs(y - np.round(y)) < tol)
+                
+                is_anchor = is_x_int & is_y_int
+                weights[is_anchor] = np.maximum(weights[is_anchor], self.config.anchor_bonus)
+                
+                if self.config.verbose:
+                    n_anchors = np.sum(is_anchor)
+                    max_w = np.max(weights)
+                    if max_w > 1.0:
+                        print(f"Smart Weighting: Boosted {n_anchors} anchors and vertex.")
             
         except (ValueError, IndexError, TypeError) as e:
             if self.config.verbose:
@@ -134,13 +142,20 @@ class EvolutionStrategy:
         # 2. Inject Seeds
         if combined_seeds:
             import sympy as sp
+            # SECURITY: Import safe parser instead of using sympify (which uses eval)
+            from ..parser import safe_sympy_parse
+            from ..config import ALLOWED_SYMPY_NAMES
+            
             local_dict = {v: sp.Symbol(v) for v in variables}
             # Add safe globals for parsing
             local_dict.update({'exp': sp.exp, 'log': sp.log, 'sin': sp.sin, 'cos': sp.cos})
+            # Merge with allowed names for comprehensive coverage
+            full_local_dict = {**ALLOWED_SYMPY_NAMES, **local_dict}
             
             for seed_str in combined_seeds[:n_individuals // 2]:
                 try:
-                    expr = sp.sympify(seed_str, locals=local_dict)
+                    # SECURITY: Use AST-based safe parser instead of eval-based sympify
+                    expr = safe_sympy_parse(seed_str, local_dict=full_local_dict)
                     tree = ExpressionTree.from_sympy(expr, variables)
                     tree.age = 0
                     population.append(tree)
@@ -177,7 +192,11 @@ class EvolutionStrategy:
         population.sort(key=lambda t: t.fitness)
         new_pop = [t.copy() for t in population[:self.config.elitism]]
         
-        # 3. Breeding
+        # 3. Assign NSGA-II Ranks (for selection)
+        # This calculates rank and crowding distance for the whole population
+        assign_nsga2_ranks(population)
+        
+        # 4. Breeding
         while len(new_pop) < self.config.population_size:
             parent1 = self._tournament_select(population)
             
@@ -200,8 +219,9 @@ class EvolutionStrategy:
                     child = shrink_mutation(parent)
                 child.age = 0
                 new_pop.append(child)
+
                 
-        # 4. Constant Optimization (BFGS - fast gradient-based)
+        # 5. Constant Optimization (BFGS - fast gradient-based)
         if random.random() < self.config.constant_optimization_rate:
             idx = random.randrange(len(new_pop))
             new_pop[idx] = optimize_constants_bfgs(
@@ -211,8 +231,8 @@ class EvolutionStrategy:
         return new_pop
 
     def _tournament_select(self, population):
-        sample = random.sample(population, min(len(population), self.config.tournament_size))
-        return min(sample, key=lambda t: t.fitness)
+        """Select parent using NSGA-II ranking."""
+        return tournament_select_ranked(population, self.config.tournament_size)
 
     def migrate(self, islands: list[list[ExpressionTree]]):
         """Ring topology migration."""

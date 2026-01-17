@@ -37,11 +37,21 @@ from typing import Any
 import warnings
 
 import numpy as np
-import sympy as sp
-from sympy import parse_expr
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    import sympy as sp
 
-from .config import ALLOWED_SYMPY_NAMES
-from .config import TRANSFORMATIONS
+from . import config  # Lazy load
+from .parser import safe_sympy_parse, ValidationError
+# safe_sympy_parse is lazy now.
+
+# Lazy SymPy Proxy
+class _LazySymPy:
+    def __getattr__(self, name):
+        import sympy
+        return getattr(sympy, name)
+sp = _LazySymPy()
+
 from .types import ValidationError
 
 # Handle NumPy 2.0 ComplexWarning location
@@ -54,7 +64,17 @@ except ImportError:
         class NpComplexWarning(UserWarning): pass
 
 # Built-in function names that should not be used as user-defined function names
-BUILTIN_FUNCTION_NAMES = set(ALLOWED_SYMPY_NAMES.keys())
+# Built-in function names (Lazy)
+_CACHED_BUILTINS = None
+
+def get_builtin_names():
+    global _CACHED_BUILTINS
+    if _CACHED_BUILTINS is not None:
+        return _CACHED_BUILTINS
+    # Access lazy config
+    _CACHED_BUILTINS = set(config.ALLOWED_SYMPY_NAMES.keys())
+    return _CACHED_BUILTINS
+
 
 
 def _parse_to_exact_fraction(
@@ -173,6 +193,8 @@ def _parse_to_exact_fraction(
             try:
                 import sympy as sp_sym
 
+                from ..parser import safe_sympy_parse
+                
                 local_ns = {
                     "pi": sp_sym.pi,
                     "e": sp_sym.E,
@@ -186,7 +208,8 @@ def _parse_to_exact_fraction(
                     "ln": sp_sym.log,
                     "exp": sp_sym.exp,
                 }
-                expr = sp_sym.sympify(val, locals=local_ns)
+                # SECURITY: Use safe AST parser instead of sympify (eval)
+                expr = safe_sympy_parse(str(val), local_dict=local_ns)
                 result = expr.evalf()
                 if hasattr(result, "free_symbols") and result.free_symbols:
                     raise ValueError(
@@ -453,7 +476,8 @@ def evaluate_function(name: str, args: list[Any]) -> sp.Basic:
         # Convert arg to SymPy expression if needed
         if not isinstance(arg, sp.Basic):
             try:
-                arg = sp.sympify(arg)
+                # SECURITY: Use safe AST parser instead of sympify (eval)
+                arg = safe_sympy_parse(str(arg))
             except Exception:
                 arg = sp.Symbol(str(arg))  # Fallback to symbol
 
@@ -514,7 +538,7 @@ def parse_function_definition(expr: str) -> tuple[str, list[str], str] | None:
 
     # Validate: function name must not be a built-in function (e.g., sin, cos, log, etc.)
     # This prevents "sin(x)=cos(x)" from being treated as a function definition
-    if func_name in BUILTIN_FUNCTION_NAMES:
+    if func_name in get_builtin_names():
         return None
 
     # Validate: body must not be empty
@@ -543,7 +567,7 @@ def parse_function_definition(expr: str) -> tuple[str, list[str], str] | None:
 
             # CRITICAL FIX: Prevent using reserved names (like pi, e, sin) as parameters
             # This prevents "f(pi)=0" from being interpreted as a function definition
-            if param in BUILTIN_FUNCTION_NAMES:
+            if param in get_builtin_names():
                 return None
 
     return (func_name, params, body)
@@ -1025,7 +1049,7 @@ def _find_sparse_polynomial_solution(
                                     product_pairs.append(pair_tuple)
 
                 # Remove duplicates
-                product_pairs = list(set(product_pairs))
+                product_pairs = sorted(list(set(product_pairs)))  # REPRODUCIBILITY: Sorted
 
                 # Further prioritize product pairs that use variables from data
                 # Especially prioritize pairs where both are pure product terms (like x*y and z*w)
@@ -1391,117 +1415,13 @@ def find_function_from_data(
         e.g., (True, "(7/22)*x + (15/22)*y", None, None)
     """
     import numpy as np
+    from .utils.numeric import eval_to_float
 
-    # Helper function to convert symbolic expressions to floats
     if param_names is None:
         param_names = ["x"]
 
-    def eval_to_float(val):
-        """Convert a value (string or number) to float, evaluating symbolic expressions."""
-        import sympy as sp
 
-        if isinstance(val, (int, float)):
-            return float(val)
 
-        # Handle SymPy infinity types BEFORE general conversion
-        # zoo = ComplexInfinity, oo = positive infinity
-        if val is sp.zoo or val is sp.oo or val is sp.S.Infinity:
-            return float("inf")
-        if val is sp.S.NegativeInfinity:
-            return float("-inf")
-        if val is sp.nan or val is sp.S.NaN:
-            return float("nan")
-
-        if isinstance(val, str):
-            # Check for string representations of infinity
-            val_lower = val.lower().strip()
-            if val_lower in ("zoo", "oo", "inf", "infinity", "complexinfinity"):
-                return float("inf")
-            if val_lower in ("nan", "-nan"):
-                return float("nan")
-
-            try:
-                # Try direct conversion first
-                return float(val)
-            except ValueError:
-                pass
-            # Try evaluating as a symbolic expression
-            try:
-                local_ns = {
-                    "pi": sp.pi,
-                    "e": sp.E,
-                    "E": sp.E,
-                    "I": sp.I,
-                    "sqrt": sp.sqrt,
-                    "sin": sp.sin,
-                    "cos": sp.cos,
-                    "tan": sp.tan,
-                    "log": sp.log,
-                    "ln": sp.log,
-                    "exp": sp.exp,
-                    "zoo": sp.zoo,
-                    "oo": sp.oo,
-                }
-                expr = sp.sympify(val, locals=local_ns)
-
-                # Check if result is infinity type
-                if expr is sp.zoo or expr is sp.oo or expr is sp.S.Infinity:
-                    return float("inf")
-                if expr is sp.S.NegativeInfinity:
-                    return float("-inf")
-                if expr is sp.nan or expr is sp.S.NaN:
-                    return float("nan")
-
-                # Force numeric evaluation
-                result = expr.evalf()
-                # Check if result is still symbolic (contains free symbols)
-                if hasattr(result, "free_symbols") and result.free_symbols:
-                    raise ValueError(
-                        f"Expression '{val}' contains free symbols: {result.free_symbols}"
-                    )
-                return float(result)
-            except (TypeError, ValueError) as e:
-                raise ValueError(
-                    f"Could not convert '{val}' to a numeric value: {e}"
-                ) from e
-            except Exception as e:
-                raise ValueError(f"Could not convert '{val}' to a numeric value") from e
-        # For SymPy expressions
-        try:
-            # Handle numpy/Python complex with zero imaginary (e.g., (-4+0j) → -4.0)
-            # This happens when array has any complex value, numpy converts all to complex128
-            if hasattr(val, 'imag') and hasattr(val, 'real'):
-                if val.imag == 0:
-                    return float(val.real)  # Extract real part
-                else:
-                    raise ValueError(f"Complex value with non-zero imaginary: {val}")
-            
-            # Check if it's infinity type
-            if val is sp.zoo or val is sp.oo or val is sp.S.Infinity:
-                return float("inf")
-            if val is sp.S.NegativeInfinity:
-                return float("-inf")
-            if val is sp.nan or val is sp.S.NaN:
-                return float("nan")
-
-            # Check if it's a known constant symbol (like pi or e) passed as a Symbol object
-            if isinstance(val, sp.Symbol):
-                local_ns = {
-                    "pi": sp.pi,
-                    "e": sp.E,
-                    "E": sp.E,
-                }
-                if val.name in local_ns:
-                    val = local_ns[val.name]
-
-            result = val.evalf()
-            if hasattr(result, "free_symbols") and result.free_symbols:
-                raise ValueError(
-                    f"Expression contains free symbols: {result.free_symbols}"
-                )
-            return float(result)
-        except Exception as e:
-            raise ValueError(f"Could not convert '{val}' to a numeric value") from e
 
     # --- Partition data into Numeric and Symbolic sets ---
     # Also filter out complex data (with warning)
@@ -1523,7 +1443,7 @@ def find_function_from_data(
                     # Try to parse and check imaginary part
                     # Replace lowercase i with I for SymPy
                     val_normalized = val.replace("i", "*I").replace("jj", "*I")
-                    parsed = sp.sympify(val_normalized)
+                    parsed = safe_sympy_parse(val_normalized)
                     if hasattr(parsed, "as_real_imag"):
                         _, imag = parsed.as_real_imag()
                         return abs(float(imag.evalf())) > 1e-10
@@ -1561,7 +1481,8 @@ def find_function_from_data(
                 except ValueError:
                     is_symbolic = True
                     try:
-                        expr = sp.sympify(x_arg)
+                        # SECURITY: Use safe AST parser
+                        expr = safe_sympy_parse(str(x_arg))
                         parsed_x_tuple.append(expr)
                     except Exception:
                         parsed_x_tuple.append(x_arg)
@@ -1646,7 +1567,8 @@ def find_function_from_data(
                         "e": sp.E,
                     }
                     param_syms = [sp.Symbol(p) for p in param_names]
-                    f_expr = sp.sympify(func_str, locals=local_ns)
+                    # SECURITY: Use safe AST parser
+                    f_expr = safe_sympy_parse(func_str, local_dict=local_ns)
 
                     symbol_values = {}
                     consistent = True
@@ -2052,7 +1974,7 @@ def find_function_from_data(
             # --- RATIONAL ANALYSIS SVD (Poles Robust) ---
             # Try to solve P(x)/Q(x) = y using SVD on linearized form.
             # This handles poles like (x^2+10)/(x^2-10) correctly.
-            from .experimental.function_finder_advanced import solve_rational_function_svd
+            from .heuristics import solve_rational_function_svd
 
             X_data_svd = [
                 (
@@ -2234,7 +2156,7 @@ def find_function_from_data(
                     else:
                         # Try symbolic constant detection for 'a'
                         try:
-                            from .experimental.function_finder_advanced import (
+                            from .heuristics import (
                                 detect_symbolic_constant,
                             )
 
@@ -2256,7 +2178,7 @@ def find_function_from_data(
     # Check for simple relationships like y = A*e^(Bx) or y = A*x^B
     if n_params == 1:
         try:
-            from .experimental.function_finder_advanced import check_log_linear_transformations
+            from .heuristics import check_log_linear_transformations
 
             # Extract X and y data - evaluate symbolic constants
             # p[0] is a tuple/list of x values for this data point
@@ -3430,7 +3352,8 @@ def find_function_from_data(
                         "pi": sp_module.pi,
                         "Pi": sp_module.pi,
                     }
-                    func_expr = sp_module.sympify(func_str, locals=local_dict)
+                    # SECURITY: Use safe AST parser
+                    func_expr = safe_sympy_parse(func_str, local_dict=local_dict)
 
                     # Check if it's a simple polynomial and try to detect π
                     # For f(x) = π*x², we'd have a coefficient close to π
@@ -3676,7 +3599,8 @@ def find_function_from_data(
 
                         param_name = param_names[0]
                         local_dict = {param_name: sp_module.Symbol(param_name)}
-                        func_expr = sp_module.sympify(func_str, locals=local_dict)
+                        # SECURITY: Use safe AST parser
+                        func_expr = safe_sympy_parse(func_str, local_dict=local_dict)
 
                         all_match = True
                         for point in data_points:
@@ -3744,7 +3668,8 @@ def find_function_from_data(
                 try:
                     # Use module-level sp (imported at top of file)
                     local_dict = {param: sp.Symbol(param) for param in param_names}
-                    func_expr = sp.sympify(func_str, locals=local_dict)
+                    # SECURITY: Use safe AST parser
+                    func_expr = safe_sympy_parse(func_str, local_dict=local_dict)
 
                     all_match = True
                     for point in data_points:
@@ -3853,7 +3778,8 @@ def find_function_from_data(
                 else:
                     # Try to convert to SymPy
                     try:
-                        sympy_row.append(sp.sympify(val))
+                        # SECURITY: Use safe AST parser
+                        sympy_row.append(safe_sympy_parse(str(val)))
                     except (ValueError, TypeError):
                         return (
                             False,
@@ -3876,7 +3802,8 @@ def find_function_from_data(
             else:
                 # Try to convert to SymPy
                 try:
-                    sympy_outputs.append(sp.sympify(out))
+                    # SECURITY: Use safe AST parser
+                    sympy_outputs.append(safe_sympy_parse(str(out)))
                 except (ValueError, TypeError):
                     return (
                         False,
@@ -4366,7 +4293,8 @@ def find_function_from_data(
                             # Try to factor out common denominator for cleaner output
                             try:
                                 # Parse the function string and check if we can factor out a denominator
-                                parsed_func = sp.sympify(func_str)
+                                # SECURITY: Use safe AST parser
+                                parsed_func = safe_sympy_parse(func_str)
                                 # Check if all coefficients are rational fractions
                                 if isinstance(parsed_func, sp.Add):
                                     # Get all denominators
@@ -5373,16 +5301,15 @@ def update_function_registry_from_dump(dump: dict[str, tuple[list[str], str]]) -
     for name, (params, body_str) in dump.items():
         try:
             # Parse body string back to SymPy expression
-            # We need to use parse_expr with local_dict to handle parameters correctly
+            # Build local_dict with param symbols
             local_dict = {**ALLOWED_SYMPY_NAMES}
             for param in params:
                 local_dict[param] = sp.Symbol(param)
-
-            body = parse_expr(
+                
+            # SECURITY: Use safe AST-based parser instead of eval-based parse_expr
+            body = safe_sympy_parse(
                 body_str,
                 local_dict=local_dict,
-                transformations=TRANSFORMATIONS,
-                evaluate=True,
             )
             _function_registry[name] = (params, body)
         except Exception:

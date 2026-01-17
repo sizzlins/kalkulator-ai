@@ -14,10 +14,14 @@ import re
 from functools import lru_cache
 from typing import Any
 
-import sympy as sp
-from sympy import parse_expr
+import sympy as sp # TYPE CHECKING ONLY? No, used in logic if lazy loaded
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    import sympy as sp
 
-from .config import ALLOWED_SYMPY_NAMES
+import ast
+
+from . import config  # Lazy load config attributes
 from .config import AMBIG_FRACTION_REGEX
 from .config import CACHE_SIZE_PARSE
 from .config import DIGIT_LETTERS_REGEX
@@ -27,7 +31,7 @@ from .config import MAX_INPUT_LENGTH
 from .config import OUTPUT_PRECISION
 from .config import PERCENT_REGEX
 from .config import SQRT_UNICODE_REGEX
-from .config import TRANSFORMATIONS
+# TRANSFORMATIONS is now lazy loaded via config.TRANSFORMATIONS
 from .types import ValidationError
 
 # Pre-compiled regex patterns (module-level for performance)
@@ -37,18 +41,153 @@ SQRT_PATTERN = re.compile(r'√(\([^)]+\)|\w+|\d+\.?\d*)')
 PAREN_PATTERN = re.compile(r"\(([^()]+)\)")
 
 # Minimal globals for SymPy literals to prevent namespace pollution
-SAFE_GLOBALS = {
-    "Symbol": sp.Symbol,
-    "Integer": sp.Integer,
-    "Float": sp.Float,
-    "Rational": sp.Rational,
-    "Pow": sp.Pow,
-    "Add": sp.Add,
-    "Mul": sp.Mul,
-    "Number": sp.Number,
-    "Function": sp.Function,
-    "AccumBounds": sp.AccumBounds,
-}
+# Minimal globals for SymPy literals (Lazy)
+_SAFE_GLOBALS = None
+
+def get_safe_globals():
+    global _SAFE_GLOBALS
+    if _SAFE_GLOBALS is not None:
+        return _SAFE_GLOBALS
+    import sympy as sp
+    _SAFE_GLOBALS = {
+        "Symbol": sp.Symbol,
+        "Integer": sp.Integer,
+        "Float": sp.Float,
+        "Rational": sp.Rational,
+        "Pow": sp.Pow,
+        "Add": sp.Add,
+        "Mul": sp.Mul,
+        "Number": sp.Number,
+        "Function": sp.Function,
+        "AccumBounds": sp.AccumBounds,
+    }
+    return _SAFE_GLOBALS
+
+class SafeSymPyVisitor(ast.NodeVisitor):
+    """AST Visitor to safely construct SymPy expressions from Python AST.
+    
+    This replaces sympy.parse_expr which uses unsafe eval().
+    
+    Security features:
+    - Blocks dangerous nodes (Import, Exec, Attribute access)
+    - Limits recursion depth to prevent DoS via deeply nested expressions
+    - Only allows whitelisted functions and constants
+    """
+    
+    # SECURITY: Maximum AST depth to prevent stack overflow/memory exhaustion DoS
+    MAX_DEPTH = 100
+    
+    def __init__(self, local_dict=None, global_dict=None, allowed_functions=None):
+        import sympy as sp
+        self.sp = sp
+        self.local_dict = local_dict or {}
+        self.global_dict = global_dict or {}
+        self.allowed_functions = allowed_functions or set()
+        self._depth = 0  # Track recursion depth
+
+    def visit_Module(self, node):
+        if len(node.body) != 1 or not isinstance(node.body[0], ast.Expr):
+            raise ValidationError("Input must be a single expression", "INVALID_STRUCTURE")
+        return self.visit(node.body[0].value)
+
+    def visit_Expr(self, node):
+        return self.visit(node.value)
+
+    def visit_BinOp(self, node):
+        left = self.visit(node.left)
+        right = self.visit(node.right)
+        
+        # Map AST operators to SymPy classes/functions
+        # Note: ^ is converted to ** by tokenizer before this, so BitXor is rare (unless & | used)
+        if isinstance(node.op, ast.Add): return self.sp.Add(left, right)
+        if isinstance(node.op, ast.Sub): return self.sp.Add(left, self.sp.Mul(-1, right))
+        if isinstance(node.op, ast.Mult): return self.sp.Mul(left, right)
+        if isinstance(node.op, ast.Div): return self.sp.Mul(left, self.sp.Pow(right, -1))
+        if isinstance(node.op, ast.Pow): return self.sp.Pow(left, right)
+        if isinstance(node.op, ast.Mod): return self.sp.Mod(left, right)
+        
+        # Bitwise operators (support symbols if defined in config)
+        if isinstance(node.op, ast.BitXor): return self._get_func("bitwise_xor")(left, right)
+        if isinstance(node.op, ast.BitOr): return self._get_func("bitwise_or")(left, right)
+        if isinstance(node.op, ast.BitAnd): return self._get_func("bitwise_and")(left, right)
+        if isinstance(node.op, ast.LShift): return self._get_func("lshift")(left, right)
+        if isinstance(node.op, ast.RShift): return self._get_func("rshift")(left, right)
+
+        raise ValidationError(f"Unsupported operator: {type(node.op).__name__}", "INVALID_OPERATOR")
+
+    def _get_func(self, name):
+        """Helper to get function from allowed dicts."""
+        if name in self.local_dict: return self.local_dict[name]
+        if name in self.global_dict: return self.global_dict[name]
+        # Fallback to looking up in ALLOWED_SYMPY_NAMES directly if available
+        if name in config.ALLOWED_SYMPY_NAMES: return config.ALLOWED_SYMPY_NAMES[name]
+        return self.sp.Function(name)
+
+    def visit_UnaryOp(self, node):
+        operand = self.visit(node.operand)
+        if isinstance(node.op, ast.USub): return self.sp.Mul(-1, operand)
+        if isinstance(node.op, ast.UAdd): return operand
+        if isinstance(node.op, ast.Not): return self.sp.Not(operand)
+        if isinstance(node.op, ast.Invert): return self.sp.Not(operand) # ~x
+        raise ValidationError(f"Unsupported unary operator: {type(node.op).__name__}", "INVALID_OPERATOR")
+
+    def visit_Call(self, node):
+        func_obj = self.visit(node.func)
+        args = [self.visit(arg) for arg in node.args]
+        if node.keywords:
+            raise ValidationError("Keyword arguments not supported", "INVALID_CALL")
+        return func_obj(*args)
+
+    def visit_Name(self, node):
+        id = node.id
+        if id in self.local_dict: return self.local_dict[id]
+        if id in self.global_dict: return self.global_dict[id]
+        if id in config.ALLOWED_SYMPY_NAMES: return config.ALLOWED_SYMPY_NAMES[id]
+        
+        # Check against allowed functions list
+        if self.allowed_functions and id in self.allowed_functions:
+             return self.sp.Function(id)
+
+        # Allow basic variable names
+        return self.sp.Symbol(id)
+
+    def visit_Constant(self, node):
+        if isinstance(node.value, (int, float)):
+            return self.sp.sympify(node.value)
+        if isinstance(node.value, complex):
+            return self.sp.sympify(node.value)
+        # Handle string constants? Usually no.
+        raise ValidationError(f"Unsupported constant type: {type(node.value)}", "INVALID_CONSTANT")
+        
+    def generic_visit(self, node):
+        raise ValidationError(f"Unsupported language construct: {type(node).__name__}", "SECURITY_VIOLATION")
+    
+    def visit(self, node):
+        """Override visit to enforce depth limit."""
+        self._depth += 1
+        if self._depth > self.MAX_DEPTH:
+            raise ValidationError(
+                f"Expression too deeply nested (max depth: {self.MAX_DEPTH})",
+                "DEPTH_EXCEEDED"
+            )
+        try:
+            return super().visit(node)
+        finally:
+            self._depth -= 1
+
+def safe_sympy_parse(expr_str: str, local_dict=None, global_dict=None, allowed_functions=None) -> sp.Expr:
+    """Parse expression string into SymPy object using safe AST Visitor."""
+    if not expr_str.strip():
+        raise ValidationError("Empty input", "EMPTY_INPUT")
+    try:
+        tree = ast.parse(expr_str, mode='exec')
+    except SyntaxError as e:
+        raise ValidationError(f"Syntax Error: {e.msg}", "SYNTAX_ERROR")
+    except ValueError as e:
+         raise ValidationError(f"Value Error during parsing: {str(e)}", "PARSE_ERROR")
+
+    visitor = SafeSymPyVisitor(local_dict, global_dict, allowed_functions)
+    return visitor.visit(tree)
 
 
 def superscriptify(input_str: str) -> str:
@@ -401,55 +540,9 @@ def _protect_function_commas(expr: str) -> tuple[str, dict[str, str]]:
 
     # Match function calls with their arguments
     # Pattern: function_name followed by parentheses with content
-    func_pattern = re.compile(r"(\w+)\s*\(([^()]*(?:\([^()]*\)[^()]*)*)\)")
-
-    def protect_func_args(match):
-        func_name = match.group(1)
-        args_content = match.group(2)
-
-        # Only protect if this is a known function that takes multiple arguments
-        multi_arg_funcs = {"integrate", "diff", "limit", "sum", "product"}
-        if func_name in multi_arg_funcs:
-            # Replace commas in arguments with placeholders
-            protected = args_content
-            depth = 0
-            result = []
-            i = 0
-            while i < len(protected):
-                char = protected[i]
-                if char == "(":
-                    depth += 1
-                    result.append(char)
-                elif char == ")":
-                    depth -= 1
-                    result.append(char)
-                elif char == "," and depth == 0:
-                    # This comma separates arguments at the function call level
-                    placeholder = create_placeholder()
-                    replacements[placeholder] = ","
-                    result.append(placeholder)
-                else:
-                    result.append(char)
-                i += 1
-            return f"{func_name}({''.join(result)})"
-        return match.group(0)
-
-    protected_expr = func_pattern.sub(protect_func_args, expr)
-    return protected_expr, replacements
+    return expr, replacements
 
 
-def _restore_function_commas(expr: str, replacements: dict[str, str]) -> str:
-    """Restore protected commas in function calls.
-
-    Args:
-        expr: Expression with placeholders
-        replacements: Dictionary mapping placeholders to commas
-
-    Returns:
-        Expression with placeholders replaced by commas
-    """
-    for placeholder, comma in replacements.items():
-        expr = expr.replace(placeholder, comma)
     return expr
 
 
@@ -528,9 +621,6 @@ def preprocess_expression(
     # Input size check
     input_str = input_str.strip() if input_str else ""
 
-    # Protect commas in multi-argument function calls (integrate, diff, etc.)
-    # This MUST happen BEFORE implicit multiplication to prevent 1/x, x from becoming (1)/(x, x)
-    # We'll temporarily replace commas in function calls with a special marker
     import re
 
     processed_str = input_str.strip()
@@ -540,16 +630,6 @@ def preprocess_expression(
     processed_str = processed_str.replace("Δ", "Delta")
     processed_str = processed_str.replace("π", "pi")
     processed_str = processed_str.replace(":", "/")
-    processed_str = processed_str.replace("×", "*")
-    processed_str = processed_str.replace("=>", ">=")
-    processed_str = processed_str.replace("=<", "<=")
-    
-    # Smart √ to sqrt() conversion
-    # Regex captures: √x -> sqrt(x), √(expr) -> sqrt(expr), √123 -> sqrt(123)
-    # Pattern: √ followed by (word | parens | number)
-    processed_str = SQRT_PATTERN.sub(r'sqrt(\1)', processed_str)
-    # Fallback for bare √ (unlikely but safe)
-    processed_str = processed_str.replace("√", "sqrt(")
     
     # Use Safe Tokenizer for robust structural transformation
     # Handles: Implicit mult, Forbidden tokens, Syntax sugar (^, mod)
@@ -873,19 +953,15 @@ def _parse_preprocessed_impl(
                     # Debug: print what we're trying to parse (commented out for production)
                     # print(f"DEBUG: Parsing expr_part={expr_part!r}, var_part={var_part!r}")
 
-                    expr_parsed = parse_expr(
+                    expr_parsed = safe_sympy_parse(
                         expr_part,
                         local_dict=ALLOWED_SYMPY_NAMES,
-                        global_dict=SAFE_GLOBALS,
-                        transformations=TRANSFORMATIONS,
-                        evaluate=False,
+                        global_dict=get_safe_globals(),
                     )
-                    var_parsed = parse_expr(
+                    var_parsed = safe_sympy_parse(
                         var_part,
                         local_dict=ALLOWED_SYMPY_NAMES,
-                        global_dict=SAFE_GLOBALS,
-                        transformations=TRANSFORMATIONS,
-                        evaluate=False,
+                        global_dict=get_safe_globals(),
                     )
 
                     # Get the function
@@ -945,19 +1021,15 @@ def _parse_preprocessed_impl(
             var_part = parts[1]
 
             try:
-                expr_parsed = parse_expr(
+                expr_parsed = safe_sympy_parse(
                     expr_part,
                     local_dict=ALLOWED_SYMPY_NAMES,
-                    global_dict=SAFE_GLOBALS,
-                    transformations=TRANSFORMATIONS,
-                    evaluate=False,
+                    global_dict=get_safe_globals(),
                 )
-                var_parsed = parse_expr(
+                var_parsed = safe_sympy_parse(
                     var_part,
                     local_dict=ALLOWED_SYMPY_NAMES,
-                    global_dict=SAFE_GLOBALS,
-                    transformations=TRANSFORMATIONS,
-                    evaluate=False,
+                    global_dict=get_safe_globals(),
                 )
 
                 # Get the function
@@ -987,12 +1059,12 @@ def _parse_preprocessed_impl(
             if name not in local_env:
                 local_env[name] = sp.Function(name)
 
-    expr = parse_expr(
+    # Use safe_sympy_parse instead of unsafe eval-based parse_expr
+    expr = safe_sympy_parse(
         expr_str_restored,
         local_dict=local_env,
-        global_dict=SAFE_GLOBALS,  # SANDBOX: Prevent SymPy from injecting globals (like 'test') by default
-        transformations=TRANSFORMATIONS,
-        evaluate=True,
+        global_dict=get_safe_globals(),
+        allowed_functions=allowed_functions
     )
     # Validate expression tree structure
     # Allow None as a valid result (e.g., from print() which returns None)
@@ -1178,14 +1250,11 @@ def expand_function_calls(expr_str: str) -> str:
                                     )
                                     # Parse the argument directly (avoid recursion by not using parse_preprocessed)
                                     try:
-                                        # Use basic SymPy parsing without going through preprocess
-                                        # which would call expand_function_calls again
-                                        arg_expr = parse_expr(
+                                        # Use safe_sympy_parse instead of unsafe parse_expr
+                                        arg_expr = safe_sympy_parse(
                                             expanded_arg,
                                             local_dict=ALLOWED_SYMPY_NAMES,
-                                            global_dict=SAFE_GLOBALS,
-                                            transformations=TRANSFORMATIONS,
-                                            evaluate=True,
+                                            global_dict=get_safe_globals(),
                                         )
                                         expanded_args.append(arg_expr)
                                     except Exception:

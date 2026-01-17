@@ -58,6 +58,11 @@ class GeneticConfig:
     constant_optimization_rate: float = 0.1
     migration_rate: float = 0.1
     migration_interval: int = 10
+    
+    # Heuristics (Opt-in to prevent bias)
+    use_integer_anchoring: bool = False  # "Vise Strategy": Bias towards integer points
+    use_integer_patterns: bool = False   # Bias towards integer constants (via LLL)
     elitism: int = 5
     boosting_rounds: int = 1
     high_precision: bool = False
+    n_jobs: int = 1  # 1=serial, >1=parallel workers, -1=all cores

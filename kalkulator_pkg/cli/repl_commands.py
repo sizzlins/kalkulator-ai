@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 
 # Regex Constants
+# regex anchored to start/end combined with negated classes prevents ReDoS.
 POINT_PATTERN = re.compile(r"^([a-zA-Z_]\w*)\s*\(([^)]+)\)\s*=\s*(.+)$")
 FIND_PATTERN = re.compile(r"^find\s+([a-zA-Z_]\w*)\s*(?:\(([^)]+)\))?$")
 SEED_PATTERN = re.compile(r'--seed\s+["\']([^"\']+)["\']')
@@ -1123,7 +1124,8 @@ def _handle_evolve(text, variables=None):
                         # Evaluate the discovered function on our data to check quality
                         import sympy as sp
                         symbols_dict = {var: sp.Symbol(var) for var in input_vars}
-                        discovered_expr = sp.sympify(func_str, locals=symbols_dict)
+                        # SECURITY: Use safe AST parser
+                        discovered_expr = kparser.safe_sympy_parse(func_str, local_dict=symbols_dict)
                         
                         # Calculate predictions
                         # Calculate predictions (filter complex points to avoid warnings)
@@ -1331,7 +1333,8 @@ def _handle_evolve(text, variables=None):
             from ..symbolic_regression import ParetoFront, ParetoSolution
             symbols = {v: sp.Symbol(v) for v in input_vars}
             try:
-                sympy_expr = sp.sympify(best_expr, locals=symbols)
+                # SECURITY: Use safe AST parser
+                sympy_expr = kparser.safe_sympy_parse(best_expr, local_dict=symbols)
                 from ..symbolic_regression.expression_tree import ExpressionTree
                 tree = ExpressionTree.from_sympy(sympy_expr, input_vars)
                 complexity = tree.complexity()
@@ -2304,15 +2307,24 @@ def _handle_plot_command(text: str, variables: Dict[str, str]):
     safe_locals["pi"] = np.pi
 
     try:
-        # Use SymPy for safe evaluation instead of raw eval()
+        # SECURITY: Use safe AST-based parser instead of sympify (which uses eval)
         import sympy as sp
-        from sympy import lambdify
+        from ..parser import safe_sympy_parse
+        from ..config import ALLOWED_SYMPY_NAMES
         
         x_sym = sp.Symbol('x')
-        # Parse expression safely with SymPy
-        expr = sp.sympify(expr_processed, locals={'x': x_sym, 'pi': sp.pi, 'e': sp.E})
+        # Build local dict with x symbol
+        local_dict = {**ALLOWED_SYMPY_NAMES, 'x': x_sym}
         
-        # Convert to numpy function for vectorized evaluation
+        # Parse expression safely with AST-based parser
+        expr = safe_sympy_parse(expr_processed, local_dict=local_dict)
+        
+        # NOTE: We still use lambdify here for plotting performance.
+        # This is acceptable because:
+        # 1. The expression has already been validated by safe_sympy_parse
+        # 2. Plotting is read-only visualization, not code execution
+        # 3. Any dangerous constructs were blocked at parse time
+        from sympy import lambdify
         f = lambdify(x_sym, expr, modules=['numpy'])
         y = f(x)
 

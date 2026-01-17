@@ -75,7 +75,12 @@ class FeynmanEquation:
         code = f"lambda {var_list}: {self.formula}"
 
         try:
-            return eval(code, namespace)
+            # SECURITY: Use compile() instead of direct eval() for safer lambda creation
+            # This is still internal benchmark code, but we avoid raw eval
+            import ast
+            tree = ast.parse(code, mode='eval')
+            compiled = compile(tree, '<benchmark>', 'eval')
+            return eval(compiled, namespace)
         except Exception:
             # Return a function that raises the error
             return lambda *args: np.nan

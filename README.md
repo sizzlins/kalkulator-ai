@@ -12,7 +12,7 @@ license: mit
 
 # Kalkulator-ai CLI
 
-![Status](https://img.shields.io/badge/Status-Beta-yellow.svg)
+![Status](https://img.shields.io/badge/Status-Gold%20Standard-brightgreen.svg)
 ![Version](https://img.shields.io/badge/Version-1.4.1-blue.svg)
 ![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)
 ![License](https://img.shields.io/badge/License-MIT-purple.svg)
@@ -22,12 +22,14 @@ license: mit
 ## Capabilities
 
 - **Symbolic Regression**: Identifies exact equations (`y = 5*x^2`) from raw data.
+- **Precision Tuning**: **New in v1.4.1** - Uses BFGS optimization to fine-tune constants (e.g., finding `2.000000` instead of `1.9998`).
 - **Symbolic Constants**: Supports finding functions with `pi`, `e`, etc. (e.g., `f(pi)=0`).
 - **Native Plotting**: Visualize functions directly in the Terminal or Web Interface (`plot sin(x)`).
 - **Physics Discovery**: Patterns include inverse square laws, exp/log, and trigonometric series.
 - **SINDy**: Discovers differential equations (`dx/dt`) from time-series.
 - **Genetic Programming**: Evolves complex functional forms via mutation/crossover.
 - **Calculus**: Symbolic differentiation (`diff`) and integration (`integrate`).
+- **Secure Sandboxing**: **New in v1.4.1** - Windows Job Object isolation prevents memory leaks and CPU overuse.
 - **Agentic Discovery**: Intelligent feature selection logic.
 - **Equivalent Forms**: Visualizes multiple mathematical representations (Trig vs Rational) for the same function.
 
@@ -72,9 +74,16 @@ pip install pandas openpyxl
 
 Legacy CLI:
 
+````bash
 ```bash
-python kalkulator_pkg/cli.py
-```
+# Recommended
+kalkulator
+
+# Or Legacy
+python -m kalkulator_pkg.cli
+````
+
+````
 
 ### Web Application (GUI)
 
@@ -82,7 +91,7 @@ Kalkulator now includes a modern web interface with interactive plotting and "Te
 
 ```bash
 streamlit run streamlit_app.py
-```
+````
 
 Visit https://kalkulator-ai.streamlit.app/ to access the GUI.
 

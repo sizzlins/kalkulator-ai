@@ -151,7 +151,7 @@ def generate_hypotheses(
             hypotheses.append(f"exp({var_name}/{x_int})")
     
     # Remove duplicates
-    return list(set(hypotheses))
+    return sorted(list(set(hypotheses)))  # REPRODUCIBILITY: Sorted to avoid hash randomization
 
 
 def _extract_sqrt_base(const_name: str) -> int | None:

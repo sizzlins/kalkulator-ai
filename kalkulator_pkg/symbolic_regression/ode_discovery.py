@@ -190,8 +190,14 @@ class ODEDiscoveryEngine:
         
         for seed_str in physics_seeds:
             try:
+                # SECURITY: Use safe parser instead of sympify (which uses eval)
+                from ..parser import safe_sympy_parse
+                from ..config import ALLOWED_SYMPY_NAMES
+                
                 local_dict = {v: sp.Symbol(v) for v in self.var_names}
-                expr = sp.sympify(seed_str, locals=local_dict)
+                full_local_dict = {**ALLOWED_SYMPY_NAMES, **local_dict}
+                
+                expr = safe_sympy_parse(seed_str, local_dict=full_local_dict)
                 tree = ExpressionTree.from_sympy(expr, self.var_names)
                 population.append(tree)
             except Exception:

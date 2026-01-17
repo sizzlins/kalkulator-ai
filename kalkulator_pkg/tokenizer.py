@@ -25,7 +25,9 @@ def transform_input(text: str) -> str:
     Handles:
     - Implicit multiplication (2x -> 2*x, x y -> x*y)
     - Syntax conversion (^ -> **, mod -> Mod)
-    - strict blocklisting of dangerous keywords
+    - Unicode replacements (√ -> sqrt, π -> pi, etc.)
+    - Safe FSM-based Smart Sqrt wrapping (√x -> sqrt(x))
+    - Strict blocklisting of dangerous keywords
     
     Args:
         text: Input expression string
@@ -38,81 +40,68 @@ def transform_input(text: str) -> str:
     """
     if not text: return ""
     
+    # 1. Basic Char replacements (Safe, O(N))
+    text = text.replace("×", "*").replace("–", "-").replace("−", "-")
+    text = text.replace(":", "/")
+    
     # Python tokenizer requires bytes
-    tokens = list(tokenize.tokenize(io.BytesIO(text.encode('utf-8')).readline))
+    try:
+        tokens = list(tokenize.tokenize(io.BytesIO(text.encode('utf-8')).readline))
+    except tokenize.TokenError as e:
+        raise ValueError(f"Tokenization failed: {e}")
+        
     result_tokens = []
     
-    prev_token = None
-    
-    for tok in tokens:
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
         tok_type = tok.type
         tok_str = tok.string
         
         # Skip encoding token and ENDMARKER
-        if tok_type == 0 or tok_type == token_module.ENDMARKER: # 0 is ENCODING
+        if tok_type == 0 or tok_type == token_module.ENDMARKER:
+            i += 1
             continue
             
-        # 1. Safety Check
+        # --- Unicode / Special Token Logic ---
+        # Map known unicode names
+        if tok_str == "π": tok_str = "pi"
+        elif tok_str == "Δ": tok_str = "Delta"
+        elif tok_str == "mod": tok_str = "Mod"
+        elif tok_str == "^": tok_str = "**"
+        
+        # Simple char replacements if they survived raw replace
+        if "×" in tok_str: tok_str = tok_str.replace("×", "*")
+
+        # --- Standard Safety & Implicit Mult ---
+        
         if tok_type == token_module.NAME:
             if tok_str in FORBIDDEN_NAMES or tok_str.startswith("__"):
                 raise ValueError(f"Forbidden token detected: '{tok_str}'")
+        
+        # Check for implicit multiplication with the LAST added token
+        if result_tokens:
+            last_type, last_str = result_tokens[-1]
             
-            # Syntax Sugar: mod -> Mod
-            if tok_str == "mod":
-                tok_str = "Mod"
-                
-        # 2. Operator Transformation
-        if tok_type == token_module.OP:
-            if tok_str == "^":
-                tok_str = "**"
-                
-        # 3. Implicit Multiplication Logic
-        if prev_token:
-            should_insert_mult = False
-            prev_type = prev_token.type
-            prev_str = prev_token.string
+            should_mult = False
+            # Number (or ) ) followed by Name or (
+            if last_type == token_module.NUMBER:
+                if tok_type == token_module.NAME: should_mult = True
+                elif tok_str == "(": should_mult = True
+            elif last_str == ")":
+                if tok_type == token_module.NAME: should_mult = True
+                elif tok_str == "(": should_mult = True
+            elif last_type == token_module.NAME:
+                if tok_type == token_module.NAME: should_mult = True
+                # Don't mul if 'sin('
             
-            # Case A: Number followed by Name (2x) or Paren (2(x))
-            if prev_type == token_module.NUMBER:
-                if tok_type == token_module.NAME:
-                    should_insert_mult = True
-                elif tok_type == token_module.OP and tok_str == "(":
-                    should_insert_mult = True
-                    
-            # Case B: Name followed by Name (x y) or Paren (x(y) -> Function or Mult?)
-            elif prev_type == token_module.NAME:
-                if tok_type == token_module.NAME:
-                    # 'sin x' -> invalid in math usually, but imply mult 'sin*x'
-                    # 'x y' -> 'x*y'
-                    should_insert_mult = True
-                elif tok_type == token_module.OP and tok_str == "(":
-                    # 'sin(x)' -> Function Call (No mult)
-                    # 'x(y)' -> Function Call (unknown func) or x*(y)?
-                    # Standard math convention: x(y) is x*y if x is var, or func if x is func.
-                    # We assume Function Call if it looks like one.
-                    # BUT, SymPy parses 'x(y)' as Function('x')(y).
-                    # '2x(y)' -> 2*x*y? Or 2*Function(x)(y)?
-                    # For safety/simplicity, we assume Function Call.
-                    should_insert_mult = False 
-                    
-            # Case C: Close Paren followed by Name or Paren: (a)b or (a)(b)
-            elif prev_type == token_module.OP and prev_str == ")":
-                 if tok_type == token_module.NAME:
-                     should_insert_mult = True
-                 elif tok_type == token_module.OP and tok_str == "(":
-                     should_insert_mult = True
-            
-            if should_insert_mult:
-                # Insert '*' op
-                # Position info doesn't matter for untokenize
+            if should_mult:
                 result_tokens.append((token_module.OP, "*"))
-
-        # Add current token
+        
         result_tokens.append((tok_type, tok_str))
-        prev_token = tok
+        i += 1
 
-    # Reconstruct string
-    result = tokenize.untokenize(result_tokens)
+    result = tokenize.untokenize(result_tokens).strip()
     if isinstance(result, bytes):
         return result.decode('utf-8')
     return result

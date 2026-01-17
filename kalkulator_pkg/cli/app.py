@@ -7,7 +7,9 @@ import math
 from math import gcd
 from typing import Any
 
-import sympy as sp
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    import sympy as sp
 
 import kalkulator_pkg.parser as kparser
 
@@ -32,12 +34,13 @@ from ..config import VAR_NAME_RE
 from ..config import VERSION
 from ..parser import format_superscript
 from ..parser import split_top_level_commas
-from ..solver import solve_inequality
-from ..solver import solve_single_equation
-from ..solver import solve_system
+# Solver imports moved to local scope for lazy loading
+# from ..solver import solve_inequality
+# from ..solver import solve_single_equation
+# from ..solver import solve_system
 from ..types import ParseError
 from ..types import ValidationError
-from ..worker import evaluate_safely
+# from ..worker import evaluate_safely
 
 _logger = logging.getLogger(__name__)
 
@@ -47,17 +50,17 @@ from ..utils.formatting import (
 )
 from ..utils.formatting import format_special_values as _format_special_values
 from ..utils.formatting import print_result_pretty
-from ..utils.numeric import (
-    compute_integerized_equation as _compute_integerized_equation,
-)
-from ..utils.numeric import extended_gcd as _extended_gcd
-from ..utils.numeric import find_integer_solutions_for_linear
-from ..utils.numeric import (
-    parse_target_with_ambiguity_detection as _parse_target_with_ambiguity_detection,
-)
-from ..utils.numeric import (
-    solve_modulo_system_if_applicable as _solve_modulo_system_if_applicable,
-)
+# from ..utils.numeric import (
+#     compute_integerized_equation as _compute_integerized_equation,
+# )
+# from ..utils.numeric import extended_gcd as _extended_gcd
+# from ..utils.numeric import find_integer_solutions_for_linear
+# from ..utils.numeric import (
+#     parse_target_with_ambiguity_detection as _parse_target_with_ambiguity_detection,
+# )
+# from ..utils.numeric import (
+#     solve_modulo_system_if_applicable as _solve_modulo_system_if_applicable,
+# )
 
 
 def _health_check() -> int:
@@ -430,6 +433,7 @@ def main_entry(argv: list[str] | None = None) -> int:
             )
             return 1
         import re
+        import sympy as sp
 
         # Check for function finding command FIRST (before other processing)
         is_find_command = False

@@ -10,7 +10,22 @@ from functools import lru_cache
 from typing import Any
 
 import numpy as np
-import sympy as sp
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    import sympy as sp
+
+# Lazy SymPy Proxy
+class _LazySymPy:
+    _module = None
+    
+    def __getattr__(self, name):
+        if self._module is None:
+            import sympy
+            self._module = sympy
+        val = getattr(self._module, name)
+        setattr(self, name, val)  # Cache for future access
+        return val
+sp = _LazySymPy()
 
 from .config import CACHE_SIZE_SOLVE
 from .config import ENABLE_PERSISTENT_WORKER
@@ -65,33 +80,138 @@ except Exception:
     Manager = None  # type: ignore
 
 
-def _limit_resources() -> None:
-    """Apply resource limits (Unix only).
-
-    This function sets CPU time and memory limits on worker processes.
-    On Windows, the `resource` module is not available, so these limits
-    do not apply. For Windows deployments, consider:
-    - Using containerization (Docker with resource limits)
-    - Running worker processes under restricted user accounts
-    - Monitoring resource usage externally
-
-    See SECURITY.md for more details on Windows deployment strategies.
+def _limit_resources_windows() -> bool:
+    """Apply Windows Job Object limits (Memory) to the current process via ctypes.
+    
+    This sets a hard memory limit defined by WORKER_AS_MB.
     """
-    if not HAS_RESOURCE:
-        return
     try:
-        import resource as _resource
+        import ctypes
+        from ctypes import wintypes
+        
+        kernel32 = ctypes.windll.kernel32
+        
+        # Define function signatures for 64-bit compatibility
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+        
+        kernel32.SetInformationJobObject.restype = wintypes.BOOL
+        kernel32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint]
+        
+        kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+        kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        kernel32.GetCurrentProcess.argtypes = []
+        
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        
+        # Windows Constants
+        JOB_OBJECT_LIMIT_PROCESS_MEMORY = 0x100
+        JobObjectExtendedLimitInformation = 9
+        
+        class IO_COUNTERS(ctypes.Structure):
+            _fields_ = [('ReadOperationCount', ctypes.c_ulonglong),
+                        ('WriteOperationCount', ctypes.c_ulonglong),
+                        ('OtherOperationCount', ctypes.c_ulonglong),
+                        ('ReadTransferCount', ctypes.c_ulonglong),
+                        ('WriteTransferCount', ctypes.c_ulonglong),
+                        ('OtherTransferCount', ctypes.c_ulonglong)]
 
-        _resource.setrlimit(
-            _resource.RLIMIT_CPU, (WORKER_CPU_SECONDS, WORKER_CPU_SECONDS + 1)
-        )
-        _resource.setrlimit(
-            _resource.RLIMIT_AS,
-            (WORKER_AS_MB * 1024 * 1024, WORKER_AS_MB * 1024 * 1024 + 1),
-        )
-    except (ImportError, OSError, ValueError):
-        # Resource module not available (Windows) or limits failed
-        pass
+        class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [('PerProcessUserTimeLimit', ctypes.c_longlong),
+                        ('PerJobUserTimeLimit', ctypes.c_longlong),
+                        ('LimitFlags', ctypes.c_ulong),
+                        ('MinimumWorkingSetSize', ctypes.c_size_t),
+                        ('MaximumWorkingSetSize', ctypes.c_size_t),
+                        ('ActiveProcessLimit', ctypes.c_ulong),
+                        ('Affinity', ctypes.c_size_t),
+                        ('PriorityClass', ctypes.c_ulong),
+                        ('SchedulingClass', ctypes.c_ulong)]
+
+        class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [('BasicLimitInformation', JOBOBJECT_BASIC_LIMIT_INFORMATION),
+                        ('IoInfo', IO_COUNTERS),
+                        ('ProcessMemoryLimit', ctypes.c_size_t),
+                        ('JobMemoryLimit', ctypes.c_size_t),
+                        ('PeakProcessMemoryUsed', ctypes.c_size_t),
+                        ('PeakJobMemoryUsed', ctypes.c_size_t)]
+        
+        # 1. Create Job Object (unnamed)
+        hJob = kernel32.CreateJobObjectW(None, None)
+        if not hJob:
+            return False
+            
+        # 2. Configure Limits
+        info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        JOB_OBJECT_LIMIT_PROCESS_TIME = 0x2
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_PROCESS_MEMORY | JOB_OBJECT_LIMIT_PROCESS_TIME
+        
+        # Limit to WORKER_AS_MB (MB -> Bytes)
+        limit_bytes = int(WORKER_AS_MB) * 1024 * 1024
+        info.ProcessMemoryLimit = limit_bytes
+        
+        # Limit to WORKER_CPU_SECONDS (Seconds -> 100ns units)
+        # 1 sec = 10,000,000 units
+        limit_time = int(WORKER_CPU_SECONDS * 10_000_000)
+        info.BasicLimitInformation.PerProcessUserTimeLimit = limit_time
+        
+        # Set info
+        if not kernel32.SetInformationJobObject(
+            hJob, 
+            JobObjectExtendedLimitInformation, 
+            ctypes.byref(info), 
+            ctypes.sizeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION)
+        ):
+            # Close handle on failure
+            kernel32.CloseHandle(hJob)
+            return False
+            
+        # 3. Assign Process
+        # GetCurrentProcess() returns a pseudo-handle, which works
+        hProcess = kernel32.GetCurrentProcess()
+        if not kernel32.AssignProcessToJobObject(hJob, hProcess):
+            # Error 5: ACCESS_DENIED. Likely process already in a job.
+            kernel32.CloseHandle(hJob)
+            return False
+            
+        # Leak the handle intentionally so the Job Object persists for the process lifetime
+        # (If we close it, the limit *might* stay or not depending on flags, 
+        # but keeping it open is safer for anonymous jobs controlling current process)
+        # Actually, MSDN says limits remain until process terminates if using anonymous job.
+        # But allow leaking for safety.
+        # We save it to a global to prevent GC? Python GC != OS Handle close.
+        global _win_job_handle
+        _win_job_handle = hJob
+        
+        return True
+        
+    except (OSError, ValueError, AttributeError, ImportError) as e:
+        logger.warning(f"Failed to set Windows resource limits: {e}")
+        return False
+
+
+def _limit_resources() -> None:
+    """Apply resource limits (Unix `resource` or Windows Job Objects)."""
+    # 1. Unix Logic
+    if HAS_RESOURCE:
+        try:
+            import resource as _resource
+            _resource.setrlimit(
+                _resource.RLIMIT_CPU, (int(WORKER_CPU_SECONDS), int(WORKER_CPU_SECONDS) + 1)
+            )
+            _resource.setrlimit(
+                _resource.RLIMIT_AS,
+                (int(WORKER_AS_MB) * 1024 * 1024, int(WORKER_AS_MB) * 1024 * 1024 + 1),
+            )
+        except (ImportError, OSError, ValueError):
+            pass
+
+    # 2. Windows Logic
+    if sys.platform == 'win32':
+        _limit_resources_windows()
+
 
 
 def _format_evaluation_result(expr: sp.Basic) -> str:
@@ -737,14 +857,12 @@ def _worker_daemon_main(
     req_q: Any, res_q: Any, stop_event: Any, cancel_flags: Any
 ) -> None:
     """Worker daemon main loop that processes requests from queue."""
-    # Apply resource limits if available (Unix only)
-    # On Windows, HAS_RESOURCE is False, so this is skipped gracefully
-    if HAS_RESOURCE:
-        try:
-            _limit_resources()
-        except (ImportError, OSError, ValueError, AttributeError):
-            # Resource limits not available (Windows) or failed to apply
-            pass
+    # Apply resource limits (Unix `resource` or Windows Job Objects)
+    try:
+        _limit_resources()
+    except (ImportError, OSError, ValueError, AttributeError):
+        # Resource limits failed to apply
+        pass
     while True:
         if stop_event.is_set():
             break
@@ -876,11 +994,10 @@ def _worker_solve_dispatch(payload: dict[str, Any]) -> dict[str, Any]:
                 "ok": False,
                 "error": "No valid equations provided to worker-solve.",
             }
-        if HAS_RESOURCE:
-            try:
-                _limit_resources()
-            except (ImportError, OSError, ValueError, AttributeError):
-                # Resource limits failed - log but continue
+        try:
+            _limit_resources()
+        except (ImportError, OSError, ValueError, AttributeError):
+            # Resource limits failed - log but continue
                 try:
                     from .logging_config import safe_log
 

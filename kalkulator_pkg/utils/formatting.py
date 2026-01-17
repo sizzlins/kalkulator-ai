@@ -3,7 +3,16 @@ import logging
 import re
 from typing import Any
 
-import sympy as sp
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    import sympy as sp
+
+# Lazy SymPy Proxy
+class _LazySymPy:
+    def __getattr__(self, name):
+        import sympy
+        return getattr(sympy, name)
+sp = _LazySymPy()
 
 from kalkulator_pkg.parser import format_inequality_solution
 from kalkulator_pkg.parser import format_number
@@ -557,7 +566,7 @@ def format_solution(val: Any) -> str:
     if hasattr(val, "subs") or isinstance(val, sp.Expr):
         try:
             val = simplify_exponential_bases(val)
-        except Exception:
+        except (ValueError, TypeError, AttributeError, ArithmeticError):
             # Fallback if simplification fails
             pass
 
@@ -567,7 +576,7 @@ def format_solution(val: Any) -> str:
             if hasattr(val, "free_symbols") and not val.free_symbols:
                 # No free symbols - this is a numeric value, evaluate it
                 val = val.evalf()
-        except Exception:
+        except (ValueError, TypeError, AttributeError, ArithmeticError):
             pass
 
     s = str(val)
@@ -612,8 +621,7 @@ def format_solution(val: Any) -> str:
 
     return s
 
-
-def simplify_exponential_bases(expr: sp.Expr) -> sp.Expr:
+def simplify_exponential_bases(expr: "sp.Expr") -> "sp.Expr":
     """
     Transform exp(c*x) -> (base)^x where base = exp(c) is a clean integer/rational.
 
@@ -641,7 +649,7 @@ def simplify_exponential_bases(expr: sp.Expr) -> sp.Expr:
     if new_args != list(expr.args):
         try:
             expr = expr.func(*new_args)
-        except Exception:
+        except (ValueError, TypeError, AttributeError):
             # Fallback for weird SymPy internal structures
             pass
 
@@ -680,7 +688,7 @@ def simplify_exponential_bases(expr: sp.Expr) -> sp.Expr:
                                 inv_base = int(round(inv_val_r))
                                 if inv_base > 1:
                                     return sp.Pow(sp.Rational(1, inv_base), remaining)
-                except Exception:
+                except (ValueError, TypeError, AttributeError, ArithmeticError):
                     pass
 
         # Check for simple exp(c) -> integer pattern
@@ -693,7 +701,7 @@ def simplify_exponential_bases(expr: sp.Expr) -> sp.Expr:
                     if abs(val_r - round(val_r)) < 1e-9:
                         base = int(round(val_r))
                         return sp.Integer(base)
-            except Exception:
+            except (ValueError, TypeError, AttributeError, ArithmeticError):
                 pass
 
     return expr

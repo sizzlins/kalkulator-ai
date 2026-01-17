@@ -336,6 +336,7 @@ def optimize_constants_bfgs(
     X: np.ndarray,
     y: np.ndarray,
     max_iter: int = 50,
+    sample_weight: np.ndarray | None = None
 ) -> ExpressionTree:
     """Optimize constants in the tree using BFGS (scipy.optimize).
     
@@ -347,6 +348,7 @@ def optimize_constants_bfgs(
         X: Input data
         y: Target values
         max_iter: Maximum optimization iterations
+        sample_weight: Optional weights for each sample
         
     Returns:
         Tree with optimized constants
@@ -367,30 +369,60 @@ def optimize_constants_bfgs(
     if not constants:
         return new_tree
     
-    # Extract initial values
-    x0 = np.array([float(c.value) if not isinstance(c.value, complex) else c.value.real 
-                   for c in constants])
+    # Extract initial values (real parts only for optimization)
+    x0 = []
+    for c in constants:
+        val = c.value
+        if isinstance(val, complex):
+            x0.append(val.real)
+        else:
+            x0.append(float(val))
+    x0 = np.array(x0)
     
     if len(x0) == 0:
         return new_tree
     
-    # Define objective function
+    # Define objective function (Weighted MSE)
     def objective(params):
         # Inject parameters into tree
         for i, c in enumerate(constants):
-            c.value = params[i]
+            # Preserve original type structure/imaginary part if needed
+            # For now, we only optimize real components
+            if isinstance(constants[i].value, complex):
+                c.value = params[i] + 1j * constants[i].value.imag
+            else:
+                c.value = params[i]
+        
+        # CRITICAL: Invalidate caches so evaluate() sees new constant values!
+        new_tree._rpn_stack = None
+        new_tree._numba_opcodes = None
+        new_tree._numba_values = None
+        new_tree._compiled_func = None
         
         try:
             pred = new_tree.evaluate(X)
             if not np.all(np.isfinite(pred)):
                 return 1e10
-            mse = np.mean((pred - y) ** 2)
+                
+            residuals = pred - y
+            squared_error = residuals ** 2
+            
+            if sample_weight is not None:
+                mse = np.average(squared_error, weights=sample_weight)
+            else:
+                mse = np.mean(squared_error)
+                
             return float(mse) if np.isfinite(mse) else 1e10
-        except (ValueError, OverflowError, TypeError):
+        except (ValueError, OverflowError, TypeError, FloatingPointError):
             return 1e10
     
     # Run BFGS optimization
     try:
+        # Debug: Check initial state
+        # print("DEBUG: Starting BFGS")
+        # print(f"DEBUG: x0 = {x0}")
+        # print(f"DEBUG: Initial MSE = {objective(x0)}")
+        
         result = minimize(
             objective,
             x0,
@@ -398,36 +430,71 @@ def optimize_constants_bfgs(
             options={'maxiter': max_iter, 'disp': False}
         )
         
+        # print(f"DEBUG: Result success={result.success}, fun={result.fun}, x={result.x}")
+        
         # Apply optimal values
         if result.success or result.fun < objective(x0):
             for i, c in enumerate(constants):
-                c.value = result.x[i]
+                if isinstance(constants[i].value, complex):
+                     c.value = result.x[i] + 1j * constants[i].value.imag
+                else:
+                    c.value = result.x[i]
+        else:
+            # print("DEBUG: Optimization failed/worsened, reverting.")
+            pass
                 
-        # Integer snapping (same as hill-climbing)
+        # Integer snapping (Agent Handoff Rule 5)
+        # We re-evaluate to see if snapping hurts performance significantly
+        # Ensure we're using the BEST values found (which are now in the tree/x0)
+        # Recalculate best MSE with current values
+        current_best_mse = objective(np.array([c.value.real if isinstance(c.value, complex) else c.value for c in constants]))
+        
         for const_node in constants:
             current_val = const_node.value
-            if isinstance(current_val, complex):
+            if isinstance(current_val, complex): 
                 continue
+                
             try:
+                # Snap to integer
                 nearest_int = round(current_val)
-                if abs(current_val - nearest_int) < 0.05:
-                    # Test if integer is acceptable
+                if abs(current_val - nearest_int) < 0.05: # 5% snapping tolerance
                     const_node.value = nearest_int
-                    pred = new_tree.evaluate(X)
-                    mse_int = np.mean((pred - y) ** 2)
                     
-                    const_node.value = current_val
-                    pred = new_tree.evaluate(X)
-                    mse_float = np.mean((pred - y) ** 2)
+                    # Invalidate cache again for check
+                    new_tree._rpn_stack = None
+                    new_tree._numba_opcodes = None
+                    new_tree._numba_values = None
                     
-                    if mse_int <= mse_float * 1.05:
-                        const_node.value = nearest_int
+                    # Re-calculate MSE
+                    pred = new_tree.evaluate(X)
+                    residuals = pred - y
+                    sq_err = residuals ** 2
+                    
+                    if sample_weight is not None:
+                        mse_int = np.average(sq_err, weights=sample_weight)
+                    else:
+                        mse_int = np.mean(sq_err)
+                        
+                    # Accept if not significantly worse (1% tolerance)
+                    # We prefer integers for interpretability
+                    if mse_int <= current_best_mse * 1.01 + 1e-9:
+                         # Keep integer
+                         # print(f"DEBUG: Snapped {current_val} -> {nearest_int}")
+                         pass
+                    else:
+                         # Revert
+                         const_node.value = current_val
             except (ValueError, TypeError, OverflowError):
                 pass
                 
-    except (ValueError, RuntimeError):
-        # BFGS failed, return original tree
+    except (ValueError, RuntimeError) as e:
+        # print(f"DEBUG: Optimization crashed: {e}")
         pass
+    
+    # Final cleanup of cache just in case
+    new_tree._rpn_stack = None
+    new_tree._numba_opcodes = None
+    new_tree._numba_values = None
     
     return new_tree
 

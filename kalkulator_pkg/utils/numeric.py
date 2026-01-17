@@ -5,7 +5,16 @@ import signal
 import threading
 from math import gcd
 
-import sympy as sp
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    import sympy as sp
+
+# Lazy SymPy Proxy
+class _LazySymPy:
+    def __getattr__(self, name):
+        import sympy
+        return getattr(sympy, name)
+sp = _LazySymPy()
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +90,17 @@ def parse_target_with_ambiguity_detection(
         literal_frac = sp.Rational(str(decimal_val))
 
         # Try to find simpler rational approximation
-        # Check small denominators: 2, 3, 4, 6, 12, etc.
+        # Use our robust continued fraction / LLL detector
+        rational_pair = _try_detect_rational_robust(float(literal_frac), max_small_denominator, 1e-3)
+        
+        if rational_pair:
+             p, q = rational_pair
+             # Only accept if denominator is actually smaller (simplification)
+             if q < literal_frac.denominator:
+                  simpler_rational = sp.Rational(p, q)
+                  return (simpler_rational, literal_frac, True)
+        
+        # Fallback to standard limit_denominator if LLL failed or wasn't used
         frac = Fraction(literal_frac.numerator, literal_frac.denominator)
         simpler_frac = frac.limit_denominator(max_small_denominator)
 
@@ -348,3 +367,57 @@ def solve_modulo_system_if_applicable(
             pass
 
     return (False, 0)
+
+def eval_to_float(val) -> float:
+    """Convert a value (string or number) to float, evaluating symbolic expressions.
+    
+    Handles SymPy infinity types (zoo, oo, S.Infinity) and string representations.
+    Extracted from find_function_from_data for modularity.
+    """
+    if isinstance(val, (int, float)):
+        return float(val)
+
+    # Handle SymPy infinity types BEFORE general conversion
+    # zoo = ComplexInfinity, oo = positive infinity
+    # Use global lazy sp
+    if val is sp.zoo or val is sp.oo or val is sp.S.Infinity:
+        return float("inf")
+    if val is sp.S.NegativeInfinity:
+        return float("-inf")
+    if val is sp.nan or val is sp.S.NaN:
+        return float("nan")
+
+    if isinstance(val, str):
+        # Check for string representations of infinity
+        val_lower = val.lower().strip()
+        if val_lower in ("zoo", "oo", "inf", "infinity", "complexinfinity"):
+            return float("inf")
+        if val_lower in ("nan", "-nan"):
+            return float("nan")
+
+        try:
+            # Try direct conversion first
+            return float(val)
+        except ValueError:
+            # Evaluate using sympy parser if string is an expression (e.g. "sqrt(2)")
+            try:
+                # Local import to avoid circular dep if parser imports numeric
+                from kalkulator_pkg.parser import parse_preprocessed
+                expr = parse_preprocessed(val)
+                return float(expr.evalf())
+            except Exception:
+                # Last resort: try simple eval (risky? parser handles safe eval)
+                # If parse_preprocessed fails, raising ValueError is appropriate for "eval_to_float"
+                raise ValueError(f"Could not convert string '{val}' to float")
+
+    # If it's a SymPy expression (but not one of the special singletons above)
+    if hasattr(val, "evalf"):
+        try:
+            return float(val.evalf())
+        except Exception:
+             pass
+
+    try:
+        return float(val)
+    except Exception:
+        raise ValueError(f"Could not convert {val!r} to float")

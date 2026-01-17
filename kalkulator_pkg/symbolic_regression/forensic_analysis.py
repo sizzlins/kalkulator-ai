@@ -47,7 +47,7 @@ def _compose_seeds(pole_seeds, outer_functions):
     return composed
 
 def _detect_integer_patterns(X, y):
-    """The 'Gemini Method': Phase 3 - Integer Pattern Recognition."""
+    """Phase 3 - Integer Pattern Recognition (Robust LLL)."""
     # Allow (N,1) shaped arrays
     if X.ndim > 1 and X.shape[1] > 1: return []
     try: x_flat = X.flatten()
@@ -123,7 +123,7 @@ def _detect_integer_patterns(X, y):
                 elif num_rel and den == 1: seeds.append(num_rel)
         except: continue
             
-    return list(set(seeds))
+    return sorted(list(set(seeds)))
 
 # Stubs for other detectors (to be ported fully later)
 def _detect_step_patterns(X, y): return []
@@ -327,7 +327,7 @@ def _detect_bipolar_poles(X, y, variable_names=None, verbose=False):
     if verbose and seeds:
         print(f"  -> Bipolar poles detected, generated {len(seeds)} atan-based seeds")
     
-    return list(set(seeds))  # Remove duplicates
+    return sorted(list(set(seeds)))  # REPRODUCIBILITY: Sorted to avoid hash randomization
 
 def _detect_power_peeling(X, y):
     """Detect if y = Base(x)^x via Rational Analysis on y^(1/x)."""
@@ -752,4 +752,4 @@ def generate_pattern_seeds(X, y, variable_names=None, verbose=False):
             seeds.extend(trig_seeds)
     except: pass
         
-    return list(set(seeds))
+    return sorted(list(set(seeds)))
