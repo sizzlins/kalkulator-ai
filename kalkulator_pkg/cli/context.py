@@ -4,10 +4,13 @@ from typing import List
 from typing import Optional
 from typing import Tuple
 
+from ..core import Context
 
 @dataclass
-class ReplContext:
-    """Holds the state of the interactive REPL session."""
+class ReplContext(Context):
+    """Holds the state of the interactive REPL session.
+    Inherits from core.Context to include Application State (FunctionRegistry).
+    """
 
     timing_enabled: bool = False
     cache_hits_enabled: bool = False

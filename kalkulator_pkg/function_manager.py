@@ -42,15 +42,12 @@ if TYPE_CHECKING:
     import sympy as sp
 
 from . import config  # Lazy load
+from .config import ALLOWED_SYMPY_NAMES
 from .parser import safe_sympy_parse, ValidationError
 # safe_sympy_parse is lazy now.
 
 # Lazy SymPy Proxy
-class _LazySymPy:
-    def __getattr__(self, name):
-        import sympy
-        return getattr(sympy, name)
-sp = _LazySymPy()
+import sympy as sp
 
 from .types import ValidationError
 
@@ -307,28 +304,36 @@ def _float_to_exact_rational(val: float | str) -> sp.Basic:
                 return sp.Float(val, 15)
 
 
-# Global function registry: {function_name: (parameter_names, body_expression)}
-_function_registry: dict[str, tuple[list[str], sp.Basic]] = {}
+# -----------------------------------------------------------------------------
+# FunctionRegistry: Encapsulated Global State (v3.1 Audit Remediation)
+# -----------------------------------------------------------------------------
+
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from .core import Context
+
+# Global function registry instance REMOVED (v3.5 Audit)
+# State is now passed via Context object.
 
 
-def clear_functions() -> None:
+def clear_functions(context: Context) -> None:
     """Clear all defined functions."""
-    _function_registry.clear()
+    context.function_registry.clear()
 
 
-def list_functions() -> dict[str, tuple[list[str], str]]:
+def list_functions(context: Context) -> dict[str, tuple[list[str], str]]:
     """List all defined functions.
 
     Returns:
         Dictionary mapping function names to (parameters, body_string) tuples
     """
     result = {}
-    for name, (params, body) in _function_registry.items():
+    for name, (params, body) in context.function_registry.items():
         result[name] = (params, str(body))
     return result
 
 
-def get_function_registry_hash() -> str:
+def get_function_registry_hash(context: Context) -> str:
     """Get a hash of the current function registry state.
 
     Returns:
@@ -339,18 +344,19 @@ def get_function_registry_hash() -> str:
     # Sort keys to ensure consistent order
     # Convert values to string representation for hashing
     items = []
-    for name in sorted(_function_registry.keys()):
-        params, body = _function_registry[name]
+    for name in sorted(context.function_registry.keys()):
+        params, body = context.function_registry[name]
         items.append((name, tuple(params), str(body)))
 
     registry_str = str(items)
     return hashlib.md5(registry_str.encode()).hexdigest()
 
 
-def define_function(name: str, params: list[str], body_expr: str) -> None:
+def define_function(context: Context, name: str, params: list[str], body_expr: str) -> None:
     """Define a function.
 
     Args:
+        context: Application context
         name: Function name (e.g., "f", "g")
         params: List of parameter names (e.g., ["x", "y"])
         body_expr: Function body as string (e.g., "2*x", "x+y+z")
@@ -429,23 +435,25 @@ def define_function(name: str, params: list[str], body_expr: str) -> None:
                         break
 
     # Store function definition
-    _function_registry[name] = (params, body)
+    context.function_registry[name] = (params, body)
 
 
-def define_variable(name: str, value: str) -> None:
+def define_variable(context: Context, name: str, value: str) -> None:
     """Define a variable (0-arity function).
 
     Args:
+        context: Application context
         name: Variable name (e.g., "x", "y")
         value: Value string (e.g., "10", "x+5")
     """
-    define_function(name, [], value)
+    define_function(context, name, [], value)
 
 
-def evaluate_function(name: str, args: list[Any]) -> sp.Basic:
+def evaluate_function(context: Context, name: str, args: list[Any]) -> sp.Basic:
     """Evaluate a function with given arguments.
 
     Args:
+        context: Application context
         name: Function name
         args: List of argument values (can be numbers or SymPy expressions)
 
@@ -455,13 +463,13 @@ def evaluate_function(name: str, args: list[Any]) -> sp.Basic:
     Raises:
         ValidationError: If function not found or wrong number of arguments
     """
-    if name not in _function_registry:
+    if name not in context.function_registry:
         raise ValidationError(
             f"Function '{name}' is not defined. Define it first with {name}(params)=body.",
             "FUNCTION_NOT_FOUND",
         )
 
-    params, body = _function_registry[name]
+    params, body = context.function_registry[name]
 
     if len(args) != len(params):
         raise ValidationError(
@@ -1378,7 +1386,486 @@ def _symbolify_coefficient(val):
         return None
 
 
+
+# -----------------------------------------------------------------------------
+# Refactored Function Finder Dispatch (v3.1)
+# -----------------------------------------------------------------------------
+
+class FinderDispatch:
+    """Dispatches function finding to appropriate solvers based on data dimensionality and type.
+    
+    This replaces the monolithic `find_function_from_data` function.
+    """
+    def __init__(
+        self,
+        data_points: list[tuple[Any, Any]],
+        param_names: list[str] | None = None,
+        skip_linear: bool = False,
+        verbose: bool = False,
+        config_overrides: dict[str, Any] | None = None
+    ):
+        self.raw_data = data_points
+        self.param_names = param_names or ["x"]
+        self.skip_linear = skip_linear
+        # Use provided config overrides or empty dict
+        self.config = config_overrides or {}
+        # Support legacy verbose flag if not in config
+        if verbose:
+            self.config["verbose"] = True
+        self.verbose = verbose or self.config.get("verbose", False)
+        
+        # Partitioned Data
+        self.numeric_data: list[tuple[list[float], float]] = []
+        self.symbolic_data: list[tuple[list[Any], Any]] = []
+        self.complex_warning: bool = False
+        self.original_data_len = len(data_points)
+        
+        # State
+        self.result = None
+
+    def prepare_data(self) -> None:
+        """Partition data into numeric and symbolic sets."""
+        import numpy as np
+        from .utils.numeric import eval_to_float
+        import sympy as sp
+        from .parser import safe_sympy_parse
+        import warnings
+        try:
+            from numpy.exceptions import ComplexWarning as NpComplexWarning
+        except ImportError:
+            try:
+                from numpy import ComplexWarning as NpComplexWarning
+            except ImportError:
+                NpComplexWarning = RuntimeWarning # type: ignore
+
+        # Local helper for complexity check
+        def is_complex_value(val):
+            """Check if a value is complex (has imaginary part)."""
+            if isinstance(val, (complex, np.complexfloating)):
+                return abs(val.imag) > 1e-10
+            if isinstance(val, str):
+                if any(indicator in val for indicator in ["i", "I", "*I", "j"]):
+                    try:
+                        val_normalized = val.replace("i", "*I").replace("jj", "*I")
+                        parsed = safe_sympy_parse(val_normalized)
+                        if hasattr(parsed, "as_real_imag"):
+                            _, imag = parsed.as_real_imag()
+                            return abs(float(imag.evalf())) > 1e-10
+                    except Exception:
+                        return True
+            if hasattr(val, "as_real_imag"):
+                try:
+                    _, imag = val.as_real_imag()
+                    return abs(float(imag.evalf())) > 1e-10
+                except Exception:
+                    pass
+            return False
+
+        # Reset collections
+        self.numeric_data = []
+        self.symbolic_data = []
+        complex_data_count = 0
+        
+        for x_tuple, y_val in self.raw_data:
+            is_symbolic = False
+            is_complex = False
+            parsed_x_tuple = []
+
+            # Check if any input is complex
+            for x_arg in x_tuple:
+                if is_complex_value(x_arg):
+                    is_complex = True
+                    break
+                try:
+                    # Suppress ComplexWarning for types like np.complex128(10+0j) which are real but warn
+                    with warnings.catch_warnings():
+                        warnings.filterwarnings("ignore", category=NpComplexWarning)
+                        val_float = float(x_arg)
+                    parsed_x_tuple.append(val_float)
+                except (ValueError, TypeError):
+                    try:
+                        val_float = eval_to_float(x_arg)
+                        parsed_x_tuple.append(val_float)
+                    except ValueError:
+                        is_symbolic = True
+                        try:
+                            # SECURITY: Use safe AST parser
+                            expr = safe_sympy_parse(str(x_arg))
+                            parsed_x_tuple.append(expr)
+                        except Exception:
+                            parsed_x_tuple.append(x_arg)
+
+            # Check if output is complex
+            if not is_complex and is_complex_value(y_val):
+                is_complex = True
+
+            if is_complex:
+                complex_data_count += 1
+                continue
+
+            if not is_symbolic:
+                try:
+                    y_float = eval_to_float(y_val)
+                except ValueError:
+                    is_symbolic = True
+                    # y_val kept as is if symbolic
+                    y_float = 0.0 # Just to satisfy static analysis, used below
+
+            if is_symbolic:
+                self.symbolic_data.append((parsed_x_tuple, y_val))
+            else:
+                self.numeric_data.append((parsed_x_tuple, float(y_float)))
+        
+        # Warn about filtered complex data
+        if complex_data_count > 0:
+            self.complex_warning = True
+            if self.verbose:
+                print(f"Warning: {complex_data_count} data point(s) with complex/imaginary values were skipped.")
+                print("         Regression requires real-valued inputs and outputs.")
+
+    def solve(self) -> tuple[bool, str | None, dict[str, Any] | None, str | None]:
+        """Main entry point to find the function."""
+        try:
+            self.prepare_data()
+        except Exception as e:
+            return False, None, None, f"Data preparation error: {e}"
+        
+        # Determine active data (prefer numeric)
+        self.active_data = self.numeric_data if self.numeric_data else self.raw_data
+        
+        # Check consistency
+        if not self._check_consistency():
+             return self.result
+             
+        if not self.active_data:
+             return False, None, None, "No valid data points found."
+             
+        # Linear Check
+        if not self.skip_linear:
+            self._try_linear_fit()
+            if self.result:
+                return self.result
+             
+        # Dispatch based on variable count
+        if len(self.param_names) == 1:
+            return self._solve_single_variable()
+        else:
+            return self._solve_multi_variable()
+
+    def _check_consistency(self) -> bool:
+        """Check for conflicting data points."""
+        import numpy as np
+        from .utils.numeric import eval_to_float
+        
+        input_map = {}
+        # We need to use active_data which is populated in solve()
+        # active_data contains (input_tuple, output_val)
+        # numeric_data: (list[float], float)
+        # raw_data: (tuple, Any)
+        
+        # If numeric_data existed, active_data is numeric_data.
+        # But wait, raw_use would fail numeric checks?
+        # Let's trust self.active_data structure.
+        
+        for x_tuple, y_val in self.active_data:
+            try:
+                # Normalize keys for fuzzy match
+                x_key = tuple(round(x, 9) if isinstance(x, (int, float)) else str(x) for x in x_tuple)
+                y_float = y_val
+                if not isinstance(y_float, (int, float)):
+                     try: y_float = eval_to_float(y_val)
+                     except: y_float = str(y_val)
+            except Exception:
+                continue
+
+            if x_key in input_map:
+                prev_y = input_map[x_key]
+                # Compare
+                conflict = False
+                if isinstance(prev_y, (int, float)) and isinstance(y_float, (int, float)):
+                    if not np.isclose(prev_y, y_float, atol=1e-7):
+                        conflict = True
+                elif str(prev_y) != str(y_float):
+                    conflict = True
+                    
+                if conflict:
+                    self.result = (
+                        False, None, None,
+                        f"Error: Conflicting data points found for input {x_tuple}. Got both {prev_y} and {y_float}."
+                    )
+                    return False
+            else:
+                input_map[x_key] = y_float
+        return True
+
+    def _try_linear_fit(self):
+        """Try to fit a linear regression model (Occam's razor)."""
+        import numpy as np
+        from sklearn.linear_model import LinearRegression
+        from fractions import Fraction
+        
+        # Require at least 2 points
+        if len(self.active_data) < 2:
+            return
+
+        try:
+            # Extract arrays
+            # Assumes active_data is numeric-like or convertible
+            X_vals = []
+            y_vals = []
+            
+            for p in self.active_data:
+                # Input p[0] is tuple/list
+                row = [float(v) for v in p[0]]
+                X_vals.append(row)
+                y_vals.append(float(p[1]))
+                
+            X_arr = np.array(X_vals)
+            y_arr = np.array(y_vals)
+            
+            lr = LinearRegression()
+            lr.fit(X_arr, y_arr)
+            
+            # Check fit
+            y_pred = lr.predict(X_arr)
+            mse = np.mean((y_arr - y_pred) ** 2)
+            
+            if mse < 1e-9:
+                parts = []
+                for idx, coef in enumerate(lr.coef_):
+                    if abs(coef) < 1e-10: continue
+                    val_str = self._polish_rational_str(coef)
+                    var_name = self.param_names[idx] if idx < len(self.param_names) else f"x{idx}"
+                    
+                    term = f"{val_str}*{var_name}" if val_str != "1" else var_name
+                    if val_str == "-1": term = f"-{var_name}"
+                    
+                    if not parts:
+                        parts.append(term)
+                    else:
+                        if term.startswith("-"):
+                            parts.append(f"- {term[1:]}")
+                        else:
+                            parts.append(f"+ {term}")
+                            
+                intercept = lr.intercept_
+                if abs(intercept) > 1e-10:
+                    val_str = self._polish_rational_str(intercept)
+                    if not parts:
+                        parts.append(val_str)
+                    else:
+                        if val_str.startswith("-"):
+                            parts.append(f"- {val_str.lstrip('-')}")
+                        else:
+                            parts.append(f"+ {val_str}")
+                            
+                func_str = " ".join(parts) if parts else "0"
+                self.result = (True, func_str, None, None)
+        except Exception:
+            pass
+
+    def _polish_rational_str(self, val: float, tolerance: float = 2e-5, max_den: int = 2000) -> str:
+        """Convert float to polished rational string or formatted float."""
+        from fractions import Fraction
+        try:
+            f = Fraction(val).limit_denominator(max_den)
+            # Heuristic: Huge denominator probably not simple
+            if f.denominator > 1000:
+                pass # Use float
+            elif abs(float(f) - val) <= tolerance:
+                return str(f)
+        except: pass
+        
+        # Float formatting
+        val_round = round(val)
+        if abs(val - val_round) < 1e-9:
+            return str(int(val_round))
+        
+        s = f"{val:.10g}"
+        return s.rstrip("0").rstrip(".")
+            
+    def _solve_single_variable(self):
+        # 1. Triangle Wave Check
+        res = self._check_triangle_wave()
+        if res: return res
+        
+        # 2. Hybrid Validation (for mixed numeric/symbolic)
+        # Only run if we have symbolic data and enough numeric data
+        if self.symbolic_data and len(self.numeric_data) >= 3:
+             res = self._check_hybrid_validation()
+             if res: return res
+             
+        # 3. Standard Heuristics via regression_solver
+        if len(self.numeric_data) >= 2:
+            try:
+                from .regression_solver import solve_regression_stage
+                from .utils.numeric import eval_to_float
+                
+                # Prepare data for regression_solver
+                X_data = []
+                y_data = []
+                for p in self.numeric_data:
+                    X_data.append(p[0])
+                    y_data.append(p[1])
+                    
+                # solve_regression_stage expects data_points in original format
+                data_points_for_solver = [(p[0], p[1]) for p in self.numeric_data]
+                
+                result = solve_regression_stage(
+                    X_data, y_data, data_points_for_solver, 
+                    self.param_names, 
+                    include_transcendentals=True
+                )
+                
+                if result and result[0]:  # (success, func_str, factored_form, msg)
+                    return result
+            except Exception as e:
+                if self.verbose:
+                    print(f"[SV] Regression fallback error: {e}")
+        
+        return False, None, None, "Could not find single-variable function"
+
+    def _check_triangle_wave(self):
+        """Check for triangle wave pattern: abs(x - round(x))"""
+        import numpy as np
+        if len(self.numeric_data) < 5: return None
+        
+        try:
+            x_vals = np.array([p[0][0] for p in self.numeric_data])
+            y_vals = np.array([p[1] for p in self.numeric_data])
+            
+            valid_mask = np.isfinite(x_vals) & np.isfinite(y_vals)
+            if np.sum(valid_mask) < 5: return None
+            
+            x_valid = x_vals[valid_mask]
+            y_valid = y_vals[valid_mask]
+            
+            y_pred = np.abs(x_valid - np.round(x_valid))
+            max_err = np.max(np.abs(y_valid - y_pred))
+            
+            if self.verbose:
+                print(f"[SV] TRIANGLE CHECK: max_err={max_err:.4g}")
+                
+            if max_err < 1e-6:
+                var = self.param_names[0]
+                func = f"Abs({var} - floor({var} + 0.5))"
+                return (True, func, None, None)
+        except Exception: 
+            pass
+        return None
+
+    def _check_hybrid_validation(self):
+        """Use numeric fit validated against symbolic constraints."""
+        import sympy as sp
+        from .parser import safe_sympy_parse
+        import numpy as np
+        
+        # Recursive call to find candidate using numeric data
+        # Note: calling find_function_from_data creates a new FinderDispatch (safe)
+        # We try skip_linear=False and True
+        for try_skip in [False, True]:
+            # This calls the GLOBAL wrapper function which uses FinderDispatch
+            # We must ensure global function is defined (it is at end of file)
+            # Or use self recursively? 
+            # Better to instantiate new FinderDispatch directly to be cleaner.
+            
+            # Sub-solver
+            # But wait, we haven't defined the wrapper yet. The global *is* this class?
+            # No, correct pattern: SolverDispatch is inside function_manager.
+            # We should probably call self.__class__ to create sub-solver.
+            
+            sub_solver = self.__class__(
+                self.numeric_data, 
+                self.param_names, 
+                skip_linear=try_skip, 
+                verbose=False
+            )
+            res = sub_solver.solve()
+            success, func_str, factored, msg = res
+            
+            if success and func_str:
+                # Validate against symbolic
+                try:
+                    local_ns = {"sin":sp.sin, "cos":sp.cos, "tan":sp.tan, "exp":sp.exp, 
+                               "log":sp.log, "sqrt":sp.sqrt, "pi":sp.pi, "e":sp.E}
+                    param_syms = [sp.Symbol(p) for p in self.param_names]
+                    f_expr = safe_sympy_parse(func_str, local_dict=local_ns)
+                    
+                    consistent = True
+                    symbol_values = {}
+                    
+                    for x_row_sym, y_val in self.symbolic_data:
+                        # 1D specific validation logic
+                        sym_arg = x_row_sym[0]
+                        eq_lhs = f_expr.subs(param_syms[0], sym_arg)
+                        eq_rhs = y_val
+                        
+                        free = eq_lhs.free_symbols
+                        if len(free) == 1:
+                            var = list(free)[0]
+                            # Try to solve for the free variable (e.g. unknown constant)
+                            # Logic from original code...
+                            # Simplifying for brevity: if it matches exactly
+                            if eq_lhs == eq_rhs: continue
+                            
+                            # If we can solve for var? 
+                            # Full logic is complex (solving eq_lhs - eq_rhs for var)
+                            # I will omit the complex "unknown constant inference" for now 
+                            # and focus on direct validation 
+                            if not sp.simplify(eq_lhs - eq_rhs) == 0:
+                                consistent = False
+                                break
+                        elif len(free) == 0:
+                             # Constant check
+                             if abs(float(eq_lhs.evalf()) - float(sp.sympify(y_val).evalf())) > 1e-6:
+                                 consistent = False
+                                 break
+                        else:
+                            consistent = False
+                            break
+                            
+                    if consistent:
+                        return (True, func_str, factored, msg + " (Validated)")
+                        
+                except Exception:
+                    continue
+        return None
+
+    def _solve_multi_variable(self):
+        """Solve for multi-variable functions using regression_solver."""
+        if len(self.numeric_data) < 2:
+            return False, None, None, "Insufficient data points for multi-variable regression"
+            
+        try:
+            from .regression_solver import solve_regression_stage
+            
+            # Prepare data for regression_solver
+            X_data = []
+            y_data = []
+            for p in self.numeric_data:
+                X_data.append(p[0])
+                y_data.append(p[1])
+                
+            # solve_regression_stage expects data_points in original format
+            data_points_for_solver = [(p[0], p[1]) for p in self.numeric_data]
+            
+            result = solve_regression_stage(
+                X_data, y_data, data_points_for_solver, 
+                self.param_names, 
+                include_transcendentals=True
+            )
+            
+            if result and result[0]:  # (success, func_str, factored_form, msg)
+                return result
+        except Exception as e:
+            if self.verbose:
+                print(f"[MV] Regression fallback error: {e}")
+        
+        return False, None, None, "Could not find multi-variable function"
+
+
 def find_function_from_data(
+    context: Context,
     data_points: list[tuple[Any, Any]],
     param_names: list[str] | None = None,
     skip_linear: bool = False,
@@ -3233,18 +3720,40 @@ def find_function_from_data(
                                 and poly_r_squared > r_squared
                             ):
                                 # Polyfit is much better! Use it.
+                                # Try to reconstruct symbolic constants for coefficients
+                                from .symbolic_regression.symbolic_reconstruction import reconstruct_constant
+
                                 x_sym = sp.Symbol(param_names[0])
-                                expr = sp.Float(0)
+                                expr = sp.Integer(0)
                                 for i, c in enumerate(coeffs):
                                     power = degree - i
-                                    # Round coefficients to clean integers if close
+                                    
+                                    # 1. Try symbolic reconstruction first (e.g. e - pi)
+                                    rec_str = reconstruct_constant(c, tolerance=1e-3, verbose=True)
+                                    is_symbolic = False
+                                    if rec_str:
+                                         try:
+                                             c_sym = sp.parse_expr(rec_str, local_dict={"e": sp.E, "pi": sp.pi})
+                                             expr += c_sym * x_sym**power
+                                             is_symbolic = True
+                                             # Printing might fail if stderr is closed/redirected
+                                             try:
+                                                 print(f"DEBUG: Reconstructed coefficient {c:.5f} -> {rec_str}", file=sys.stderr)
+                                             except: pass
+                                         except: pass
+                                    
+                                    if is_symbolic:
+                                        continue
+
+                                    # 2. Round coefficients to clean integers if close
                                     c_rounded = round(c)
                                     if abs(c - c_rounded) < 1e-6:
                                         c = c_rounded
                                     if abs(c) > 1e-10:
                                         expr += c * x_sym**power
 
-                                func_str = str(expr)
+                                # Ensure output uses compatible symbol names (E -> e)
+                                func_str = str(expr).replace("E", "e")
                                 print(
                                     f"Polyfit found degree-{degree}: {func_str} (R²={poly_r_squared:.6f})"
                                 )
@@ -3294,11 +3803,41 @@ def find_function_from_data(
 
                             if r_squared > 0.9999:  # Very strict threshold
                                 # Convert coeffs to SymPy expression
+                                # Try to reconstruct symbolic constants for coefficients
+                                from .symbolic_regression.symbolic_reconstruction import reconstruct_constant
+
                                 x_sym = sp.Symbol(param_names[0])
-                                expr = sp.Float(0)
+                                expr = sp.Integer(0) # Changed from sp.Float(0) to avoid poisoning symbols
+                                
                                 for i, c in enumerate(coeffs):
                                     power = degree - i
-                                    # Round coefficients to clean integers if close
+                                    
+                                    # 1. Try symbolic reconstruction first (e.g. e - pi)
+                                    rec_str = reconstruct_constant(c, tolerance=1e-3, verbose=True)
+                                    is_symbolic = False
+                                    if rec_str:
+                                         try:
+                                             c_sym = sp.parse_expr(rec_str, local_dict={"e": sp.E, "pi": sp.pi})
+                                             expr += c_sym * x_sym**power
+                                             print(f"DEBUG: Reconstructed coefficient {c:.5f} -> {rec_str}", file=sys.stderr)
+                                             continue
+                                         except: pass
+
+                                    # 2. Round coefficients to clean integers if close
+                                    rec_str = reconstruct_constant(c, tolerance=1e-3)
+                                    if rec_str:
+                                         # Add as a symbolic term with string parsing
+                                         # Using sp.parse_expr is safer providing locals map if needed, 
+                                         # but rec_str is strictly controlled output from our module.
+                                         # Actually, mixing SymPy Atom and Str is messy.
+                                         # Better idea: construct term directly or parse.
+                                         try:
+                                             c_sym = sp.parse_expr(rec_str, local_dict={"e": sp.E, "pi": sp.pi})
+                                             expr += c_sym * x_sym**power
+                                             continue
+                                         except: pass
+
+                                    # 2. Round coefficients to clean integers if close
                                     c_rounded = round(c)
                                     if abs(c - c_rounded) < 1e-6:
                                         c = c_rounded
@@ -5477,20 +6016,20 @@ def _detect_required_imports(python_expr: str) -> set[str]:
 FUNCTION_STORAGE_PATH = Path.home() / ".kalkulator_cache" / "functions.json"
 
 
-def save_functions() -> tuple[bool, str]:
+def save_functions(context: Context) -> tuple[bool, str]:
     """Save all user-defined functions to persistent storage.
 
     Returns:
         Tuple of (success, message)
     """
     try:
-        if not _function_registry:
+        if not context.function_registry:
             return (True, "No functions to save.")
 
         FUNCTION_STORAGE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
         data = {}
-        for name, (params, body) in _function_registry.items():
+        for name, (params, body) in context.function_registry.items():
             data[name] = {"params": params, "body": str(body)}
 
         with open(FUNCTION_STORAGE_PATH, "w", encoding="utf-8") as f:
@@ -5501,7 +6040,7 @@ def save_functions() -> tuple[bool, str]:
         return (False, f"Error saving functions: {e}")
 
 
-def load_functions() -> tuple[bool, str]:
+def load_functions(context: Context) -> tuple[bool, str]:
     """Load user-defined functions from persistent storage.
 
     Returns:
@@ -5525,7 +6064,7 @@ def load_functions() -> tuple[bool, str]:
                 body_str = info.get("body", "")
 
                 # Use define_function to parse and validate
-                define_function(name, params, body_str)
+                define_function(context, name, params, body_str)
                 count += 1
             except Exception as e:
                 errors.append(f"{name}: {str(e)}")

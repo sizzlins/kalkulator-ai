@@ -14,18 +14,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import sympy as sp
 
-# Lazy SymPy Proxy
-class _LazySymPy:
-    _module = None
-    
-    def __getattr__(self, name):
-        if self._module is None:
-            import sympy
-            self._module = sympy
-        val = getattr(self._module, name)
-        setattr(self, name, val)  # Cache for future access
-        return val
-sp = _LazySymPy()
+import sympy as sp
 
 from .config import CACHE_SIZE_SOLVE
 from .config import ENABLE_PERSISTENT_WORKER
@@ -73,123 +62,150 @@ try:
     from multiprocessing import Manager
     from multiprocessing import Process
     from multiprocessing import Queue
-except Exception:
+except ImportError:
+    # Multiprocessing not supported or restricted
     Process = None  # type: ignore
     Queue = None  # type: ignore
     Event = None  # type: ignore
     Manager = None  # type: ignore
 
 
-def _limit_resources_windows() -> bool:
-    """Apply Windows Job Object limits (Memory) to the current process via ctypes.
+
+class WindowsJobObject:
+    """Context Manager for Windows Job Objects to enforce resource limits.
     
-    This sets a hard memory limit defined by WORKER_AS_MB.
+    Ensures the Job Object handle is closed when the context exits (e.g., worker termination).
     """
-    try:
-        import ctypes
-        from ctypes import wintypes
-        
-        kernel32 = ctypes.windll.kernel32
-        
-        # Define function signatures for 64-bit compatibility
-        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
-        kernel32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
-        
-        kernel32.SetInformationJobObject.restype = wintypes.BOOL
-        kernel32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint]
-        
-        kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
-        kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
-        
-        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
-        kernel32.GetCurrentProcess.argtypes = []
-        
-        kernel32.CloseHandle.restype = wintypes.BOOL
-        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-        
-        # Windows Constants
-        JOB_OBJECT_LIMIT_PROCESS_MEMORY = 0x100
-        JobObjectExtendedLimitInformation = 9
-        
-        class IO_COUNTERS(ctypes.Structure):
-            _fields_ = [('ReadOperationCount', ctypes.c_ulonglong),
-                        ('WriteOperationCount', ctypes.c_ulonglong),
-                        ('OtherOperationCount', ctypes.c_ulonglong),
-                        ('ReadTransferCount', ctypes.c_ulonglong),
-                        ('WriteTransferCount', ctypes.c_ulonglong),
-                        ('OtherTransferCount', ctypes.c_ulonglong)]
+    def __init__(self):
+        self.handle = None
+        self._close_func = None
 
-        class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
-            _fields_ = [('PerProcessUserTimeLimit', ctypes.c_longlong),
-                        ('PerJobUserTimeLimit', ctypes.c_longlong),
-                        ('LimitFlags', ctypes.c_ulong),
-                        ('MinimumWorkingSetSize', ctypes.c_size_t),
-                        ('MaximumWorkingSetSize', ctypes.c_size_t),
-                        ('ActiveProcessLimit', ctypes.c_ulong),
-                        ('Affinity', ctypes.c_size_t),
-                        ('PriorityClass', ctypes.c_ulong),
-                        ('SchedulingClass', ctypes.c_ulong)]
+    def __enter__(self):
+        if sys.platform != 'win32':
+            return self
+            
+        try:
+            import ctypes
+            from ctypes import wintypes
+            
+            kernel32 = ctypes.windll.kernel32
+            
+            # Define function signatures
+            kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+            kernel32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+            
+            kernel32.SetInformationJobObject.restype = wintypes.BOOL
+            kernel32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint]
+            
+            kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+            kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+            
+            kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+            kernel32.GetCurrentProcess.argtypes = []
+            
+            kernel32.CloseHandle.restype = wintypes.BOOL
+            kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+            
+            # Constants
+            JOB_OBJECT_LIMIT_PROCESS_MEMORY = 0x100
+            JOB_OBJECT_LIMIT_PROCESS_TIME = 0x2
+            JobObjectExtendedLimitInformation = 9
+            
+            class IO_COUNTERS(ctypes.Structure):
+                _fields_ = [('ReadOperationCount', ctypes.c_ulonglong),
+                            ('WriteOperationCount', ctypes.c_ulonglong),
+                            ('OtherOperationCount', ctypes.c_ulonglong),
+                            ('ReadTransferCount', ctypes.c_ulonglong),
+                            ('WriteTransferCount', ctypes.c_ulonglong),
+                            ('OtherTransferCount', ctypes.c_ulonglong)]
 
-        class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
-            _fields_ = [('BasicLimitInformation', JOBOBJECT_BASIC_LIMIT_INFORMATION),
-                        ('IoInfo', IO_COUNTERS),
-                        ('ProcessMemoryLimit', ctypes.c_size_t),
-                        ('JobMemoryLimit', ctypes.c_size_t),
-                        ('PeakProcessMemoryUsed', ctypes.c_size_t),
-                        ('PeakJobMemoryUsed', ctypes.c_size_t)]
-        
-        # 1. Create Job Object (unnamed)
-        hJob = kernel32.CreateJobObjectW(None, None)
-        if not hJob:
-            return False
+            class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+                _fields_ = [('PerProcessUserTimeLimit', ctypes.c_longlong),
+                            ('PerJobUserTimeLimit', ctypes.c_longlong),
+                            ('LimitFlags', ctypes.c_ulong),
+                            ('MinimumWorkingSetSize', ctypes.c_size_t),
+                            ('MaximumWorkingSetSize', ctypes.c_size_t),
+                            ('ActiveProcessLimit', ctypes.c_ulong),
+                            ('Affinity', ctypes.c_size_t),
+                            ('PriorityClass', ctypes.c_ulong),
+                            ('SchedulingClass', ctypes.c_ulong)]
+
+            class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+                _fields_ = [('BasicLimitInformation', JOBOBJECT_BASIC_LIMIT_INFORMATION),
+                            ('IoInfo', IO_COUNTERS),
+                            ('ProcessMemoryLimit', ctypes.c_size_t),
+                            ('JobMemoryLimit', ctypes.c_size_t),
+                            ('PeakProcessMemoryUsed', ctypes.c_size_t),
+                            ('PeakJobMemoryUsed', ctypes.c_size_t)]
             
-        # 2. Configure Limits
-        info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
-        JOB_OBJECT_LIMIT_PROCESS_TIME = 0x2
-        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_PROCESS_MEMORY | JOB_OBJECT_LIMIT_PROCESS_TIME
-        
-        # Limit to WORKER_AS_MB (MB -> Bytes)
-        limit_bytes = int(WORKER_AS_MB) * 1024 * 1024
-        info.ProcessMemoryLimit = limit_bytes
-        
-        # Limit to WORKER_CPU_SECONDS (Seconds -> 100ns units)
-        # 1 sec = 10,000,000 units
-        limit_time = int(WORKER_CPU_SECONDS * 10_000_000)
-        info.BasicLimitInformation.PerProcessUserTimeLimit = limit_time
-        
-        # Set info
-        if not kernel32.SetInformationJobObject(
-            hJob, 
-            JobObjectExtendedLimitInformation, 
-            ctypes.byref(info), 
-            ctypes.sizeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION)
-        ):
-            # Close handle on failure
-            kernel32.CloseHandle(hJob)
-            return False
+            # 1. Create Job Object
+            self.handle = kernel32.CreateJobObjectW(None, None)
+            if not self.handle:
+                logger.warning("Failed to create Windows Job Object")
+                return self
+                
+            # 2. Configure Limits
+            info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_PROCESS_MEMORY | JOB_OBJECT_LIMIT_PROCESS_TIME
             
-        # 3. Assign Process
-        # GetCurrentProcess() returns a pseudo-handle, which works
-        hProcess = kernel32.GetCurrentProcess()
-        if not kernel32.AssignProcessToJobObject(hJob, hProcess):
-            # Error 5: ACCESS_DENIED. Likely process already in a job.
-            kernel32.CloseHandle(hJob)
-            return False
+            # Memory Limit
+            info.ProcessMemoryLimit = int(WORKER_AS_MB) * 1024 * 1024
             
-        # Leak the handle intentionally so the Job Object persists for the process lifetime
-        # (If we close it, the limit *might* stay or not depending on flags, 
-        # but keeping it open is safer for anonymous jobs controlling current process)
-        # Actually, MSDN says limits remain until process terminates if using anonymous job.
-        # But allow leaking for safety.
-        # We save it to a global to prevent GC? Python GC != OS Handle close.
-        global _win_job_handle
-        _win_job_handle = hJob
+            # CPU Limit (100ns units)
+            info.BasicLimitInformation.PerProcessUserTimeLimit = int(WORKER_CPU_SECONDS * 10_000_000)
+            
+            if not kernel32.SetInformationJobObject(
+                self.handle, 
+                JobObjectExtendedLimitInformation, 
+                ctypes.byref(info), 
+                ctypes.sizeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION)
+            ):
+                logger.warning("Failed to set Job Object information")
+                kernel32.CloseHandle(self.handle)
+                self.handle = None
+                return self
+                
+            # 3. Assign Process
+            hProcess = kernel32.GetCurrentProcess()
+            if not kernel32.AssignProcessToJobObject(self.handle, hProcess):
+                # Expected if process is already in a job (e.g. nested workers or wrapper)
+                logger.debug("Could not assign process to Job Object (Access Denied?)")
+                kernel32.CloseHandle(self.handle)
+                self.handle = None
+                return self
+
+            # Capture CloseHandle for cleanup (so we can delete ctypes module)
+            self._close_func = kernel32.CloseHandle
+            
+            logger.debug("Windows Job Object applied successfully")
+            
+        except Exception as e:
+            logger.warning(f"Windows Job Object error: {e}")
+            if self.handle:
+                try:
+                    kernel32.CloseHandle(self.handle)
+                except Exception:
+                    # Ignore cleanup errors on exit
+                    pass
+                self.handle = None
         
-        return True
-        
-    except (OSError, ValueError, AttributeError, ImportError) as e:
-        logger.warning(f"Failed to set Windows resource limits: {e}")
-        return False
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.handle:
+            try:
+                # Use captured close function if available (robust against ctypes removal)
+                if self._close_func:
+                    self._close_func(self.handle)
+                    logger.debug("Closed Windows Job Object handle")
+                else:
+                    # Fallback if not captured
+                    import ctypes
+                    ctypes.windll.kernel32.CloseHandle(self.handle)
+            except Exception as e:
+                logger.warning(f"Error closing Job Object handle: {e}")
+            self.handle = None
+
 
 
 def _limit_resources() -> None:
@@ -209,68 +225,59 @@ def _limit_resources() -> None:
             pass
 
     # 2. Windows Logic
-    if sys.platform == 'win32':
-        _limit_resources_windows()
+    # 2. Windows Logic
+    # Handled by WindowsJobObject context manager in _worker_daemon_main
+    pass
 
 
 
-def _format_evaluation_result(expr: sp.Basic) -> str:
-    """Format a SymPy expression result as a canonical string.
+def _format_evaluation_result(expr: sp.Basic) -> str | int | float | complex:
+    """Format a SymPy expression result as a number or string.
 
-    This ensures numeric results like sin(0) -> "0" and cos(0) -> "1"
-    are formatted consistently for tests and output.
+    v3.4 Audit Remediation: Returns actual numbers (int/float/complex) for numeric 
+    results instead of strings like "0" or "3.14", improving type stability.
+    Symbolic expressions are still returned as strings.
 
     Args:
         expr: SymPy expression to format
 
     Returns:
-        Canonical string representation
+        int/float/complex for numbers, str for symbolic expressions
     """
     # Try numeric evaluation first for exact results
     try:
-        num_val = sp.N(expr, 15)
-
-        # Check for practically zero (works for complex Add expressions too)
-
-        if hasattr(num_val, "is_Number") and num_val.is_Number:
-            # Check if it's real (imaginary part is negligible)
-            try:
-                imag_part = abs(sp.im(num_val))
-                if imag_part > 1e-9:
-                    # Has significant imaginary part - return symbolic form
-                    return str(expr)
-                else:
-                    # Insignificant imaginary part - discard it by taking real part
-                    num_val = sp.re(num_val)
-            except (AttributeError, TypeError):
-                pass
-
-            # It's a real number - format canonically
-            # Exact zero -> "0"
-            if num_val == 0 or num_val == sp.S.Zero:
-                return "0"
-            # Exact one -> "1"
-            if num_val == 1 or num_val == sp.S.One:
-                return "1"
-
-            # For other numbers, use appropriate format
-            if hasattr(num_val, "is_Rational") and num_val.is_Rational:
-                # Exact rationals: preserve exact representation
-                return str(num_val)
-            elif hasattr(num_val, "is_Integer") and num_val.is_Integer:
-                # Integers: simple string
-                return str(num_val)
-            else:
-                # Floating point: format with fixed precision, strip trailing zeros
-                s = str(num_val)
-                if "." in s:
-                    s = s.rstrip("0").rstrip(".")
-                return s
-    except (ValueError, TypeError, ArithmeticError, AttributeError):
+        # Standardize: simplify first if it's simple
+        if not expr.free_symbols:
+            # Check for exact integer
+            if expr.is_integer:
+                 return int(expr)
+            
+            # Use full precision eval
+            num_val = sp.N(expr, 20)
+            
+            if hasattr(num_val, "is_Number") and num_val.is_Number:
+                # Check complex
+                try:
+                    c_val = complex(num_val)
+                    if abs(c_val.imag) < 1e-9:
+                        # Real
+                        r_val = float(c_val.real)
+                        # Check integer
+                        if abs(r_val - round(r_val)) < 1e-9:
+                            return int(round(r_val))
+                        return r_val
+                    else:
+                        return c_val
+                except Exception:
+                    pass
+    except Exception:
+        # Formatting failed, fall back to string
         pass
-
-    # If numeric evaluation fails or result isn't numeric, return symbolic string
+        
+    # Fallback to string for symbolic
     return str(expr)
+
+
 
 
 def _get_user_friendly_error_message(
@@ -460,9 +467,17 @@ def _get_user_friendly_error_message(
 
 
 def worker_evaluate(
-    preprocessed_expr: str, allowed_functions: frozenset[str] | None = None
+    preprocessed_expr: str, 
+    allowed_functions: frozenset[str] | None = None,
+    user_functions: dict[str, Any] | None = None
 ) -> dict[str, Any]:
-    """Evaluate a preprocessed expression in a sandboxed worker."""
+    """Evaluate a preprocessed expression in a sandboxed worker.
+    
+    Args:
+        preprocessed_expr: The expression string (preprocessed).
+        allowed_functions: Set of allowed function names (for parsing).
+        user_functions: Dictionary of user-defined functions {name: (params, body)} for substitution.
+    """
     logger.debug(f"Evaluating expression: {preprocessed_expr[:100]}...")
     if HAS_RESOURCE:
         try:
@@ -470,12 +485,57 @@ def worker_evaluate(
             logger.debug("Resource limits applied")
         except (OSError, ValueError) as e:
             logger.warning(f"Failed to apply resource limits: {e}")
+            
     try:
+        # Phase 4 Audit Fix: Parse first (as function calls), then substitute.
+        # This replaces the insecure 'expand_function_calls' pre-parser.
         expr = parse_preprocessed(
             preprocessed_expr, allowed_functions=allowed_functions
         )
+        
+        # Substitute User Functions if provided
+        if user_functions and expr is not None:
+             # Look for Function atoms that match user definitions
+             # We use a loop to handle nested dependencies (e.g. f(g(x)))
+             # but limit iterations to avoid infinite recursion.
+             # However, simple substitution should work if we rely on SymPy's subs or replace.
+             
+             # Create substitution map for known functions
+             # But we need to handle arguments: f(2) -> f_body.subs(params, (2,))
+             
+             def replace_user_func(node):
+                 if isinstance(node, sp.Function):
+                     name = type(node).__name__ # Get the function name (e.g. "f")
+                     if name in user_functions:
+                         params, body = user_functions[name]
+                         args = node.args
+                         
+                         # Validate argument count
+                         if len(args) != len(params):
+                             # We can't raise specific error here easily inside replace, 
+                             # but we can return node (fail to sub) or raise.
+                             # Raising helps the user know why.
+                             raise ValidationError(
+                                 f"Function '{name}' expects {len(params)} argument(s) but got {len(args)}.",
+                                 "WRONG_ARGUMENT_COUNT"
+                             )
+                             
+                         # Create substitution dict: param_symbol -> arg_expr
+                         subs_map = {sp.Symbol(p): arg for p, arg in zip(params, args)}
+                         
+                         # safely substitute
+                         return body.subs(subs_map)
+                 return node
+                 
+             # We need to handle nested calls: f(g(x)).
+             # replace(query, value) works.
+             expr = expr.replace(lambda x: isinstance(x, sp.Function) and type(x).__name__ in user_functions, replace_user_func)
+
     except ValidationError as e:
-        logger.warning(f"Validation error: {e.code} - {e.message}")
+        if e.code == "SYNTAX_ERROR" or e.code == "TOKENIZER_ERROR":
+            logger.debug(f"Validation error: {e.code} - {e.message}")
+        else:
+            logger.warning(f"Validation error: {e.code} - {e.message}")
         return {"ok": False, "error": str(e), "error_code": e.code}
     except (ValueError, SyntaxError) as e:
         # Only log at debug level since we're providing a user-friendly error message
@@ -490,7 +550,7 @@ def worker_evaluate(
         # Check if this is a TokenError (from tokenize module) which often indicates syntax issues
         error_type_name = type(e).__name__
         is_token_error = "TokenError" in error_type_name
-
+        
         # Use the user-friendly error message helper
         error_msg, error_code = _get_user_friendly_error_message(e, preprocessed_expr)
 
@@ -857,12 +917,23 @@ def _worker_daemon_main(
     req_q: Any, res_q: Any, stop_event: Any, cancel_flags: Any
 ) -> None:
     """Worker daemon main loop that processes requests from queue."""
-    # Apply resource limits (Unix `resource` or Windows Job Objects)
+    
+    # Use Context Manager manually to avoid re-indenting the massive loop body
+    job_ctx = WindowsJobObject()
+    job_ctx.__enter__()
+    
+    # Apply Unix resource limits (if applicable)
     try:
         _limit_resources()
     except (ImportError, OSError, ValueError, AttributeError):
-        # Resource limits failed to apply
         pass
+        
+    # SECURITY: We previously removed ctypes here, but the audit revealed this causes
+    # instability and breaks the cleanup logic for WindowsJobObject. 
+    # For v3.4, we rely on the OS-level Job Object limits and careful API usage checks.
+    # The 'del sys.modules' hack is removed.
+    pass
+        
     while True:
         if stop_event.is_set():
             break
@@ -975,6 +1046,11 @@ def _worker_daemon_main(
                     "id": msg.get("id"),
                 }
             )
+            
+    # Cleanup Windows Job Object handle on exit
+    # This ensures no handle leaks (Audit Requirement)
+    if job_ctx:
+        job_ctx.__exit__(None, None, None)
 
 
 def _worker_solve_dispatch(payload: dict[str, Any]) -> dict[str, Any]:
@@ -1660,3 +1736,7 @@ class Worker:
         else:
             # Handle other node types or raise an error for unsupported ones
             return f"Unsupported node type: {node_type}"
+
+
+# Alias for backward compatibility (used by CLI and other modules)
+evaluate_safely = worker_evaluate

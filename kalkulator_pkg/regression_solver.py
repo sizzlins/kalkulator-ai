@@ -919,7 +919,8 @@ def find_best_subset_small_data(X, y, max_subset_size=3, top_k=50, priorities=No
 def find_best_subset_small_data(
     X, y, feature_names=None, max_subset_size=3, top_k=50, priorities=None
 ):
-    from itertools import combinations
+    # from itertools import combinations  <-- Removed in v3.4
+
 
     n_features = X.shape[1]
 
@@ -1011,26 +1012,47 @@ def find_best_subset_small_data(
             best_mse = mse
             best_subset = [idx]
 
-    # 3. Check 2-term
-    if max_subset_size >= 2:
-        for c in combinations(top_indices, 2):
-            subset = list(c)
-            mse = _fit_mse(subset)
-            if (
-                mse < best_mse * 0.99
-            ):  # Strictness (changed 0.95 -> 0.99 to find similar)
-                best_mse = mse
-                best_subset = subset
+    # --- FORWARD STEPWISE SELECTION (Greedy) ---
+    # v3.4 Audit Remediation: Replaced itertools.combinations (O(k^3)) with Stepwise (O(k*s))
+    # to prevent hangs when top_k is large.
 
-    # 4. Check 3-term (limit to top 25 features to keep it fast)
-    if max_subset_size >= 3:
-        top_25 = top_indices[:25]
-        for c in combinations(top_25, 3):
-            subset = list(c)
-            mse = _fit_mse(subset)
-            if mse < best_mse * 0.99:
-                best_mse = mse
-                best_subset = subset
+    current_subset = best_subset if best_subset else []
+    current_mse = best_mse
+    
+    # Try adding features up to max_subset_size
+    # We already have size 1 from the loop above.
+    
+    for size in range(len(current_subset) + 1, max_subset_size + 1):
+        improved = False
+        best_next_feature = None
+        best_next_mse = float('inf')
+        
+        # Try adding one feature from top_indices that isn't already in subset
+        # Limit search to top_25 for speed in deeper levels
+        search_space = top_indices if size <= 2 else top_indices[:25]
+        
+        for idx in search_space:
+            if idx in current_subset:
+                continue
+                
+            candidate_subset = current_subset + [idx]
+            mse = _fit_mse(candidate_subset)
+            
+            if mse < best_next_mse:
+                best_next_mse = mse
+                best_next_feature = idx
+        
+        # Check if improvement is significant
+        if best_next_feature is not None:
+             if best_next_mse < current_mse * 0.99:
+                 current_subset.append(best_next_feature)
+                 current_mse = best_next_mse
+                 best_subset = current_subset
+                 best_mse = current_mse
+                 improved = True
+        
+        if not improved:
+            break
 
     # 5. Acceptance Check
     if best_mse / y_var < 0.05:

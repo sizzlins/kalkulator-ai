@@ -11,91 +11,131 @@ import math
 
 
 def lll_reduction(basis: np.ndarray, delta: float = 0.75) -> np.ndarray:
-    """Perform LLL reduction on a basis matrix.
+    """Perform LLL reduction on a basis matrix using EXACT rational arithmetic.
+    
+    v3.4 Audit Remediation: Uses fractions.Fraction for numerical stability as required.
+    Replaces floating-point math to avoid instability.
     
     Args:
         basis: Basis vectors as rows of a matrix (n x m)
         delta: LLL reduction parameter (0.25 < delta < 1.0)
         
     Returns:
-        Reduced basis matrix
+        Reduced basis matrix (as integer numpy array if possible)
     """
+    from fractions import Fraction
+    
     n, m = basis.shape
     if n == 0:
         return basis
+    
+    # Convert to exact rational representation
+    b = [[Fraction(x).limit_denominator(1000000000) for x in row] for row in basis]
+    delta_frac = Fraction(delta).limit_denominator(1000)
+    
+    # Gram-Schmidt with rational arithmetic
+    # We do NOT use floating point here.
+    
+    def rational_dot(v1, v2):
+        return sum(a * b for a, b in zip(v1, v2))
+    
+    # We maintain the orthogonal basis b_star and coefficients mu explicitly
+    # Initial GS
+    b_star = [[Fraction(0)] * m for _ in range(n)]
+    mu = [[Fraction(0)] * n for _ in range(n)]
+    
+    def update_gs(k):
+        """Update Gram-Schmidt for index k and dependencies."""
+        # For LLL, we usually need full GS or incremental updates.
+        # Simplest correct version: Full Recompute (Slow but safe) or Incremental.
+        # Given "if implemented correctly", we'll use the standard incremental update
+        # for row k based on 0..k-1.
         
-    # Orthogonalization via Gram-Schmidt
-    # We maintain B (reduced basis) and M (Gram-Schmidt coefficients)
-    # But standard LLL algorithm updates basis in place.
-    
-    # Using float64 for numerical stability, but we need to ensure integer results if input is integer.
-    # However, LLL on lattices usually assumes integer basis.
-    # Here we might operate on floats if we scaling noisy inputs.
-    
-    # Deep copy
-    b = basis.copy().astype(np.float64)
-    n_vecs = n
-    
-    # Gram-Schmidt
-    b_star = b.copy()
-    mu = np.zeros((n_vecs, n_vecs))
-    
-    def update_gram_schmidt(k_start=0):
-        for i in range(k_start, n_vecs):
-            b_star[i] = b[i]
-            for j in range(i):
-                # Projection
-                dot_val = np.dot(b[i], b_star[j])
-                norm_sq = np.dot(b_star[j], b_star[j])
-                if norm_sq > 1e-15:
-                    mu[i, j] = dot_val / norm_sq
-                else:
-                    mu[i, j] = 0.0
-                b_star[i] -= mu[i, j] * b_star[j]
+        # Actually, since we swap rows, the dependencies change.
+        # It's safer to recompute row k.
+        # If we swapped k, k-1, we need to recompute GS for k-1 and then k.
+        pass
 
-    update_gram_schmidt()
-    
+    # Initial GS Compute
+    for i in range(n):
+        b_star[i] = list(b[i]) # Copy
+        for j in range(i):
+            if rational_dot(b_star[j], b_star[j]) == 0:
+                continue
+            mu[i][j] = rational_dot(b[i], b_star[j]) / rational_dot(b_star[j], b_star[j])
+            for l in range(m):
+                b_star[i][l] -= mu[i][j] * b_star[j][l]
+
     k = 1
-    max_iter = 10000  # Safety guard against infinite loops (Auditor Finding 5.2)
-    iterations = 0
-    
-    while k < n_vecs:
-        iterations += 1
-        if iterations > max_iter:
-            # Fallback: return partially reduced basis rather than hanging
-            return b
-
-        # Size reduction condition
+    while k < n:
+        # Size reduction
         for j in range(k - 1, -1, -1):
-            if abs(mu[k, j]) > 0.5:
-                q = round(mu[k, j])
-                b[k] -= q * b[j]
-                # Update Gram-Schmidt locally or globally
-                # Local update is faster but less stable; global is safer
-                update_gram_schmidt(max(0, j))
+            if abs(mu[k][j]) > Fraction(1, 2):
+                q = round(mu[k][j])
+                # b[k] = b[k] - q*b[j]
+                for l in range(m):
+                    b[k][l] -= q * b[j][l]
                 
-        # Lovasz condition
-        b_star_k_norm = np.dot(b_star[k], b_star[k])
-        b_star_k_minus_1_norm = np.dot(b_star[k-1], b_star[k-1])
+                # Update GS (mu only, b_star[k] doesn't change because b[j] is orth to b_star[k]... wait)
+                # Reducing b[k] by b[j] (where j < k) does NOT change b_star[k] 
+                # because b[j] is in the span of {b[0]...b[k-1]}.
+                # But it DOES change mu[k][i] for i < j. 
+                # So we must update mu.
+                mu[k][j] -= q
+                for i in range(j):
+                    mu[k][i] -= q * mu[j][i]
         
-        # Avoid division by zero warnings in condition check
-        if b_star_k_minus_1_norm < 1e-15:
-            # If previous vector is effectively zero, swap or skip?
-            # Standard LLL doesn't handle zero vectors well.
-            k += 1
-            continue
-
-        if b_star_k_norm >= (delta - mu[k, k-1]**2) * b_star_k_minus_1_norm:
+        # Lovasz condition
+        norm_k = rational_dot(b_star[k], b_star[k])
+        norm_k_1 = rational_dot(b_star[k-1], b_star[k-1])
+        
+        # Check: ||b*_k||^2 >= (delta - mu[k,k-1]^2) * ||b*_{k-1}||^2
+        lhs = norm_k
+        rhs = (delta_frac - mu[k][k - 1] ** 2) * norm_k_1
+        
+        if lhs >= rhs:
             k += 1
         else:
-            # Swap
-            b[[k, k-1]] = b[[k-1, k]]
-            # Update Gram-Schmidt
-            update_gram_schmidt(max(0, k-1))
-            k = max(k - 1, 1)
+            # Swap b[k] and b[k-1]
+            b[k], b[k - 1] = b[k - 1], b[k]
             
-    return b
+            # We need to update b_star and mu related to k and k-1.
+            # Efficient update (taken from standard LLL description):
+            # b*_k-1_new = b*_k + mu[k][k-1] * b*_k-1
+            # ... this gets complex to map exactly. 
+            # "If implemented correctly" usually implies not taking shortcuts if they are buggy.
+            # Recomputing GS for k-1 and k is safest and O(m) not O(m^2) if done right.
+            
+            # Recompute GS for k-1
+            i = k - 1
+            b_star[i] = list(b[i])
+            for j in range(i):
+                 # mu[i][j] needs update? 
+                 # Yes, strict recompute:
+                 mu[i][j] = rational_dot(b[i], b_star[j]) / rational_dot(b_star[j], b_star[j])
+                 for l in range(m):
+                     b_star[i][l] -= mu[i][j] * b_star[j][l]
+            
+            # Recompute GS for k
+            i = k
+            b_star[i] = list(b[i])
+            for j in range(i):
+                 mu[i][j] = rational_dot(b[i], b_star[j]) / rational_dot(b_star[j], b_star[j])
+                 for l in range(m):
+                     b_star[i][l] -= mu[i][j] * b_star[j][l]
 
+            k = max(k - 1, 1)
+
+    # Return
+    try:
+        # Convert back to numpy array (float) for compatibility?
+        # Or int? Audit says "Reduced basis matrix". 
+        # Usually LLL is on integers, but we might input floats.
+        # If input was float, we output float.
+        res = np.array([[float(x) for x in row] for row in b])
+        return res
+    except:
+        return np.array(b)
 
 def detect_rational_lll(
     value: float, 
@@ -172,8 +212,13 @@ def detect_rational_lll(
         best_p, best_q = None, None
         min_error = float('inf')
         
-        # Max iterations
-        for _ in range(100):
+        # Max iterations removed (v4.2 Audit Remediation: "Remove max_iter band-aid")
+        # Robust continued fraction expansion stops naturally when:
+        # 1. Denominator exceeds max_denom (precision limit reached)
+        # 2. Exact match found (floating point limitations apply)
+        # 3. Tolerance met
+        
+        while True:
             if k1 > max_denom:
                 break
                 
@@ -184,9 +229,7 @@ def detect_rational_lll(
                 
                 # Check acceptability
                 if error < tolerance and k1 <= max_denom:
-                    # Found a valid one. Is it "simple"?
-                    # Simplicity heuristic: smaller denominator is better
-                    # If error is small "enough" (within noise), take it.
+                    # Found a valid one.
                     return (sign * h1, k1)
                 
                 # Update best if it meets looser criteria or minimize score
@@ -198,6 +241,12 @@ def detect_rational_lll(
             
             # Continued fraction step
             try:
+                # Basic check to prevent infinite loop on irrational numbers if tolerance is too tight
+                # But theoretically continued fractions converge.
+                # Stop if partial quotient becomes extremely large (indicates likely close to 0 remainder)
+                if abs(x) > 1e15: 
+                     break
+                     
                 a = int(x)
                 # Next state
                 h2 = a * h1 + h0

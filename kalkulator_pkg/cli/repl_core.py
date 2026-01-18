@@ -69,19 +69,26 @@ class REPL:
             pass
 
     def _get_allowed_functions(self, text: str) -> frozenset[str] | None:
-        """
-        Detect undefined names used as functions to allow them in parsing.
-        Useful for function finding (e.g., 'f(1)=2').
-        """
-        # Find pattern 'name('
-        # exclude specific keywords if needed, but config.ALLOWED_SYMPY_NAMES handles most
-        candidates = set()
+        """Get allowed functions for the current context (default + user defined)."""
+        # Start with standard allowed functions
+        allowed = set(config.ALLOWED_SYMPY_NAMES)
+        
+        # Add user-defined functions
+        candidates = set(config.ALLOWED_SYMPY_NAMES)
+        
+        # 1. From Registry (Persistence)
+        if self.ctx.function_registry:
+            candidates.update(self.ctx.function_registry.keys())
+
+        # 2. From Input Text (Auto-detection for symbolic play/function finding)
+        # Scan for 'name(' pattern to allow unknown functions like f(1)
         for match in re.finditer(r"\b([a-zA-Z_]\w*)\s*\(", text):
             name = match.group(1)
-            if name not in config.ALLOWED_SYMPY_NAMES and name not in self.variables:
-                candidates.add(name)
+            # Only add if not already covered (avoid duplicates, though set handles it)
+            # And unlikely to be a variable (if variable is callable, SymPy handles it differently)
+            candidates.add(name)
 
-        return frozenset(candidates) if candidates else None
+        return frozenset(candidates)
 
     def start(self):
         """Main loop entry point."""
@@ -102,10 +109,17 @@ class REPL:
             except EOFError:
                 self.running = False
                 return
-            except UnicodeDecodeError:
-                # Handle Windows console encoding issues on interrupt
-                self.print("\n[Input decoding error - Interrupted]")
-                return
+            # The following block is removed as per instruction:
+            # except UnicodeDecodeError:
+            #     # Handle Windows console encoding issues on interrupt
+            #     self.print("\n[Input decoding error - Interrupted]")
+            #     return
+
+            # Optimization: only preprocess if needed (contains ^ or other tokens)
+            if "^" in raw or "√" in raw:
+                from ..parser import preprocess_expression
+                # Do not swallow errors here; we want to know if import fails!
+                raw = preprocess_expression(raw)
 
             self.process_input(raw)
         except KeyboardInterrupt:
@@ -152,7 +166,9 @@ class REPL:
         # Replace smart quotes with regular quotes
         text = text.replace('"', '"').replace('"', '"').replace(''', "'").replace(''', "'")
         # Strip any remaining non-alphanumeric prefix characters (except special command chars)
-        while text and not text[0].isalnum() and text[0] not in '(-+.':
+        # We must allow mathematical operators that can start an expression like -, +, (, [, { (sets), | (abs), ! (shell/factorial), ~ (not)
+        # AND / * % ^ = & (implicit ops or assignments)
+        while text and not text[0].isalnum() and text[0] not in '(-+.[{<|!~/*%^=&_':
             text = text[1:]
         
         if not text or text.startswith("#"):
@@ -184,12 +200,12 @@ class REPL:
                      pass # Fall through to normal handler
                  else:
                      from .repl_commands import _handle_evolve
-                     _handle_evolve(text, self.variables)
+                     _handle_evolve(text, self.ctx, self.variables)
                      return
              else:
                  # Should be handled by reserved keyword check, but safe fallback
                  from .repl_commands import _handle_evolve
-                 _handle_evolve(text, self.variables)
+                 _handle_evolve(text, self.ctx, self.variables)
                  return
 
         # 0. Check for "evolve f(1)=1, f(2)=4" pattern (evolve at START, no 'from')
@@ -226,7 +242,7 @@ class REPL:
 
                 from .repl_commands import _handle_evolve
 
-                _handle_evolve(evolve_cmd, self.variables)
+                _handle_evolve(evolve_cmd, self.ctx, self.variables)
                 return
 
         # 1. Check for Commands (quit, help, etc.) via Registry
@@ -600,7 +616,7 @@ class REPL:
                 body_subbed = self._substitute_chain_context(body_subbed)
 
                 try:
-                    define_function(name, params, body_subbed)
+                    define_function(self.ctx, name, params, body_subbed)
                     self.results_buffer.append(f"Function '{name}' defined")
                     continue
                 except Exception as e:
@@ -651,7 +667,12 @@ class REPL:
         rhs_subbed = subbed_part.split("=", 1)[1].strip()
 
         from ..worker import evaluate_safely
-        res = evaluate_safely(rhs_subbed)
+        allowed = self._get_allowed_functions(raw_part)
+        res = evaluate_safely(
+            rhs_subbed, 
+            allowed_functions=allowed,
+            user_functions=self.ctx.function_registry
+        )
         if res.get("ok"):
             val_str = res.get("result")
             # 1. Update Chain Context
@@ -660,7 +681,7 @@ class REPL:
             self.variables[var_name] = val_str
             # 3. Persist Globally (Backing store)
             try:
-                define_variable(var_name, val_str)
+                define_variable(self.ctx, var_name, val_str)
             except Exception:
                 pass
 
@@ -682,8 +703,21 @@ class REPL:
             res = solve_single_equation(subbed_part, None, allowed_functions=allowed)
         else:
             # Just evaluate e.g. "z" or "x+y"
+            # Explicitly preprocess to handle implicit multiplication (e.g. 2pi) 
+            # which might have been missed if logic in loop_once didn't trigger
+            from ..parser import preprocess_expression
+            try:
+                subbed_part = preprocess_expression(subbed_part)
+            except Exception:
+                pass # Fallback to original if preprocessing fails (unlikely)
+
             from ..worker import evaluate_safely
-            res = evaluate_safely(subbed_part)
+            allowed = self._get_allowed_functions(raw_part)
+            res = evaluate_safely(
+                subbed_part, 
+                allowed_functions=allowed,
+                user_functions=self.ctx.function_registry
+            )
             if res.get("ok"):
                 val = format_solution(res.get("result", ""))  # result is string
                 self.results_buffer.append(f"{raw_part} = {val}")
@@ -729,7 +763,7 @@ class REPL:
                 # Substitute with masking: exclude parameters from substitution
                 body_subbed = self._substitute_variables(body, exclude=set(params))
                 try:
-                    define_function(name, params, body_subbed)
+                    define_function(self.ctx, name, params, body_subbed)
                     self.print(f"Function '{name}' defined.")
                     return
                 except Exception as e:
@@ -752,11 +786,11 @@ class REPL:
                 # Substitute RHS
                 rhs_subbed = self._substitute_variables(rhs)
                 from ..worker import evaluate_safely
-                res = evaluate_safely(rhs_subbed)
+                res = evaluate_safely(rhs_subbed, user_functions=self.ctx.function_registry)
                 if res.get("ok"):
-                    val_str = res.get("result")
+                    val_str = str(res.get("result"))
                     try:
-                        define_variable(lhs, val_str)
+                        define_variable(self.ctx, lhs, val_str)
                         self.variables[lhs] = val_str  # Update global cache
                         self.print(f"{lhs} = {format_solution(val_str)}")
                         return
@@ -796,8 +830,13 @@ class REPL:
             allowed = self._get_allowed_functions(text)
 
             t0 = time.perf_counter()
+            t0 = time.perf_counter()
             from ..worker import evaluate_safely
-            res = evaluate_safely(text_subbed, allowed_functions=allowed)
+            res = evaluate_safely(
+                text_subbed, 
+                allowed_functions=allowed,
+                user_functions=self.ctx.function_registry
+            )
             dt = time.perf_counter() - t0
 
             # Wrap in pretty print format, ensuring 'result' key matches formatting.py expectations

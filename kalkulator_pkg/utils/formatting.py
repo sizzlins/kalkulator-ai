@@ -7,12 +7,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import sympy as sp
 
-# Lazy SymPy Proxy
-class _LazySymPy:
-    def __getattr__(self, name):
-        import sympy
-        return getattr(sympy, name)
-sp = _LazySymPy()
+import sympy as sp
 
 from kalkulator_pkg.parser import format_inequality_solution
 from kalkulator_pkg.parser import format_number

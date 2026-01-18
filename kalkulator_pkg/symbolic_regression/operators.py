@@ -389,9 +389,9 @@ def optimize_constants_bfgs(
             # Preserve original type structure/imaginary part if needed
             # For now, we only optimize real components
             if isinstance(constants[i].value, complex):
-                c.value = params[i] + 1j * constants[i].value.imag
+                object.__setattr__(c, 'value', params[i] + 1j * constants[i].value.imag)
             else:
-                c.value = params[i]
+                object.__setattr__(c, 'value', params[i])
         
         # CRITICAL: Invalidate caches so evaluate() sees new constant values!
         new_tree._rpn_stack = None
@@ -436,57 +436,18 @@ def optimize_constants_bfgs(
         if result.success or result.fun < objective(x0):
             for i, c in enumerate(constants):
                 if isinstance(constants[i].value, complex):
-                     c.value = result.x[i] + 1j * constants[i].value.imag
+                     object.__setattr__(c, 'value', result.x[i] + 1j * constants[i].value.imag)
                 else:
-                    c.value = result.x[i]
+                    object.__setattr__(c, 'value', result.x[i])
         else:
             # print("DEBUG: Optimization failed/worsened, reverting.")
             pass
                 
-        # Integer snapping (Agent Handoff Rule 5)
-        # We re-evaluate to see if snapping hurts performance significantly
-        # Ensure we're using the BEST values found (which are now in the tree/x0)
-        # Recalculate best MSE with current values
-        current_best_mse = objective(np.array([c.value.real if isinstance(c.value, complex) else c.value for c in constants]))
+        # v4.0 Audit Remediation: Removed 5% "Integer Snapping" bias.
+        # This heuristics was flagged as scientifically invalid (e.g. 3.04 != 3).
+        # We now accept the optimizer's result as-is.
         
-        for const_node in constants:
-            current_val = const_node.value
-            if isinstance(current_val, complex): 
-                continue
-                
-            try:
-                # Snap to integer
-                nearest_int = round(current_val)
-                if abs(current_val - nearest_int) < 0.05: # 5% snapping tolerance
-                    const_node.value = nearest_int
-                    
-                    # Invalidate cache again for check
-                    new_tree._rpn_stack = None
-                    new_tree._numba_opcodes = None
-                    new_tree._numba_values = None
-                    
-                    # Re-calculate MSE
-                    pred = new_tree.evaluate(X)
-                    residuals = pred - y
-                    sq_err = residuals ** 2
-                    
-                    if sample_weight is not None:
-                        mse_int = np.average(sq_err, weights=sample_weight)
-                    else:
-                        mse_int = np.mean(sq_err)
-                        
-                    # Accept if not significantly worse (1% tolerance)
-                    # We prefer integers for interpretability
-                    if mse_int <= current_best_mse * 1.01 + 1e-9:
-                         # Keep integer
-                         # print(f"DEBUG: Snapped {current_val} -> {nearest_int}")
-                         pass
-                    else:
-                         # Revert
-                         const_node.value = current_val
-            except (ValueError, TypeError, OverflowError):
-                pass
-                
+
     except (ValueError, RuntimeError) as e:
         # print(f"DEBUG: Optimization crashed: {e}")
         pass

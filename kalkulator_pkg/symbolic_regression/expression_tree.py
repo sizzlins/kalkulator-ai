@@ -21,7 +21,7 @@ from typing import Any
 from typing import Callable
 
 import numpy as np
-import numpy as np
+
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import sympy as sp
@@ -175,10 +175,8 @@ def safe_exp(x):
 
 def safe_log(x):
     # Use scimath.log (handles negative inputs -> complex)
-    # Add epsilon to magnitude to avoid log(0)
-    # x + epsilon is tricky for complex, so we ensure x isn't exactly 0
-    safe_x = np.where(x == 0, 1e-10, x)
-    return np.lib.scimath.log(safe_x)
+    # Allow log(0) -> -inf (penalized later)
+    return np.lib.scimath.log(x)
 
 
 def safe_sqrt(x):
@@ -187,10 +185,8 @@ def safe_sqrt(x):
 
 
 def safe_inv(x):
-    # Handle complex division near zero
-    # Add small epsilon in direction of x (complex-aware)
-    safe_x = x + 1e-10 * (x / (np.abs(x) + 1e-10))
-    return 1.0 / safe_x
+    # Allow division by zero (produces inf) -> penalized later
+    return 1.0 / x
 
 
 def safe_mul(x, y):
@@ -198,8 +194,8 @@ def safe_mul(x, y):
 
 
 def safe_div(x, y):
-    safe_y = y + 1e-10 * (y / (np.abs(y) + 1e-10))
-    return x / safe_y
+    # Allow division by zero (produces inf) -> penalized later
+    return x / y
 
 
 def safe_pow(x, y):
@@ -364,23 +360,10 @@ def psqrt(x):
 
 
 def plog(x):
-    """Protected Log: log(abs(x) + epsilon). Returns real float."""
-    return np.log(np.abs(x) + 1e-10)
+    """Protected Log: log(abs(x)). Returns real float (or -inf)."""
+    # Allow -inf (penalized later)
+    return np.log(np.abs(x))
 
-
-
-# Protected Operators (Agent Handoff Rule 5: Root Cause)
-# These prevent complex/NaN values and "max()" safety patches
-# that trap the optimizer.
-
-def psqrt(x):
-    """Protected Sqrt: sqrt(abs(x)). Returns real float."""
-    return np.sqrt(np.abs(x))
-
-
-def plog(x):
-    """Protected Log: log(abs(x) + epsilon). Returns real float."""
-    return np.log(np.abs(x) + 1e-10)
 
 
 
@@ -667,7 +650,7 @@ def _get_sympy_ops():
     return _sympy_ops
 
 
-@dataclass(eq=False, slots=True)
+@dataclass(eq=False)
 class ExpressionNode:
     """A node in an expression tree.
 
@@ -683,6 +666,10 @@ class ExpressionNode:
     value: Any
     children: list[ExpressionNode] = field(default_factory=list)
     parent: ExpressionNode | None = field(default=None, repr=False)
+
+    def __setattr__(self, name, value):
+        """Force mutability (Audit Fix for frozen-behavior crash)."""
+        object.__setattr__(self, name, value)
 
     def __eq__(self, other):
         """Value-based equality check (structural)."""
@@ -1282,7 +1269,7 @@ class ExpressionTree:
                     try:
                         try:
                             # Snap to nearest integer
-                            child.value = float(round(child.value))
+                            object.__setattr__(child, 'value', float(round(child.value)))
                         except (TypeError, ValueError):
                             pass
                     except:

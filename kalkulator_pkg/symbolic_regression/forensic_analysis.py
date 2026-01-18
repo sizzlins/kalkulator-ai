@@ -329,7 +329,7 @@ def _detect_bipolar_poles(X, y, variable_names=None, verbose=False):
     
     return sorted(list(set(seeds)))  # REPRODUCIBILITY: Sorted to avoid hash randomization
 
-def _detect_power_peeling(X, y):
+def _detect_power_peeling(ctx, X, y):
     """Detect if y = Base(x)^x via Rational Analysis on y^(1/x)."""
     # Skip for multivariate data - this is a 1D-only heuristic
     if X.ndim > 1 and X.shape[1] > 1:
@@ -381,7 +381,7 @@ def _detect_power_peeling(X, y):
     try:
         from kalkulator_pkg.function_manager import find_function_from_data
         print(f"Power Peeling: Running Rational Analysis on {len(valid_points)} points...")
-        success, func_str, _, note = find_function_from_data(valid_points, param_names=["x"])
+        success, func_str, _, note = find_function_from_data(ctx, valid_points, param_names=["x"])
         print(f"Power Peeling Result: {success}, {func_str}, Note: {note}")
         
         if success:
@@ -563,11 +563,13 @@ def _detect_rapid_growth_poly(X, y, verbose=False):
             # Check -x^n
             if np.median(np.abs((-y_pred) - y_large)) < 1e-3 * np.median(np.abs(y_large)):
                  seeds.append(f"-x^{n}")
-    except: pass
+    except Exception:
+        # Power peeling heuristic failed, ignore
+        pass
     
     return seeds
 
-def generate_pattern_seeds(X, y, variable_names=None, verbose=False):
+def generate_pattern_seeds(ctx, X, y, variable_names=None, verbose=False):
     """Detect patterns in data and return seed expression strings."""
     t0 = time.perf_counter()
     seeds = []
@@ -588,7 +590,7 @@ def generate_pattern_seeds(X, y, variable_names=None, verbose=False):
     # 2. Power Peeling Heuristic (NEW)
     # Check if y = g(x)^x -> analyze z = y^(1/x)
     try:
-        power_seeds = _detect_power_peeling(X, y)
+        power_seeds = _detect_power_peeling(ctx, X, y)
         if power_seeds:
             if verbose: print(f"  -> Power Peeling found base: {power_seeds}")
             seeds.extend(power_seeds)
@@ -750,6 +752,7 @@ def generate_pattern_seeds(X, y, variable_names=None, verbose=False):
         if trig_seeds:
             if verbose: print(f"  -> Discovered deep trig possibilities: {trig_seeds}")
             seeds.extend(trig_seeds)
-    except: pass
+    except Exception:
+        pass
         
     return sorted(list(set(seeds)))

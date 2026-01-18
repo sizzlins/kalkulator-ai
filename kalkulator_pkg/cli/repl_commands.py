@@ -16,7 +16,7 @@ import numpy as np
 from ..cache_manager import export_cache_to_file
 from ..cache_manager import get_persistent_cache
 from ..cache_manager import replace_cache_from_file
-from ..function_manager import BUILTIN_FUNCTION_NAMES
+from ..function_manager import get_builtin_names
 from ..function_manager import clear_functions
 from ..function_manager import clear_saved_functions
 from ..function_manager import export_function_to_file
@@ -110,27 +110,27 @@ def handle_command(text: str, ctx: Any, variables: Dict[str, str]) -> bool:
 
     # === Function Persistence Commands ===
     if raw_lower in ("save", "savefunction", "savefunctions"):
-        success, msg = save_functions()
+        success, msg = save_functions(ctx)
         print(msg)
         return True
 
     if raw_lower in ("loadfunction", "loadfunctions"):
-        success, msg = load_functions()
+        success, msg = load_functions(ctx)
         print(msg)
         return True
 
     if raw_lower in ("clearfunction", "clearfunctions"):
-        clear_functions()
+        clear_functions(ctx)
         print("Functions cleared from current session.")
         return True
 
     if raw_lower in ("clearsavefunction", "clearsavefunctions"):
-        success, msg = clear_saved_functions()
+        success, msg = clear_saved_functions() # Assuming no context needed for clear_saved (disk only)
         print(msg)
         return True
 
     if raw_lower in ("showfunction", "showfunctions", "list"):
-        _handle_show_functions()
+        _handle_show_functions(ctx)
         return True
 
     if raw_lower.startswith("debug"):
@@ -138,7 +138,7 @@ def handle_command(text: str, ctx: Any, variables: Dict[str, str]) -> bool:
         return True
 
     if raw_lower == "health":
-        _handle_health_command()
+        _handle_health_command(text, ctx)
         return True
 
     if raw_lower.startswith("timing"):
@@ -292,8 +292,8 @@ def _substitute_vars(text: str, variables: Dict[str, str]) -> str:
     return text
 
 
-def _handle_show_functions():
-    funcs = list_functions()
+def _handle_show_functions(ctx: Any):
+    funcs = list_functions(ctx)
     if funcs:
         print("User functions:")
         for name in sorted(funcs.keys()):
@@ -303,7 +303,7 @@ def _handle_show_functions():
         print("User functions: None")
 
     print("\nBuilt-in functions:")
-    builtins = sorted(BUILTIN_FUNCTION_NAMES)
+    builtins = sorted(get_builtin_names())
     line = "  "
     for b in builtins:
         entry = f"{b}(...)"
@@ -402,7 +402,7 @@ def _handle_benchmark(text: str):
 
 
 # [Orphaned definitions deleted]
-def _handle_evolve(text, variables=None):
+def _handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None):
     """Handle the 'evolve' command for genetic symbolic regression."""
     # Local import to resolve circular/scoping issues with IDE
     from ..symbolic_regression.expression_tree import symbolify_constants
@@ -914,9 +914,9 @@ def _handle_evolve(text, variables=None):
         X = np.column_stack([data_dict[v] for v in input_vars])
         y = data_dict[output_var]
 
+        # --- SMART SEEDING: Au1to-detect patterns and generate seed expressions ---
         # --- SMART SEEDING: Auto-detect patterns and generate seed expressions ---
-        # --- SMART SEEDING: Auto-detect patterns and generate seed expressions ---
-        auto_seeds_result = generate_pattern_seeds(X, y, input_vars, verbose=verbose_mode)
+        auto_seeds_result = generate_pattern_seeds(ctx, X, y, input_vars, verbose=verbose_mode)
         
         # Unpack tuple (seeds, exact_match)
         exact_match = None
@@ -1110,10 +1110,9 @@ def _handle_evolve(text, variables=None):
                     import warnings
                     with warnings.catch_warnings():
                          warnings.simplefilter("ignore")
-                         # Run on the filtered real dataset
-                         # Signature: find_function_from_data(data_points, param_names, skip_linear)
+                         # Signature: find_function_from_data(context, data_points, param_names, skip_linear)
                          success, func_str, factored, error = find_function_from_data(
-                             find_data_points_real, input_vars, verbose=super_verbose
+                             ctx, find_data_points_real, input_vars, verbose=super_verbose
                          )
 
                 # QUALITY CHECK: Only use seed if it's actually good
@@ -1317,6 +1316,7 @@ def _handle_evolve(text, variables=None):
                 print("   This describes how the function changes with its derivatives.")
             return
         
+        print("Loading genetic evolution engine...", flush=True)
         regressor = GeneticSymbolicRegressor(config)
         
         # Use multi-space transformation if --transform flag is set
@@ -1464,7 +1464,10 @@ def _handle_evolve(text, variables=None):
 
             # Convert best.expression (pretty string) or best.sympy_expr to storage format
             # define_function expects string expression - use beautified version
-            define_function(func_name, input_vars, beautified_expr)
+            # Fix: Pass context as first argument. But where do we get ctx? 
+            # This is inside _handle_evolve which is likely dispatched from repl_core.
+            # I need to update _handle_evolve signature first if it doesn't have ctx.
+            define_function(ctx, func_name, input_vars, beautified_expr)
         except Exception as e:
             print(f"Warning: Failed to define function '{func_name}' in session: {e}")
 
@@ -1530,7 +1533,7 @@ def _handle_show_cache(text: str, ctx: Any):
         print("-" * 40)
 
 
-def _handle_health_command():
+def _handle_health_command(text: str, ctx: Any):
     """Run health check to verify dependencies and basic operations."""
     checks_passed = 0
     checks_failed = 0
@@ -1597,9 +1600,15 @@ def _handle_health_command():
         from ..worker import evaluate_safely
 
         # Worker Test
-        res = evaluate_safely("2^10")  # 1024
-        if res.get("ok") and str(res.get("result")) == "1024":
-            print("[OK] Worker IPC works (2^10 -> 1024)", flush=True)
+        res = evaluate_safely("2**10")  # 1024
+        
+        # Check if result is a dict and has 'result' key
+        val = res
+        if isinstance(res, dict) and res.get("ok"):
+            val = res.get("result")
+            
+        if str(val) == "1024":
+            print("[OK] Worker IPC works (2**10 -> 1024)", flush=True)
             checks_passed += 1
         else:
             print(f"[FAIL] Worker IPC failed: {res}", flush=True)
@@ -1630,7 +1639,8 @@ def _handle_health_command():
         # Simple y = x + 1
         # Data format: List of (list of args, value)
         data = [(["1"], "2"), (["2"], "3"), (["3"], "4")]
-        success, func_str, _, error_msg = find_function_from_data(data, ["x"])
+        # Fix: Pass context as first argument
+        success, func_str, _, error_msg = find_function_from_data(ctx, data, ["x"])
 
         # We expect x + 1 or 1 + x
         if success and ("x + 1" in func_str or "1 + x" in func_str):
@@ -1844,8 +1854,27 @@ def handle_find_command_raw(text: str, ctx: Any) -> bool:
         from ..function_manager import define_function
         from ..function_manager import find_function_from_data
 
+        # Validate points structure
+        valid_points = []
+        for i, pt in enumerate(relevant_points):
+            if not isinstance(pt, (tuple, list)):
+                print(f"Skipping malformed point #{i}: {pt} (not tuple/list)")
+                continue
+            if len(pt) != 2:
+                print(f"Skipping malformed point #{i}: {pt} (length {len(pt)})")
+                continue
+            valid_points.append(pt)
+        relevant_points = valid_points
+
         # Handle unpacking safely (API might return 3 or 4 values depending on version)
-        result = find_function_from_data(relevant_points, target_vars)
+        import logging
+        try:
+             # Fix: Pass context as first argument as per signature in function_manager.py
+             result = find_function_from_data(ctx, relevant_points, target_vars)
+        except ValueError as e:
+             # Last ditch catch for the exact error we saw
+             print(f"Regression Engine Crash: {e}. Data sample: {relevant_points[:3]}")
+             return True
         if len(result) == 4:
             success, result_str, factored, error_msg = result
         elif len(result) == 3:
@@ -1882,16 +1911,18 @@ def handle_find_command_raw(text: str, ctx: Any) -> bool:
 
                 # Call evolve
                 # We don't have access to REPL variables here, variables=None is safe for literal data
-                _handle_evolve(evolve_cmd, variables=None)
+                # Fix: Pass ctx to _handle_evolve
+                _handle_evolve(evolve_cmd, ctx, variables=None)
                 return True
 
-            try:
-                define_function(target_func, target_vars, result_str)
-                # Automatically save to cache not needed? define_function does it?
-                # define_function updates global cache but maybe not disk cache unless save_functions called?
-                # But it's available in REPL session.
-            except Exception as e:
-                print(f"Warning: Failed to define function '{target_func}': {e}")
+                try:
+                    # Fix: Pass context as first argument
+                    define_function(ctx, target_func, target_vars, result_str)
+                    # Automatically save to cache not needed? define_function does it?
+                    # define_function updates global cache but maybe not disk cache unless save_functions called?
+                    # But it's available in REPL session.
+                except Exception as e:
+                    print(f"Warning: Failed to define function '{target_func}': {e}")
         else:
             # SUGGESTION BRIDGE (Engineering Standard: User Experience)
             auto_evolve = "--auto-evolve" in text.lower()
@@ -1913,7 +1944,7 @@ def handle_find_command_raw(text: str, ctx: Any) -> bool:
                 points_segment = ", ".join(points_str_list)
                 evolve_cmd = f"evolve {target_func}({','.join(target_vars)}) from {points_segment}"
 
-                _handle_evolve(evolve_cmd)
+                _handle_evolve(evolve_cmd, ctx)
             else:
                 print(f"Failed to discover function: {error_msg}")
                 print(

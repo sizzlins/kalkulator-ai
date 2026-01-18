@@ -25,6 +25,53 @@ class RankedIndividual:
     complexity: int  # Node count (objective 2)
     rank: int = 0  # Pareto front rank (0 = best)
     crowding_distance: float = 0.0
+    semantic_hash: str = ""  # v3.3: Functional equivalence signature
+
+
+# SEMANTIC_PROBE_POINTS: Fixed random points for functional hashing (v3.3 Audit)
+# Used to detect functionally equivalent trees (e.g., x+x and 2*x)
+_SEMANTIC_SEED = 42
+_SEMANTIC_N_PROBES = 10
+_SEMANTIC_PROBES: np.ndarray | None = None
+
+
+def compute_semantic_hash(tree, n_vars: int = 3) -> str:
+    """Compute semantic hash by evaluating tree on fixed probe points.
+    
+    v3.3 Audit Remediation: Detects functional equivalence.
+    Trees like 'x+x' and '2*x' will produce the same hash.
+    
+    Args:
+        tree: ExpressionTree to hash
+        n_vars: Number of variables in data (for probe dimensions)
+        
+    Returns:
+        String hash of rounded evaluation results
+    """
+    global _SEMANTIC_PROBES
+    
+    # Lazy-initialize probe points (fixed seed for reproducibility)
+    if _SEMANTIC_PROBES is None or _SEMANTIC_PROBES.shape[1] != n_vars:
+        rng = np.random.default_rng(_SEMANTIC_SEED)
+        _SEMANTIC_PROBES = rng.uniform(-10, 10, size=(_SEMANTIC_N_PROBES, n_vars))
+    
+    try:
+        # Evaluate tree on probe points
+        results = tree.evaluate_fast(_SEMANTIC_PROBES)
+        if np.isscalar(results):
+            results = np.full(_SEMANTIC_N_PROBES, results)
+        
+        # Round to 4 decimals to handle floating point differences
+        rounded = np.round(results, 4)
+        
+        # Handle NaN/Inf by replacing with sentinel values
+        rounded = np.where(np.isnan(rounded), 1e99, rounded)
+        rounded = np.where(np.isinf(rounded), 1e98 * np.sign(rounded), rounded)
+        
+        return str(tuple(rounded))
+    except Exception:
+        # If evaluation fails, use structural hash as fallback
+        return str(id(tree))
 
 
 def fast_non_dominated_sort(population: list[RankedIndividual]) -> list[list[int]]:
@@ -168,19 +215,29 @@ def nsga2_select(population: list, n_select: int) -> list:
     if len(population) <= n_select:
         return population[:]
     
-    # 1. Wrap and Group by Signature (Fitness, Complexity)
-    # Signature -> List[RankedIndividual]
+    # 1. Wrap and Group by SEMANTIC Signature (v3.3 Audit Remediation)
+    # Semantic hash detects functional equivalence (e.g., x+x vs 2*x)
+    # Signature = (fitness, complexity, semantic_hash) -> List[RankedIndividual]
     grouped_population = {}
     all_ranked = []
+    
+    # Determine n_vars from first individual
+    n_vars = 1
+    if population and hasattr(population[0], 'variable_names'):
+        n_vars = len(population[0].variable_names)
     
     for ind in population:
         fit = getattr(ind, 'fitness', float('inf'))
         comp = ind.complexity() if hasattr(ind, 'complexity') else ind.root.count_nodes()
         
-        ri = RankedIndividual(tree=ind, fitness=fit, complexity=comp)
+        # Compute semantic hash for functional equivalence (v3.3)
+        sem_hash = compute_semantic_hash(ind, n_vars)
+        
+        ri = RankedIndividual(tree=ind, fitness=fit, complexity=comp, semantic_hash=sem_hash)
         all_ranked.append(ri)
         
-        sig = (fit, comp)
+        # Group by semantic signature (NOT just fitness/complexity)
+        sig = (fit, comp, sem_hash)
         if sig not in grouped_population:
             grouped_population[sig] = []
         grouped_population[sig].append(ri)
@@ -201,7 +258,7 @@ def nsga2_select(population: list, n_select: int) -> list:
     final_population = []
     
     for unique in unique_ranked:
-        sig = (unique.fitness, unique.complexity)
+        sig = (unique.fitness, unique.complexity, unique.semantic_hash)
         duplicates = grouped_population[sig]
         
         # Add the representative (keeps calculated CD)

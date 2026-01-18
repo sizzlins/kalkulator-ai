@@ -1,7 +1,7 @@
 """Configuration for Genetic Symbolic Regression."""
 from dataclasses import dataclass, field
 
-@dataclass(frozen=True)
+@dataclass
 class GeneticConfig:
     """Configuration for Genetic Symbolic Regression."""
 
@@ -60,7 +60,7 @@ class GeneticConfig:
     migration_interval: int = 10
     
     # Heuristics (Opt-in to prevent bias)
-    use_integer_anchoring: bool = False  # "Vise Strategy": Bias towards integer points
+    use_integer_anchoring: bool = False  # IntegerBiasWeighting: Bias towards integer points (formerly "Vise Strategy")
     use_integer_patterns: bool = False   # Bias towards integer constants (via LLL)
     elitism: int = 5
     boosting_rounds: int = 1

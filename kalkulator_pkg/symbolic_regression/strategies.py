@@ -71,6 +71,13 @@ class EvolutionStrategy:
     
     def __init__(self, config: GeneticConfig):
         self.config = config
+
+    def evaluate_population(self, population: list[ExpressionTree], X: np.ndarray, y: np.ndarray, sample_weight=None):
+        """Evaluate fitness for the entire population."""
+        for tree in population:
+            if tree.fitness is None or tree.age == 0:
+                tree.fitness = self.calculate_fitness(tree, X, y, sample_weight)
+            # tree.age += 1 # Age increment happens in evolve() typically
         
     def huber_loss(self, y_true, y_pred, delta=1.35):
         """Robust loss function."""
@@ -105,9 +112,9 @@ class EvolutionStrategy:
 
             # 3. Loss Calculation
             raw_loss = self.huber_loss(y, predictions)
-            
             if sample_weight is not None:
-                loss = np.average(raw_loss, weights=sample_weight)
+                # Ensure shapes match for weighted average
+                loss = np.average(np.asarray(raw_loss).flatten(), weights=np.asarray(sample_weight).flatten())
             else:
                 loss = np.mean(raw_loss)
 

@@ -124,6 +124,7 @@ def solve_single_equation(
             return {
                 "ok": True,
                 "type": "evaluation",
+                "result": lhs_eval.get("result"),  # Added result key
                 "exact": [lhs_eval.get("result") or ""],
                 "approx": [lhs_eval.get("approx")],
             }
@@ -201,10 +202,10 @@ def solve_single_equation(
         }
     try:
         left_expr = parse_preprocessed(
-            lhs["result"], allowed_functions=allowed_functions
+            str(lhs["result"]), allowed_functions=allowed_functions
         )
         right_expr = parse_preprocessed(
-            rhs["result"], allowed_functions=allowed_functions
+            str(rhs["result"]), allowed_functions=allowed_functions
         )
     except (ParseError, ValidationError) as e:
         logger.warning("Parse error assembling SymPy expressions", exc_info=True)

@@ -36,7 +36,7 @@ VERSION = "1.4.1"
 
 # Resource limits (can be overridden via environment variables)
 WORKER_CPU_SECONDS = int(os.getenv("KALKULATOR_WORKER_CPU_SECONDS", "30"))
-WORKER_AS_MB = int(os.getenv("KALKULATOR_WORKER_AS_MB", "400"))
+WORKER_AS_MB = int(os.getenv("KALKULATOR_WORKER_AS_MB", "1024"))
 WORKER_TIMEOUT = int(os.getenv("KALKULATOR_WORKER_TIMEOUT", "60"))
 ENABLE_PERSISTENT_WORKER = (
     os.getenv("KALKULATOR_ENABLE_PERSISTENT_WORKER", "true").lower() == "true"

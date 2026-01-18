@@ -1712,7 +1712,9 @@ def _add_transcendental_features(col, name, features, feature_names, y_data):
         try:
              detected = detect_frequency(col, y_data)
              freq_candidates.update(detected)
-        except Exception: pass
+        except Exception:
+             # Frequency detection can fail on noise, safe to ignore
+             pass
         
     for k in sorted(freq_candidates):
         if k == 1.0: continue
@@ -2156,7 +2158,9 @@ def solve_rational_function_svd(
                     val = float(expr.subs(x_sym, X_arr[i][0]))
                     total_error += (val - y_arr[i])**2
                     valid_count += 1
-                except Exception: pass
+                except Exception:
+                    # Ignore sympy parsing errors during validation loop
+                    pass
         except: continue
              
         mse = total_error / valid_count if valid_count > 0 else 1e9

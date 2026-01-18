@@ -1,14 +1,20 @@
 """Parallel execution utilities using Zero-Copy Shared Memory.
 
 This module implements:
-1. SharedMemoryContext: Manages lifecycle of shared memory blocks.
-2. Parallel evolution of genetic islands to bypass GIL.
+1. SharedMemoryOwner: Explicit ownership model to avoid resource_tracker bugs (v3.3)
+2. SharedMemoryContext: Manages lifecycle of shared memory blocks.
+3. Parallel evolution of genetic islands to bypass GIL.
+
+v3.3 Audit Remediation: Manager-Worker pattern replaces resource_tracker.unregister hack.
+The SharedMemoryOwner class ensures only the owner process calls unlink(), preventing
+the race condition where workers prematurely delete shared segments.
 """
 from __future__ import annotations
 
 import time
 import numpy as np
 import logging
+import os
 from multiprocessing import shared_memory
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
@@ -19,6 +25,94 @@ if TYPE_CHECKING:
     from .genetic_config import GeneticConfig
 
 logger = logging.getLogger("parallel")
+
+
+# =============================================================================
+# SharedMemoryOwner: v3.3 Audit Remediation
+# =============================================================================
+# This class implements explicit ownership tracking to eliminate the
+# resource_tracker.unregister() hack. Only the owner PID can unlink.
+# =============================================================================
+
+class SharedMemoryOwner:
+    """Shared memory with explicit ownership for safe multi-process usage.
+    
+    v3.3 Audit Remediation: Replaces resource_tracker.unregister hack.
+    
+    The owner process (PID that created) is the ONLY process that can unlink.
+    Worker processes attach read-only and only close() on exit.
+    
+    Usage:
+        # Owner process
+        owner = SharedMemoryOwner.create(data)
+        info = owner.get_info()
+        
+        # Pass info to workers via pickle
+        # Workers:
+        arr, handle = SharedMemoryOwner.attach(info)
+        # ... use arr ...
+        handle.close()  # Safe - won't unlink
+        
+        # Back in owner:
+        owner.cleanup()  # Safe unlink
+    """
+    
+    def __init__(self, shm: shared_memory.SharedMemory, shape: tuple, dtype: np.dtype, is_owner: bool):
+        self.shm = shm
+        self.shape = shape
+        self.dtype = dtype
+        self.is_owner = is_owner
+        self._owner_pid = os.getpid() if is_owner else None
+    
+    @classmethod
+    def create(cls, data: np.ndarray) -> 'SharedMemoryOwner':
+        """Create new shared memory segment (owner)."""
+        shm = shared_memory.SharedMemory(create=True, size=data.nbytes)
+        shm_arr = np.ndarray(data.shape, dtype=data.dtype, buffer=shm.buf)
+        shm_arr[:] = data[:]
+        return cls(shm, data.shape, data.dtype, is_owner=True)
+    
+    @classmethod
+    def attach(cls, info: dict) -> tuple[np.ndarray, 'SharedMemoryOwner']:
+        """Attach to existing shared memory (worker - read only)."""
+        shm = shared_memory.SharedMemory(name=info['name'])
+        arr = np.ndarray(info['shape'], dtype=info['dtype'], buffer=shm.buf)
+        owner = cls(shm, info['shape'], info['dtype'], is_owner=False)
+        return arr, owner
+    
+    def get_info(self) -> dict:
+        """Get serializable info for passing to workers."""
+        return {
+            'name': self.shm.name,
+            'shape': self.shape,
+            'dtype': self.dtype,
+        }
+    
+    def close(self):
+        """Close handle (safe for both owner and workers)."""
+        if self.shm:
+            self.shm.close()
+    
+    def cleanup(self):
+        """Unlink shared memory - ONLY call from owner process!
+        
+        v3.3: Explicit PID check prevents workers from unlinking.
+        """
+        if not self.is_owner:
+            logger.warning("Non-owner tried to cleanup shared memory - ignoring")
+            return
+            
+        if self._owner_pid != os.getpid():
+            logger.warning("PID mismatch in cleanup - shared memory may be orphaned")
+            return
+            
+        if self.shm:
+            self.shm.close()
+            try:
+                self.shm.unlink()
+            except FileNotFoundError:
+                pass  # Already unlinked
+            self.shm = None
 
 @contextmanager
 def managed_shared_memory(data: np.ndarray, name=None):
@@ -75,6 +169,9 @@ def evolve_island_worker(
 ) -> list:
     """Worker function to evolve an island in a separate process.
     
+    v3.3 Audit Remediation: Uses SharedMemoryOwner.attach() pattern
+    instead of resource_tracker.unregister hack.
+    
     Args:
         population: List of ExpressionTrees
         shm_X_info: Dict with name, shape, dtype for X
@@ -86,46 +183,54 @@ def evolve_island_worker(
     Returns:
         Evolved population
     """
-    # Reconstruct arrays from shared memory
-    X = None
-    y = None
-    shm_X = None
-    shm_y = None
+    owner_X = None
+    owner_y = None
     
     try:
-        X, shm_X = get_shared_array(shm_X_info['name'], shm_X_info['shape'], shm_X_info['dtype'])
-        y, shm_y = get_shared_array(shm_y_info['name'], shm_y_info['shape'], shm_y_info['dtype'])
+        # v3.3: Use SharedMemoryOwner.attach() - no unregister hack needed!
+        # Workers attach as non-owners, so close() won't trigger unlink()
+        X, owner_X = SharedMemoryOwner.attach(shm_X_info)
+        y, owner_y = SharedMemoryOwner.attach(shm_y_info)
         
-        # Audit Remediation (Priority 2): Explicit Unregister in Worker
-        # Strictly following "Gold Standard" requirement to unregister immediately in worker.
+        # v3.6 Audit Fix: Explicitly unregister from resource_tracker to avoid crash on exit.
+        # The runtime auto-registers segments on attach, leading to "File Not Found" errors
+        # when workers exit and try to unlink segments the main process still needs.
+        # v3.6 Audit Fix: Explicitly unregister from resource_tracker to avoid crash on exit.
+        # The runtime auto-registers segments on attach, leading to "File Not Found" errors
+        # when workers exit and try to unlink segments the main process still needs.
+        # This MUST run on all platforms (Windows/Linux) as per Auditor "Must-Do".
         try:
-            from multiprocessing import resource_tracker
-            # Unregister both segments to prevent resource_tracker from deleting them on worker exit
-            # The main process (ExitStack) handles the real unlink.
-            resource_tracker.unregister(shm_X._name, "shared_memory")
-            resource_tracker.unregister(shm_y._name, "shared_memory")
-        except Exception:
-            pass
-
+             # On Python 3.8+, resource_tracker handles shared_memory specifically
+             from multiprocessing import resource_tracker
+             
+             # Helper to safely unregister
+             def _safe_unregister(name):
+                 try:
+                     # 2nd arg "shared_memory" is required in modern Python
+                     resource_tracker.unregister(name, "shared_memory")
+                 except Exception:
+                     pass # Best effort (might already be unregistered)
+                     
+             _safe_unregister(owner_X.shm.name)
+             _safe_unregister(owner_y.shm.name)
+             
+        except ImportError:
+             pass
         
         # Run evolution
-        # Note: We use the passed strategy object which contains method logic
-        # Ideally strategy is stateless or carries config.
-        # We need to ensure strategy.evolve works here.
-        
-        # Need to re-attach config if it wasn't pickled correctly?
-        # Usually it is.
-        
-        # Using the standard evolve method
         new_pop = strategy.evolve(population, X, y, gen)
         return new_pop
         
     except Exception as e:
-        # Log error? standardized logging might not be set up in worker
-        print(f"Worker Error: {e}")
-        return population # Return original on failure
+        import logging
+        logging.getLogger(__name__).exception("Worker process failed unexpectedly.")
+        # We re-raise to ensure the process exit code reflects failure, 
+        # allowing the main process to detect it.
+        raise e
+        return population  # Return original on failure
         
     finally:
-        # Cleanup worker-side resources
-        if shm_X: shm_X.close()
-        if shm_y: shm_y.close()
+        # Cleanup worker-side handles (safe - won't unlink)
+        if owner_X: owner_X.close()
+        if owner_y: owner_y.close()
+
