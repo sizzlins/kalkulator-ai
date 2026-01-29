@@ -678,7 +678,6 @@ def _get_sympy_ops():
             if hasattr(x, 'is_integer') and x.is_integer and x < 0: return sp.zoo
             return sp.factorial(x)
         except (ValueError, TypeError, AttributeError):
-        except (ValueError, TypeError, AttributeError):
             return sp.zoo
 
     def _safe_lucas(n):

@@ -112,6 +112,7 @@ COMMAND_REGISTRY = {
     "callm",
     "callr",
     "callrm",
+    "genes",
 }
 
 
@@ -415,6 +416,11 @@ def handle_command(text: str, ctx: Any, variables: Dict[str, str]) -> bool:
 
     if raw_lower.startswith("call"):
         _handle_call_command(text, ctx, multiline=False)
+        return True
+
+    # === Gene Bank Command ===
+    if raw_lower.startswith("genes"):
+        _handle_genes_command(text, ctx)
         return True
 
     return False
@@ -2203,6 +2209,62 @@ def _handle_timing_command(text: str, ctx: Any):
 
 def _handle_cachehits_command(text: str, ctx: Any):
     _toggle_setting(text, ctx, "show_cache_hits", "Cache hit display")
+
+
+def _handle_genes_command(text: str, ctx: Any):
+    """Handle 'genes' command for Gene Bank management.
+    
+    Usage:
+        genes          - List all saved genes
+        genes delete N - Delete gene at index N
+        genes clear    - Clear all genes
+    """
+    try:
+        from kalkulator_pkg.symbolic_regression.gene_bank import get_gene_bank
+        bank = get_gene_bank()
+    except ImportError:
+        print("Error: Gene Bank module not found.")
+        return
+    except Exception as e:
+        print(f"Error loading Gene Bank: {e}")
+        return
+    
+    parts = text.strip().lower().split()
+    
+    # genes (list all)
+    if len(parts) == 1:
+        genes = bank.list_genes()
+        if not genes:
+            print("Gene Bank is empty. Run successful function discoveries to populate it.")
+            return
+        print(f"Gene Bank ({len(genes)} genes):")
+        print("-" * 60)
+        for g in genes:
+            print(f"  [{g['id']}] {g['expression']} (vars={g['n_vars']}, complexity={g['complexity']}, MSE={g['fitness']:.2e})")
+        return
+    
+    # genes delete N
+    if len(parts) >= 2 and parts[1] == "delete":
+        if len(parts) < 3:
+            print("Usage: genes delete <index>")
+            return
+        try:
+            idx = int(parts[2])
+            if bank.delete(idx):
+                print(f"Deleted gene at index {idx}.")
+            else:
+                print(f"Invalid index: {idx}. Use 'genes' to see available indices.")
+        except ValueError:
+            print("Error: Index must be an integer.")
+        return
+    
+    # genes clear
+    if len(parts) >= 2 and parts[1] == "clear":
+        bank.clear()
+        print("Gene Bank cleared.")
+        return
+    
+    print("Usage: genes | genes delete <index> | genes clear")
 
 
 def _toggle_setting(text: str, ctx: Any, attr: str, name: str):

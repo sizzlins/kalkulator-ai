@@ -586,6 +586,21 @@ class GeneticSymbolicRegressor(BaseEstimator, RegressorMixin):
             except Exception as e:
                 if self.config.verbose: print(f"   [Forensic] Analysis failed: {e}")
 
+        # v4.8 Gene Bank: Inject learned expressions from long-term memory
+        try:
+            from .gene_bank import get_gene_bank
+            bank = get_gene_bank()
+            pop_size = getattr(self.config, 'population_size', 100)
+            bank_seeds = bank.get_seeds(variable_names, pop_size)
+            if bank_seeds:
+                if seeds is None:
+                    seeds = []
+                seeds = list(seeds) + bank_seeds  # Append Gene Bank seeds
+                if self.config.verbose:
+                    print(f"   [GeneBank] Injected {len(bank_seeds)} learned genes from memory.")
+        except Exception:
+            pass  # Gene Bank is optional, never crash the main flow
+
         self.strategies = {
             'boosting': BoostingStrategy(self.config),
             'evolution': EvolutionStrategy(self.config)
@@ -634,6 +649,22 @@ class GeneticSymbolicRegressor(BaseEstimator, RegressorMixin):
                 self.pareto_front.add(sol)
             except Exception:
                 pass
+            
+            # v4.8 Gene Bank: Save successful expressions to long-term memory
+            try:
+                from .gene_bank import get_gene_bank
+                # Calculate R² for quality filtering
+                ss_res = np.sum((y_train.flatten() - pred)**2)
+                ss_tot = np.sum((y_train.flatten() - np.mean(y_train))**2)
+                r2 = 1 - (ss_res / ss_tot) if ss_tot > 1e-10 else 0.0
+                
+                if r2 >= 0.99:
+                    bank = get_gene_bank()
+                    saved = bank.add(self.best_tree, mse, r2)
+                    if saved and self.config.verbose:
+                        print(f"[GeneBank] Saved: {self.best_tree.to_pretty_string()}")
+            except Exception:
+                pass  # Gene Bank is optional, never crash the main flow
             
     def fit_with_transformations(self, X: np.ndarray, y: np.ndarray, variable_names: list[str], seeds: list[str] = None) -> tuple[str, float, str]:
         """Fit model in multiple spaces (direct, log, inverse) and pick best.
