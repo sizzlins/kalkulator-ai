@@ -131,6 +131,24 @@ https://github.com/sizzlins/kalkulator-ai/blob/main/kalkulator.exe
 - `genes delete N`: Delete gene at index N.
 - `genes clear`: Clear all learned genes.
 
+### 🛠️ Utilities & Data Generation
+
+Kalkulator is not just for finding functions; it can generate data and solve algebra.
+
+| Command              | Description                                     | Example                                 |
+| :------------------- | :---------------------------------------------- | :-------------------------------------- |
+| **Data Generation**  |                                                 |                                         |
+| `call f`             | Generate synthetic data from a defined function | `call f` (uses default -10 to 10 range) |
+| `callset <name> ...` | Define a custom input range                     | `callset small -1,0,1`                  |
+| `call f <name>`      | Generate data using a custom set                | `call f small`                          |
+| **Algebra**          |                                                 |                                         |
+| `solve <eq>`         | Solve algebraic equations                       | `solve x^2 - 4 = 0`                     |
+| `expand(expr)`       | Expand polynomials                              | `expand((x+1)^2)`                       |
+| `factor(expr)`       | Factor expressions                              | `factor(x^2 + 2x + 1)`                  |
+| **System**           |                                                 |                                         |
+| `health`             | Run self-diagnostic checks                      | `health`                                |
+| `export f file.py`   | Export function to Python code                  | `export f model.py`                     |
+
 ### Examples
 
 **Physics (Kinetic Energy)**
