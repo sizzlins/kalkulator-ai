@@ -126,6 +126,19 @@ class EvolutionTrainer:
                     use_parallel = False
                     executor = None
             
+            # Mini-batching Setup
+            n_samples = len(X_train)
+            use_batching = False
+            batch_size = n_samples
+            
+            # v4.7 Performance: Enable mini-batching for large datasets
+            if n_samples > 500:
+                use_batching = True
+                batch_size = min(500, int(n_samples * 0.5)) # Cap at 500
+                if batch_size < 100: batch_size = 100 # Min batch size
+                if self.config.verbose:
+                    print(f"[Performance] Mini-batching enabled: {batch_size}/{n_samples} samples per gen.")
+
             for gen in range(self.config.generations):
                 # if self.config.verbose and gen % 10 == 0:
                 #      print(f"DEBUG: Starting Gen {gen}. Parallel={use_parallel}")
@@ -176,9 +189,21 @@ class EvolutionTrainer:
                         
                     islands = [f.result() for f in done]
                 else:
+                    # Mini-batch selection for Serial Mode
+                    X_step = X_train
+                    y_step = y_target
+                    w_step = sample_weight
+                    
+                    if use_batching:
+                        indices = np.random.choice(n_samples, batch_size, replace=False)
+                        X_step = X_train[indices]
+                        y_step = y_target[indices]
+                        if sample_weight is not None:
+                            w_step = sample_weight[indices]
+
                     for i in range(len(islands)):
                         new_pop = self.strategy.evolve(
-                            islands[i], X_train, y_target, gen, sample_weight
+                            islands[i], X_step, y_step, gen, w_step
                         )
                         # CRITICAL FIX: Capture evaluated parents' fitness before replacing with children
                         # The parents were evaluated inside evolve(), so they now have scores.
@@ -273,7 +298,8 @@ class EvolutionTrainer:
                     self.pareto_front.add(sol)
                     count += 1
                 except Exception as e:
-                    if getattr(self.config, 'verbose', False): print(f"DEBUG: Tree conversion failed: {e}")
+                    # if getattr(self.config, 'verbose', False): print(f"DEBUG: Tree conversion failed: {e}")
+                    pass
                     continue
         # if getattr(self.config, 'verbose', False): print(f"DEBUG: Pareto Front Updated ({count} trees processed).")
 

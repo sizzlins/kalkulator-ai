@@ -11,8 +11,9 @@ from typing import Dict
 import json
 
 import kalkulator_pkg.parser as kparser
-import math
 import numpy as np
+import scipy.special
+
 
 from ..cache_manager import export_cache_to_file
 from ..cache_manager import get_persistent_cache
@@ -109,6 +110,8 @@ COMMAND_REGISTRY = {
     "call",
     "callset",
     "callm",
+    "callr",
+    "callrm",
 }
 
 
@@ -183,34 +186,57 @@ def handle_command(text: str, ctx: Any, variables: Dict[str, str]) -> bool:
         return True
 
     # === ALT CALL SHORTCUT ===
-    # Check for 'alt[flags] call <func>' pattern
+    # Check for 'alt[flags] call[r] <func>' pattern
     # e.g. "altvd call f" -> "altvd f(1)=2, f(2)=4..."
     # We intercept this BEFORE the generic shortcut expander
-    if " call " in raw_lower:
+    if " call " in raw_lower or " callr " in raw_lower:
         # Try to match start with alt/evolve variant
         match = DYNAMIC_SHORTCUT_PATTERN.match(text.strip())
         if match:
             base_cmd = match.group(1).lower()
             suffix = match.group(2)
-            rest = match.group(3).strip() # this should be "call f ..."
+            rest = match.group(3).strip() # this should be "call[r] f ..."
             
-            if rest.lower().startswith("call "):
-                # Extract calls
-                parts = rest.split(maxsplit=2)
-                # parts[0] is "call"
-                func_name = parts[1].strip() if len(parts) > 1 else ""
-                set_name = parts[2].strip() if len(parts) > 2 else "default"
+            is_random = False
+            if rest.lower().startswith("callr "):
+                is_random = True
+                parts = rest.split()
+            elif rest.lower().startswith("call "):
+                parts = rest.split()
+            else:
+                parts = []
+                
+            if len(parts) > 1:
+                # parts[0] is "call"/"callr"
+                func_name = parts[1].strip()
+                
+                # Handling sets and counts
+                set_name = "default"
+                count_arg = None
+                
+                extra_args = parts[2:]
+                
+                # Check for trailing count
+                if extra_args and extra_args[-1].isdigit():
+                     try:
+                         count_arg = int(extra_args[-1])
+                         extra_args.pop()
+                     except ValueError: pass
+                
+                # Remaining extra arg is set name
+                if extra_args:
+                     set_name = extra_args[0].strip()
                 
                 if func_name:
-                    print(f"[AltCall] Generating data from '{func_name}' on set '{set_name}'...")
-                    results = _get_call_results(ctx, func_name, set_name)
+                    action_str = "Randomized generation" if is_random else "Generating data"
+                    count_info = f" ({count_arg} points)" if count_arg else ""
+                    print(f"[AltCall] {action_str} from '{func_name}' on set '{set_name}'{count_info}...")
+                    
+                    results = _get_call_results(ctx, func_name, set_name, randomize=is_random, count=count_arg)
                     if results:
                         data_str = ", ".join(results)
                         # Reconstruct command: base_cmd + suffix + " " + data_str
-                        # This will fall through to the NEXT check (shortcut_match) which expands base_cmd flags!
-                        # We recurse handle_command to let the shortcut expander do its job
                         new_cmd = f"{base_cmd}{suffix} {data_str}"
-                        # print(f"[Debug] Recursive call: {new_cmd[:50]}...")
                         return handle_command(new_cmd, ctx, variables)
                     else:
                         print("Error: No data generated.")
@@ -377,6 +403,14 @@ def handle_command(text: str, ctx: Any, variables: Dict[str, str]) -> bool:
 
     if raw_lower.startswith("callm"):
         _handle_callm_command(text, ctx)
+        return True
+
+    if raw_lower.startswith("callrm"):
+        _handle_callrm_command(text, ctx)
+        return True
+
+    if raw_lower.startswith("callr"):
+        _handle_callr_command(text, ctx)
         return True
 
     if raw_lower.startswith("call"):
@@ -1319,6 +1353,10 @@ def _handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None)
         if use_hybrid:
             try:
                 from ..function_manager import find_function_from_data
+                
+                # Initialize result vars to avoid UnboundLocalError
+                success = False
+                func_str = None
 
                 # Build data points for find()
                 find_data_points = []
@@ -1375,7 +1413,6 @@ def _handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None)
                         print(f"     Y range: [{min(y_vals_real):.4g}, {max(y_vals_real):.4g}]")
                         print(f"     Y mean: {np.mean(y_vals_real):.4g}, std: {np.std(y_vals_real):.4g}")
                         
-                    import warnings
                     with warnings.catch_warnings():
                          warnings.simplefilter("ignore")
                          # Signature: find_function_from_data(context, data_points, param_names, skip_linear)
@@ -1472,7 +1509,9 @@ def _handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None)
                                 # Format and return the result
                                 from ..symbolic_regression.expression_tree import symbolify_constants
                                 from ..utils.formatting import format_solution
+
                                 beautified = symbolify_constants(func_str)
+
                                 print(f"\nResult: {format_solution(beautified)}")
                                 print(f"MSE: {mse_val:.6g}, Complexity: ~{len(func_str)//5}")
                                 
@@ -1484,8 +1523,9 @@ def _handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None)
                                     pass
                                 return
                         else:
+                            display = func_str[:50] + "..." if len(func_str) > 50 else func_str
                             print(
-                                f"Hybrid seeding: find() result has low R²={r_squared:.2f} (MSE={mse_val:.6f}), skipping seed"
+                                f"Hybrid seeding: find() result '{display}' has low R²={r_squared:.2f} (MSE={mse_val:.6f}), skipping seed"
                             )
                             print("  → Using pure evolve instead (no bad seed)")
                     except Exception as eval_error:
@@ -1537,7 +1577,7 @@ def _handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None)
                     f_lamb = sp.lambdify(input_vars, expr, modules=custom_modules)
                     
                     try:
-                        import warnings
+
                         with warnings.catch_warnings():
                             warnings.simplefilter("ignore", RuntimeWarning)
                             if len(input_vars) == 1:
@@ -2497,11 +2537,43 @@ def _handle_callset_command(text: str, ctx: Any):
     if set_name == "default":
         print("Warning: Overriding 'default' set.")
 
-    # Parse values (simple split by comma)
-    values = [v.strip() for v in values_str.split(",") if v.strip()]
+    # Parse values using robust splitter (handles tuples like (1,2))
+    from ..parser import split_top_level_commas
     
-    _CALL_SETS[set_name] = values
-    print(f"Set '{set_name}' defined with {len(values)} values.")
+    raw_values = split_top_level_commas(values_str)
+    parsed_values = []
+    
+    for v in raw_values:
+        v = v.strip()
+        if not v:
+            continue
+            
+        # Check for Tuple syntax: (a, b, ...)
+        if v.startswith("(") and v.endswith(")"):
+            # Strip parens
+            inner = v[1:-1]
+            # Split items
+            items_str = split_top_level_commas(inner)
+            # Evaluate each item
+            tuple_items = []
+            for item in items_str:
+                res = evaluate_safely(item)
+                if res.get("ok"):
+                    # We store the result (string or number), likely string from worker
+                    tuple_items.append(res.get("result"))
+                else:
+                    tuple_items.append(item) # Fallback
+            parsed_values.append(tuple(tuple_items))
+        else:
+            # Single value
+            res = evaluate_safely(v)
+            if res.get("ok"):
+                parsed_values.append(res.get("result"))
+            else:
+                parsed_values.append(v)
+    
+    _CALL_SETS[set_name] = parsed_values
+    print(f"Set '{set_name}' defined with {len(parsed_values)} values.")
 
 
 def _handle_callm_command(text: str, ctx: Any):
@@ -2513,23 +2585,72 @@ def _handle_callm_command(text: str, ctx: Any):
     _handle_call_command(text.replace("callm", "call", 1), ctx, multiline=True)
 
 
-def _get_call_results(ctx: Any, func_name: str, set_name: str = "default") -> list[str]:
+def _get_call_results(ctx: Any, func_name: str, set_name: str = "default", randomize: bool = False, count: int = None) -> list[str]:
     """
     Helper to generate list of 'f(x)=y' strings for a given function and set.
+    Make sure to update signature to accept count.
     """
     if set_name not in _CALL_SETS:
         return []
         
     inputs = _CALL_SETS[set_name]
     results = []
+    import random
     
-    # Check if func_name exists or is valid?
-    # evaluate_safely handles it.
+    # Determine function arity
+    from ..function_manager import list_functions
+    try:
+        funcs = list_functions(ctx)
+        if func_name in funcs:
+            params, _ = funcs[func_name]
+            arity = len(params)
+        else:
+            # Check if it's a valid builtin (lazy load check)
+            from ..config import ALLOWED_SYMPY_NAMES
+            if func_name in ALLOWED_SYMPY_NAMES:
+                arity = 1 # Assumption for builtins like sin/cos
+            else:
+                # Function not found - abort
+                print(f"Error: Function '{func_name}' is not defined.")
+                return []
+    except Exception:
+        arity = 1
+
+    N = len(inputs)
+    target_count = count if count is not None else N
     
-    for val in inputs:
-        expr = f"{func_name}({val})"
+    for k in range(target_count):
+        # Select base value/index
+        if randomize:
+            idx = random.randint(0, N-1)
+            val = inputs[idx]
+        else:
+            idx = k % N
+            val = inputs[idx]
+
+        # Prepare arguments
+        if isinstance(val, (list, tuple)):
+            # Explicit tuple overrides randomization (user intent)
+            args_list = val
+        else:
+            if randomize and arity > 1:
+                # Randomize all arguments by sampling from the input set
+                args_list = [random.choice(inputs) for _ in range(arity)]
+            elif arity > 1:
+                # Deterministic Mixing (Shifted Rotation)
+                # Arg 0: inputs[idx]
+                # Arg 1: inputs[(idx+1)%N] ...
+                args_list = [inputs[(idx + j) % N] for j in range(arity)]
+            else:
+                 # Arity 1: just val
+                 args_list = [val]
+
+        args_str = ", ".join(str(v) for v in args_list)
+        expr = f"{func_name}({args_str})"
+        
         res = evaluate_safely(expr)
         if res.get("ok"):
+            # Ensure "result" is used for output, usually "2.0" or symbolic
             results.append(f"{expr} = {res.get('result')}")
         else:
             # Skip errors or include? For altvd generation, we probably want valid points.
@@ -2537,21 +2658,37 @@ def _get_call_results(ctx: Any, func_name: str, set_name: str = "default") -> li
             
     return results
 
-def _handle_call_command(text: str, ctx: Any, multiline: bool = False):
+def _handle_call_command(text: str, ctx: Any, multiline: bool = False, randomize: bool = False):
     """
     Handle 'call <func> [set_name]' command.
+    Display results directly.
+    Args:
+        randomize: If True, randomly samples inputs from set (breaks symmetry)
     """
     parts = text.split(maxsplit=2)
     if len(parts) < 2:
-        print("Usage: call <func_name> [set_name]")
+        cmd = "callr" if randomize else "call"
+        print(f"Usage: {cmd} <function_name> [set_name]")
         return
         
     func_name = parts[1].strip()
     
-    # Determine input set
+    # Determine input set and optional count
     set_name = "default"
-    if len(parts) > 2:
-        set_name = parts[2].strip()
+    count_arg = None
+    
+    # args after function name: [set_name?, count?]
+    extra_args = parts[2:]
+    
+    if extra_args and extra_args[-1].isdigit():
+        try:
+            count_arg = int(extra_args[-1])
+            extra_args.pop() # Remove count from args
+        except ValueError:
+            pass
+            
+    if extra_args:
+        set_name = extra_args[0].strip()
         
     if set_name not in _CALL_SETS:
         print(f"Error: Unknown set '{set_name}'. Use 'callset {set_name} ...' to define it.")
@@ -2561,14 +2698,72 @@ def _handle_call_command(text: str, ctx: Any, multiline: bool = False):
         
     inputs = _CALL_SETS[set_name]
     
+    # Check Arity
+    from ..function_manager import list_functions
+    try:
+        funcs = list_functions(ctx)
+        if func_name in funcs:
+            params, _ = funcs[func_name]
+            arity = len(params)
+        else:
+            from ..config import ALLOWED_SYMPY_NAMES
+            if func_name in ALLOWED_SYMPY_NAMES:
+                 arity = 1
+            else:
+                 print(f"Error: Function '{func_name}' is not defined.")
+                 return
+    except Exception:
+        arity = 1
+
+    
+    
+    # Logic to determine loop parameters
+    # If explicit count, use it. Else use set length.
+    target_count = count_arg if count_arg is not None else len(inputs)
+    
+    action_verb = "Randomized calling" if randomize else "Calling"
     if multiline:
-        print(f"Calling '{func_name}' with set '{set_name}' ({len(inputs)} inputs)...")
+        print(f"{action_verb} '{func_name}' with set '{set_name}' ({target_count} inputs)...")
     
     count = 0
     results = []
+    import random
     
-    for val in inputs:
-        expr = f"{func_name}({val})"
+    N = len(inputs)
+    
+    for k in range(target_count):
+        # Determine value and index based on mode
+        if randomize:
+             # Fully random selection for base value
+             idx = random.randint(0, N-1)
+             val = inputs[idx]
+        else:
+             # Sequential selection
+             idx = k % N
+             val = inputs[idx]
+    
+        # Prepare arguments
+        if isinstance(val, (list, tuple)):
+            args_list = val
+        else:
+            if randomize and arity > 1:
+                # Randomize all arguments by sampling from the input set
+                # Note: val above is just one sample. We might regenerate args_list purely randomly.
+                # Consistent with previous 'callr' which picked random choices for all args
+                args_list = [random.choice(inputs) for _ in range(arity)]
+            elif arity > 1:
+                # Deterministic Mixing (Shifted Rotation)
+                # Arg 0: inputs[idx]
+                # Arg 1: inputs[(idx+1)%N] ...
+                # Use idx from outer loop
+                args_list = [inputs[(idx + j) % N] for j in range(arity)]
+            else:
+                 # Arity 1: just val
+                 args_list = [val]
+
+        args_str = ", ".join(str(v) for v in args_list)
+        expr = f"{func_name}({args_str})"
+
         res = evaluate_safely(expr)
         
         if res.get("ok"):
@@ -2588,8 +2783,21 @@ def _handle_call_command(text: str, ctx: Any, multiline: bool = False):
     if not multiline:
         # Print all in one line (comma separated)
         print(", ".join(results))
-            
-    print(f"Completed {count} calls.")
+
+
+
+def _handle_callr_command(text: str, ctx: Any):
+    """Handle 'callr <func> [set_name]' command (Randomized inputs)."""
+    # Use standard handler with randomize=True
+    # Fix command name for parsing
+    _handle_call_command(text.replace("callr", "call", 1), ctx, multiline=False, randomize=True)
+
+
+def _handle_callrm_command(text: str, ctx: Any):
+    """Handle 'callrm <func> [set_name] [count]' command (Randomized inputs, multiline)."""
+    # Use standard handler with randomize=True, multiline=True
+    _handle_call_command(text.replace("callrm", "call", 1), ctx, multiline=True, randomize=True)
+
 
 def _load_data_file(path):
     """Load data from a CSV file (or others if pandas avail) into a dictionary of numpy arrays.

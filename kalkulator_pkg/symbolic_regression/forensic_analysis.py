@@ -312,6 +312,16 @@ def _detect_scalloped_staircase(X, y, variable_names=None, verbose=False):
     
     if max_err < 1e-6:
         # Perfect match - build expression string
+        
+        # TRIVIAL CASE: floor(x) + frac(x) = x
+        # Don't return a complex representation for a simple linear function!
+        if best_a == 1 and best_b == 1:
+            # This is just f(x) = x, represented as floor(x) + frac(x)
+            # Return None to let simpler detectors (like linear) handle it
+            if verbose:
+                print(f"   Scalloped Staircase: Detected trivial case (a=1, b=1) => f(x)=x, skipping")
+            return []
+        
         if best_a == 1 and best_b == 2:
             expr = f"floor({var}) + frac({var})^2"
         elif best_a == 2 and best_b == 2:
@@ -2444,6 +2454,60 @@ def _detect_symmetry_pole(X, y, variable_names=None, verbose=False):
     
     return seeds
 
+def _detect_zero_patterns(X, y, variable_names=None, verbose=False):
+    """Detect periodicity via zero analysis (zeros at k*pi)."""
+    if X.ndim > 1 and X.shape[1] > 1: return []
+    try: x_flat = X.flatten()
+    except: return []
+
+    # Filter for zeros
+    # Use localized tolerance based on y range or simple epsilon
+    # For user case: f(pi, 0.006)=0 => 0.006 might be y value? 
+    # No, f(pi, y) = sin(pi)*y = 0.
+    # So we look for points where output is exactly 0 or very close.
+    zero_mask = (np.abs(y) < 1e-3) & np.isfinite(x_flat)
+    if np.sum(zero_mask) < 2: return []
+    
+    zeros_x = x_flat[zero_mask]
+    var = variable_names[0] if variable_names else "x"
+    seeds = []
+    
+    if verbose:
+        print(f"   [Forensic] Analyzing {len(zeros_x)} zeros for periodicity...")
+    
+    # Check for PI multiples (sin(x))
+    # x / pi should be integer
+    x_div_pi = zeros_x / np.pi
+    # Allow some noise
+    matches_sin = np.abs(x_div_pi - np.round(x_div_pi)) < 0.05
+    match_rate_sin = np.mean(matches_sin)
+    
+    if match_rate_sin > 0.6: # Relaxed threshold as some zeros might be from other factors (like y=0)
+       if verbose: print(f"   [Forensic] Zeros match k*pi ({match_rate_sin:.0%}) -> sin({var})")
+       seeds.append(f"sin({var})")
+       
+    # Check for PI/2 + k*PI (cos(x))
+    # (x / pi) - 0.5 should be integer
+    matches_cos = np.abs((x_div_pi - 0.5) - np.round(x_div_pi - 0.5)) < 0.05
+    match_rate_cos = np.mean(matches_cos)
+    
+    if match_rate_cos > 0.6:
+       if verbose: print(f"   [Forensic] Zeros match k*pi + pi/2 ({match_rate_cos:.0%}) -> cos({var})")
+       seeds.append(f"cos({var})")
+    
+    return seeds
+
+def _detect_bitwise_patterns(X, y, variable_names=None, verbose=False):
+    """Detect simple bitwise patterns like x^k for integers."""
+    # Placeholder for Bitwise XOR detection (referenced in generate_pattern_seeds)
+    return []
+
+def _detect_fibonacci_patterns(X, y, variable_names=None, verbose=False):
+    """Detect Fibonacci sequence patterns."""
+    # Placeholder for Fibonacci detection (referenced in generate_pattern_seeds)
+    return []
+
+
 def generate_pattern_seeds(ctx, X, y, variable_names=None, verbose=False):
     """Detect patterns in data and return seed expression strings."""
     t0 = time.perf_counter()
@@ -2458,11 +2522,65 @@ def generate_pattern_seeds(ctx, X, y, variable_names=None, verbose=False):
     derived_vars = variable_names if variable_names and len(variable_names) == n_vars else [f"x{k}" for k in range(n_vars)]
     var = derived_vars[0]
 
+    # 0. TRIVIAL IDENTITY CHECK: f(x) = x
+    # This must come first to prevent overly complex detectors from matching simple linear functions
+    try:
+        y_arr = np.array(y).flatten()
+        x_arr = X[:, 0].flatten() if X.ndim > 1 else X.flatten()
+        identity_err = np.max(np.abs(y_arr - x_arr))
+        if identity_err < 1e-9:
+            if verbose:
+                print(f"  -> Trivial Identity Detected: f({var}) = {var}")
+            return ([var], var)
+    except Exception:
+        pass  # Continue to other detectors
+
+    # 0.5. PRODUCT INTERACTION CHECK (NEW: sin(x)*y etc.)
+    # Explicitly seed separable combinations which are common but hard to evolve
+    if len(derived_vars) > 1:
+        import itertools
+        if verbose: print(f"  -> Testing {len(derived_vars)} variables for interactions...")
+        
+        # 1. Simple Products: x*y, x*y*z
+        # 2. Trig Products: sin(x)*y, cos(x)*y
+        for v1, v2 in itertools.combinations(derived_vars, 2):
+            seeds.append(f"{v1} * {v2}")
+            seeds.append(f"{v1} / {v2}")
+            seeds.append(f"{v1} + {v2}") # Linear combination
+            
+            # Trig interactions
+            seeds.append(f"sin({v1}) * {v2}")
+            seeds.append(f"cos({v1}) * {v2}")
+            seeds.append(f"{v1} * sin({v2})")
+            seeds.append(f"{v1} * cos({v2})")
+            
+            # Exponential interactions
+            seeds.append(f"exp({v1}) * {v2}")
+            seeds.append(f"{v1} * exp({v2})")
+
+            # Trig Rotations (Gemini Theory: sin(x+y) etc.)
+            seeds.append(f"sin({v1} + {v2})")
+            seeds.append(f"cos({v1} + {v2})")
+            seeds.append(f"sin({v1} - {v2})")
+            seeds.append(f"cos({v1} - {v2})")
+            
+        if verbose: print(f"  -> Added {len(seeds)} interaction seeds")
+
     # 1. Step Function
+
     if verbose: print("[DEBUG] Starting _detect_step_patterns...")
     step_patterns = _detect_step_patterns(X, y)
     if verbose: print("[DEBUG] Finished _detect_step_patterns")
     if step_patterns: return (step_patterns, step_patterns[0]) # Match return signature
+    
+    # 1.1. Zero Pattern Analysis (NEW: sin(x) via zeros at k*pi)
+    try:
+        zero_patterns = _detect_zero_patterns(X, y, variable_names=derived_vars, verbose=verbose)
+        if zero_patterns:
+            if verbose: print(f"  -> Zero Patterns found: {zero_patterns}")
+            seeds.extend(zero_patterns)
+    except Exception as e:
+        if verbose: print(f"  -> Zero Pattern detection error: {e}")
     
     # 1.2. Factorial Detection (Moved to Top for Priority)
     # Check early as it is specific and unlikely to false positive

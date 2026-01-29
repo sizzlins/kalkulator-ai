@@ -678,6 +678,19 @@ def _get_sympy_ops():
             if hasattr(x, 'is_integer') and x.is_integer and x < 0: return sp.zoo
             return sp.factorial(x)
         except (ValueError, TypeError, AttributeError):
+        except (ValueError, TypeError, AttributeError):
+            return sp.zoo
+
+    def _safe_lucas(n):
+        try:
+            return sp.lucas(n)
+        except (TypeError, ValueError):
+            return sp.zoo
+
+    def _safe_fibonacci(n):
+        try:
+            return sp.fibonacci(n)
+        except (TypeError, ValueError):
             return sp.zoo
 
     # Define ops inside here to avoid top-level dependency
@@ -721,8 +734,8 @@ def _get_sympy_ops():
         "erf": sp.erf,
         "sinc": sp.sinc,
         "heaviside": lambda x: sp.Heaviside(x, sp.Rational(1, 2)),
-        "fibonacci": sp.fibonacci,
-        "lucas": sp.lucas,
+        "fibonacci": _safe_fibonacci,
+        "lucas": _safe_lucas,
         "atan": sp.atan,
         "asin": sp.asin,
         "acos": sp.acos,

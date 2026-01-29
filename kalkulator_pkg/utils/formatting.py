@@ -307,7 +307,10 @@ def pretty_print_expression(expr: str) -> str:
 
     result = expr
 
-    # Add spaces around * (but not **)
+    # Transform ** to ^
+    result = result.replace("**", "^")
+
+    # Add spaces around * (but avoid creating * * from existing spaces)
     result = re.sub(r"(?<!\*)\*(?!\*)", " * ", result)
 
     # Add spaces around + (but not in exponents like e+10)
@@ -318,9 +321,24 @@ def pretty_print_expression(expr: str) -> str:
 
     # Add spaces around /
     result = re.sub(r"/", " / ", result)
+    
+    # Fix comma spacing: " , " -> ", "
+    result = re.sub(r"\s*,\s*", ", ", result)
 
     # Clean up multiple spaces
     result = re.sub(r"\s+", " ", result)
+    
+    # Fix function calls: names followed by space then ( -> name(
+    result = re.sub(r"([a-zA-Z_]\w*)\s+\(", r"\1(", result)
+    
+    # Remove spaces around ^
+    result = re.sub(r"\s*\^\s*", "^", result)
+    
+    # Remove spaces inside parentheses
+    # "( " -> "("
+    result = re.sub(r"\(\s+", "(", result)
+    # " )" -> ")"
+    result = re.sub(r"\s+\)", ")", result)
 
     # Trim and return
     return result.strip()
