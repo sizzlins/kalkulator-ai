@@ -26,7 +26,7 @@ class ParetoSolution:
     """
 
     expression: str
-    sympy_expr: Any  # sp.Expr
+    sympy_expr: Any = field(compare=False)  # sp.Expr
     mse: float
     complexity: int
     tree: Any = field(compare=False)  # ExpressionTree
@@ -80,26 +80,31 @@ class ParetoFront:
         """
         # Check if new solution is dominated by any existing
         # Early termination: if we find a dominator, skip
-        for existing in self.solutions:
-            if existing.dominates(solution):
-                return False
-            # Early termination: if existing has better MSE and complexity, 
-            # no need to check further (since list is sorted by MSE)
-            if existing.mse < solution.mse and existing.complexity < solution.complexity:
-                return False
+        # Check if new solution is dominated by any existing
+        # Early termination: if we find a dominator, skip
+        try:
+            for existing in self.solutions:
+                # print(f".", end="", flush=True) # Too verbose?
+                if existing.dominates(solution):
+                    return False
+                if existing.mse < solution.mse and existing.complexity < solution.complexity:
+                    return False
 
-        # Remove solutions dominated by the new one (use list comp for efficiency)
-        self.solutions = [s for s in self.solutions if not solution.dominates(s)]
+            # Remove solutions dominated by the new one
+            self.solutions = [s for s in self.solutions if not solution.dominates(s)]
 
-        # Add new solution and maintain sorted order by MSE
-        self.solutions.append(solution)
-        self.solutions.sort(key=lambda s: s.mse)  # O(N log N)
+            # Add new solution and maintain sorted order by MSE
+            self.solutions.append(solution)
+            self.solutions.sort(key=lambda s: s.mse)
 
-        # Trim if too large (keep most diverse)
-        if len(self.solutions) > self.max_size:
-            self._trim()
-
-        return True
+            # Trim if too large
+            if len(self.solutions) > self.max_size:
+                self._trim()
+            
+            return True
+        except Exception as e:
+            print(f"DEBUG: Error in ParetoFront.add: {e}")
+            raise e
 
     def _trim(self):
         """Trim front to max_size, keeping diverse solutions."""

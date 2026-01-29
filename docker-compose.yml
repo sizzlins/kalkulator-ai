@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  # Manager Process (Orchestrator - runs on host or separate container)
+  # For now, we assume the manager runs locally and spins up workers,
+  # OR this defines the worker fleet if we move to a distributed model.
+  
+  worker:
+    build: .
+    image: kalkulator-worker:latest
+    container_name: kalkulator-worker
+    restart: on-failure
+    cpus: 1.0
+    mem_limit: 1024m
+    read_only: true  # Immutable filesystem for security
+    tmpfs:
+      - /tmp   # Allow temporary files in memory only
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - PYTHONUNBUFFERED=1
+    # IPC for shared memory performance (optional, dangerous if untrusted)
+    # ipc: host 
+    
+    # Network isolation
+    network_mode: none 
+    
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1024M
+
+# Implementation Note:
+# To fully implement "Move Sandboxing to OS Level", the main Python process
+# should shell out to `docker run ...` instead of `multiprocessing.Process`.
+# This file provides the template for that architectural shift.

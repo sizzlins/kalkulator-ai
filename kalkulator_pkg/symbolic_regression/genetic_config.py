@@ -22,27 +22,75 @@ class GeneticConfig:
     vertex_bonus: float = 5.0            # Weight boost for x=0
     anchor_bonus: float = 3.0            # Weight boost for integer anchors
     min_valid_ratio: float = 0.9         # Min % of valid data points
+    min_valid_ratio: float = 0.9         # Min % of valid data points
     integer_tolerance: float = 1e-5      # Tolerance for integer anchor detection
+    learning_rate: float = 1.0           # Boosting learning rate (1.0 = Full Model, 0.1 = Gradient Boosting)
     
     # Operators
     operators: list[str] = field(
         default_factory=lambda: [
+            # Core arithmetic
             "add", "sub", "mul", "div", "pow",
+            # Basic transcendental
             "sin", "cos", "tan", "exp", "log",
             "sqrt", "abs", "neg", "inv",
-            # Advanced
+            # Hyperbolic
             "sinh", "cosh", "tanh", "asinh", "acosh", "atanh",
-            "floor", "ceil", "sign", "max", "min",
+            # Rounding/Step functions
+            "floor", "ceil", "sign", "max", "min", "round", "frac", "trunc",
+            # Inverse trig
+            "atan", "asin", "acos",
+            # Power shortcuts
+            "square", "cube",
+            # Protected operators (prevent NaN/complex)
+            "plog", "psqrt",
+            # Special functions
+            "lambertw", "erf", "sinc", "heaviside",
+            "bessel_j0", "bessel_j1", "gamma", "factorial",
+            # Sequences
+            "fibonacci", "lucas", "prime_pi", "ith_prime", "prime",
+            # Bitwise (for integer patterns)
+            "bitwise_xor", "bitwise_and", "bitwise_or", "lshift", "rshift",
+            # Other binary
+            "mod", "atan2",
         ]
     )
+
     
     # Weighted Complexity (Penalize "cheating" operators)
     operator_weights: dict[str, float] = field(
         default_factory=lambda: {
-            "max": 5.0, "min": 5.0, "abs": 4.0,  # Discontinuities
-            "floor": 2.0, "ceil": 2.0,           # Steps
-            "pow": 1.0, "exp": 1.0, "log": 1.0,  # Standard
-            "add": 1.0, "sub": 1.0, "mul": 1.0, "div": 1.0
+            # Discontinuities (high penalty)
+            "max": 5.0, "min": 5.0, "abs": 4.0, "heaviside": 4.0,
+            # Steps/Rounding (Aggressively encouraged for discrete logic)
+            "floor": 0.1, "ceil": 0.1, "round": 0.1, "frac": 0.1, "sign": 0.1, "trunc": 0.1,
+            
+            # Standard operations
+            "pow": 1.0, "exp": 1.0, "log": 1.0, "plog": 1.0,
+            "add": 1.0, "sub": 1.0, "mul": 1.0, "div": 1.0,
+            "sqrt": 1.0, "psqrt": 1.0, "square": 1.0, "cube": 1.0,
+            
+            # Trig (standard)
+            "sin": 1.0, "cos": 1.0, "tan": 1.0,
+            "asin": 1.0, "acos": 1.0, "atan": 1.0, "atan2": 1.5,
+            
+            # Hyperbolic
+            "sinh": 1.0, "cosh": 1.0, "tanh": 1.0,
+            "asinh": 1.0, "acosh": 1.0, "atanh": 1.0,
+            
+            # Special functions (slightly higher - exotic)
+            "lambertw": 2.0, "erf": 1.5, "sinc": 1.5,
+            "bessel_j0": 2.0, "bessel_j1": 2.0, "gamma": 2.0, "factorial": 2.0,
+            
+            # Sequences (moderate penalty - discrete)
+            "fibonacci": 1.0, "lucas": 1.0, "prime_pi": 1.0, "ith_prime": 1.0, "prime": 1.0,
+            
+            # Bitwise (encouraged for patterns)
+            "bitwise_xor": 0.5, "bitwise_and": 0.5, "bitwise_or": 0.5,
+            "lshift": 0.5, "rshift": 0.5,
+            
+            # Modulo
+            "mod": 0.5,
         }
     )
     default_complexity_weight: float = 1.0
@@ -66,3 +114,10 @@ class GeneticConfig:
     boosting_rounds: int = 1
     high_precision: bool = False
     n_jobs: int = 1  # 1=serial, >1=parallel workers, -1=all cores
+    
+    # Random Seed
+    random_state: int | None = None
+    
+    # Loss Function (Robust Regression)
+    loss_function: str = "mse" # "mse" or "huber"
+    huber_delta: float = 1.35

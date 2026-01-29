@@ -8,6 +8,7 @@ import re
 import warnings
 from typing import Any
 from typing import Dict
+import json
 
 import kalkulator_pkg.parser as kparser
 import math
@@ -29,6 +30,7 @@ from ..symbolic_regression import GeneticConfig, GeneticSymbolicRegressor
 from ..utils.formatting import format_solution
 from ..utils.formatting import print_result_pretty
 from ..worker import clear_caches
+from ..worker import evaluate_safely
 from ..symbolic_regression.forensic_analysis import generate_pattern_seeds
 
 logger = logging.getLogger(__name__)
@@ -97,9 +99,22 @@ COMMAND_REGISTRY = {
     "plot",
     "alt",
     "altv",
+    "altvd",
     "all",
+    "all4",
+    "alld4",
+    "alt4",
+    "altv4",
+    "altvd4",
+    "call",
+    "callset",
+    "callm",
 }
 
+
+
+# Dynamic Shortcut Pattern: Matches alt/all commands with optional digits (e.g., altvd, altvd4, altvd12)
+DYNAMIC_SHORTCUT_PATTERN = re.compile(r"^(alt|altv|altvd|all|alld|alt4|altv4|altvd4|alld4|alrvd|alrv)(\d*)\s+(.*)", re.IGNORECASE)
 
 def handle_command(text: str, ctx: Any, variables: Dict[str, str]) -> bool:
     """
@@ -164,19 +179,96 @@ def handle_command(text: str, ctx: Any, variables: Dict[str, str]) -> bool:
         return True
 
     if raw_lower.startswith("evolve "):
-        _handle_evolve(text, variables)
+        _handle_evolve(text, ctx, variables)
         return True
 
-    # Shortcut commands route to evolve: alt, all, b, h, v, altv
-    if raw_lower.startswith(("alt ", "all ", "b ", "h ", "v ", "altv ")):
-        _handle_evolve(text, variables)
+    # === ALT CALL SHORTCUT ===
+    # Check for 'alt[flags] call <func>' pattern
+    # e.g. "altvd call f" -> "altvd f(1)=2, f(2)=4..."
+    # We intercept this BEFORE the generic shortcut expander
+    if " call " in raw_lower:
+        # Try to match start with alt/evolve variant
+        match = DYNAMIC_SHORTCUT_PATTERN.match(text.strip())
+        if match:
+            base_cmd = match.group(1).lower()
+            suffix = match.group(2)
+            rest = match.group(3).strip() # this should be "call f ..."
+            
+            if rest.lower().startswith("call "):
+                # Extract calls
+                parts = rest.split(maxsplit=2)
+                # parts[0] is "call"
+                func_name = parts[1].strip() if len(parts) > 1 else ""
+                set_name = parts[2].strip() if len(parts) > 2 else "default"
+                
+                if func_name:
+                    print(f"[AltCall] Generating data from '{func_name}' on set '{set_name}'...")
+                    results = _get_call_results(ctx, func_name, set_name)
+                    if results:
+                        data_str = ", ".join(results)
+                        # Reconstruct command: base_cmd + suffix + " " + data_str
+                        # This will fall through to the NEXT check (shortcut_match) which expands base_cmd flags!
+                        # We recurse handle_command to let the shortcut expander do its job
+                        new_cmd = f"{base_cmd}{suffix} {data_str}"
+                        # print(f"[Debug] Recursive call: {new_cmd[:50]}...")
+                        return handle_command(new_cmd, ctx, variables)
+                    else:
+                        print("Error: No data generated.")
+                        return True
+
+    # Check for Dynamic Shortcuts (altvd12, alt4, etc.)
+    shortcut_match = DYNAMIC_SHORTCUT_PATTERN.match(text.strip())
+    if shortcut_match:
+        base_cmd = shortcut_match.group(1).lower()
+        boost_suffix = shortcut_match.group(2)
+        rest_args = shortcut_match.group(3)
+        
+        # Define flags mapping
+        # Note: 4-series aliases (alt4, etc.) are just base aliases + explicit default boost 4
+        # We handle boost variable separately below
+        
+        flags = ""
+        default_boost = 3
+        
+        if "altvd" in base_cmd or "alrvd" in base_cmd:
+            flags = "--hybrid --verbose --super-verbose --debug --transform"
+        elif "altv" in base_cmd or "alrv" in base_cmd:
+            flags = "--hybrid --verbose --transform"
+        elif "alt" in base_cmd:
+            # Upgrade "alt" to be verbose as requested by user ("alt... does not show logs")
+            # Formerly: flags = "--hybrid --transform"
+            flags = "--hybrid --verbose --transform"
+        elif "alld" in base_cmd:
+             flags = "--verbose --transform"
+        elif "all" in base_cmd:
+             flags = "--verbose"
+             
+        # Handle 4-series defaults (if explicit 4 in name)
+        if "4" in base_cmd:
+            default_boost = 4
+            
+        # Determine actual boost
+        if boost_suffix:
+            # Explicit number overrides everything (e.g. altvd12 -> boost 12)
+            boost_val = boost_suffix
+        else:
+            boost_val = str(default_boost)
+            
+        # Construct new command
+        # Append flags and boost to the arguments
+        new_text = f"{rest_args} {flags} --boost {boost_val}"
+        
+        if "--debug" in flags:
+            print(f"[Debug] Shortcut '{base_cmd}{boost_suffix}' expanded to: {new_text}")
+            
+        _handle_evolve(new_text, ctx, variables)
         return True
 
     # ODE discovery shortcut: 'ode f(...)' is equivalent to 'alt --discover-ode f(...)'
     if raw_lower.startswith("ode "):
         text = text[4:]  # Remove 'ode ' prefix
         text = "--discover-ode " + text  # Add the flag
-        _handle_evolve(text, variables)
+        _handle_evolve(text, ctx, variables)
         return True
 
     # === Function Finding/System ===
@@ -279,6 +371,18 @@ def handle_command(text: str, ctx: Any, variables: Dict[str, str]) -> bool:
             print("Health check module not found.")
         return True
 
+    if raw_lower.startswith("callset"):
+        _handle_callset_command(text, ctx)
+        return True
+
+    if raw_lower.startswith("callm"):
+        _handle_callm_command(text, ctx)
+        return True
+
+    if raw_lower.startswith("call"):
+        _handle_call_command(text, ctx, multiline=False)
+        return True
+
     return False
 
 
@@ -293,26 +397,77 @@ def _substitute_vars(text: str, variables: Dict[str, str]) -> str:
 
 
 def _handle_show_functions(ctx: Any):
+    """Display user-defined functions and categorized built-in functions."""
     funcs = list_functions(ctx)
+    
+    # === User-Defined Functions ===
+    print("=" * 60)
+    print("USER-DEFINED FUNCTIONS")
+    print("=" * 60)
     if funcs:
-        print("User functions:")
         for name in sorted(funcs.keys()):
             params, body = funcs[name]
-            print(f"{name}({', '.join(params)})={body}")
+            param_str = ", ".join(params) if params else ""
+            print(f"  {name}({param_str}) = {body}")
     else:
-        print("User functions: None")
-
-    print("\nBuilt-in functions:")
-    builtins = sorted(get_builtin_names())
-    line = "  "
-    for b in builtins:
-        entry = f"{b}(...)"
-        if len(line) + len(entry) + 2 > 80:
+        print("  (none)")
+    
+    # === Built-in Functions by Category ===
+    print("\n" + "=" * 60)
+    print("BUILT-IN FUNCTIONS")
+    print("=" * 60)
+    
+    # Categorize builtins
+    categories = {
+        "Trigonometric": ["sin", "cos", "tan", "cot", "sec", "csc", "asin", "acos", "atan", "atan2", "arcsin", "arccos", "arctan"],
+        "Hyperbolic": ["sinh", "cosh", "tanh", "asinh", "acosh", "atanh"],
+        "Exponential/Log": ["exp", "log", "ln", "log2", "log10"],
+        "Power/Root": ["sqrt", "cbrt", "root", "abs", "Abs", "sign"],
+        "Rounding": ["floor", "ceil", "ceiling", "round", "frac"],
+        "Special": ["gamma", "factorial", "binomial", "fibonacci", "lucas", "erf", "sinc", "besselj", "prime_pi", "primepi", "LambertW"],
+        "Piecewise": ["Heaviside", "heaviside", "Max", "max", "Min", "min", "Piecewise"],
+        "Comparison": ["Eq", "Ne", "Lt", "Le", "Gt", "Ge"],
+        "Bitwise": ["bitwise_and", "bitwise_or", "bitwise_xor", "lshift", "rshift"],
+        "Algebra": ["gcd", "lcm", "Mod", "mod", "expand", "factor", "simplify"],
+        "Calculus": ["diff", "integrate", "limit"],
+        "Linear Algebra": ["Matrix", "matrix", "det", "inv"],
+        "Constants": ["pi", "e", "E", "I", "oo", "nan", "zoo"],
+        "Special Eval": ["locked", "neg", "AccumBounds"],
+    }
+    
+    builtins_set = set(get_builtin_names())
+    displayed = set()
+    
+    for cat_name, cat_funcs in categories.items():
+        matching = [f for f in cat_funcs if f in builtins_set]
+        if matching:
+            print(f"\n  {cat_name}:")
+            line = "    "
+            for f in sorted(matching, key=str.lower):
+                entry = f"{f}()"
+                if len(line) + len(entry) + 2 > 76:
+                    print(line.rstrip(", "))
+                    line = "    "
+                line += entry + ", "
+                displayed.add(f)
+            if line.strip():
+                print(line.rstrip(", "))
+    
+    # Show any remaining (miscellaneous)
+    remaining = builtins_set - displayed
+    if remaining:
+        print(f"\n  Other:")
+        line = "    "
+        for f in sorted(remaining, key=str.lower):
+            entry = f"{f}()"
+            if len(line) + len(entry) + 2 > 76:
+                print(line.rstrip(", "))
+                line = "    "
+            line += entry + ", "
+        if line.strip():
             print(line.rstrip(", "))
-            line = "  "
-        line += entry + ", "
-    if line.strip():
-        print(line.rstrip(", "))
+    
+    print()
 
 
 def _handle_solve_command(text: str, variables: Dict[str, str]):
@@ -413,12 +568,34 @@ def _handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None)
         
         # altv: SUPER-VERBOSE mode (like alt but with detailed analysis logging)
         # Shows EXACTLY what the engine is thinking for tech-savvy users
-        if text_lower.startswith('altv '):
-            text = 'evolve --hybrid --verbose --super-verbose --boost 3 --transform ' + text[5:]
-        # alt: ULTIMATE power mode (hybrid + verbose + boost 3 + transform)
+        # altvd: DEBUG mode (hybrid + verbose + super-verbose + debug + boost 3 + transform)
+        if text_lower.startswith('altvd '):
+            text = 'evolve --hybrid --verbose --super-verbose --debug --boost 3 --transform ' + text[6:]
+        # altv: FORENSIC mode (hybrid + verbose + boost 3 + transform) - Analysis logs only, no super-verbose
+        elif text_lower.startswith('altv '):
+            text = 'evolve --hybrid --verbose --boost 3 --transform ' + text[5:]
+        # alt: ULTIMATE power mode (hybrid + boost 3 + transform) - Now Verbose by default to show progress
         elif text_lower.startswith('alt '):
             text = 'evolve --hybrid --verbose --boost 3 --transform ' + text[4:]
-        # all: Full power mode (hybrid + verbose + boost 3)
+            
+        # --- 4-Series shortcuts (Boost 4) ---
+        # altvd4: evolve --super-verbose --transform --debug --boost 4
+        elif text_lower.startswith('altvd4 '):
+            text = 'evolve --super-verbose --transform --debug --boost 4 ' + text[7:]
+        # altv4: evolve --super-verbose --transform --boost 4
+        elif text_lower.startswith('altv4 '):
+            text = 'evolve --super-verbose --transform --boost 4 ' + text[6:]
+        # alt4: evolve --verbose --transform --boost 4 (User def: "equal to evolve --verbose --transform boost 4")
+        elif text_lower.startswith('alt4 '):
+            text = 'evolve --verbose --transform --boost 4 ' + text[5:]
+        # alld4: evolve --verbose --transform --boost 4
+        elif text_lower.startswith('alld4 '):
+            text = 'evolve --verbose --transform --boost 4 ' + text[6:]
+        # all4: evolve --verbose --boost 4
+        elif text_lower.startswith('all4 '):
+            text = 'evolve --verbose --boost 4 ' + text[5:]
+            
+        # all: Full power mode (verbose + boost 3 + hybrid) - User definition: "evolve --hybrid --verbose --boost 3"
         elif text_lower.startswith('all '):
             text = 'evolve --hybrid --verbose --boost 3 ' + text[4:]
         # b: Fast mode (verbose + boost 3, no hybrid)
@@ -484,6 +661,13 @@ def _handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None)
             text = re.sub(r"--high-precision", "", text, flags=re.IGNORECASE)
             text = re.sub(r"--hp\b", "", text, flags=re.IGNORECASE)
             print("   [High-Precision Mode] Using arbitrary-precision arithmetic (50+ digits)")
+
+        # Debug Mode
+        use_debug = "--debug" in text.lower()
+        if use_debug:
+            text = re.sub(r"--debug", "", text, flags=re.IGNORECASE)
+            logging.getLogger().setLevel(logging.DEBUG)
+            print("   [Debug Mode] Enabled full debug logging")
 
         # Constraint-Based Search
         # Parse "--ban func1,func2,..." to restrict operator search space
@@ -914,31 +1098,6 @@ def _handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None)
         X = np.column_stack([data_dict[v] for v in input_vars])
         y = data_dict[output_var]
 
-        # --- SMART SEEDING: Au1to-detect patterns and generate seed expressions ---
-        # --- SMART SEEDING: Auto-detect patterns and generate seed expressions ---
-        auto_seeds_result = generate_pattern_seeds(ctx, X, y, input_vars, verbose=verbose_mode)
-        
-        # Unpack tuple (seeds, exact_match)
-        exact_match = None
-        if isinstance(auto_seeds_result, tuple):
-            auto_seeds, exact_match = auto_seeds_result
-        else:
-            auto_seeds = auto_seeds_result
-            
-        # Short-circuit if specific exact match found (e.g. step functions)
-        if exact_match:
-            beautified_match = symbolify_constants(exact_match)
-            print(f"\nResult: {beautified_match}")
-            print(f"MSE: 0.0 (Exact Match), Complexity: {len(beautified_match)}")
-            return
-
-        if auto_seeds:
-            seeds.extend(auto_seeds)
-            if len(auto_seeds) <= 5:
-                print(f"Smart seeding: detected patterns, seeding with {auto_seeds}")
-            else:
-                print(f"Smart seeding: detected {len(auto_seeds)} pattern-based seeds")
-
         # --- FILTER: Remove inf/nan/zoo from data BEFORE seeding/evolution ---
         # Robust cleanup: Handle potential 'zoo' strings or SymPy objects
         # NOTE: Complex values ARE supported and should NOT be filtered
@@ -1025,7 +1184,15 @@ def _handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None)
         # Remove extreme outliers that could corrupt evolution
         # This helps when input data has precision errors near poles (e.g., f(0.0005) wrong by 10 orders of magnitude)
         try:
-            if len(y) >= 10 and not np.iscomplexobj(y):
+            # NEW: Check for discrete values (integers)
+            # If data is discrete (e.g. floor, ceil, step), outliers might be valid jumps.
+            y_real_check = np.real(y) if np.iscomplexobj(y) else y.astype(float)
+            y_round_check = np.round(y_real_check)
+            mse_int_check = np.mean((y_real_check - y_round_check)**2)
+            
+            if mse_int_check < 0.01:
+                print("Note: Discrete values detected. Outlier filtering disabled to preserve step/jump data.")
+            elif len(y) >= 10 and not np.iscomplexobj(y):
                 y_real = np.real(y) if np.iscomplexobj(y) else y.astype(float)
                 q1 = np.percentile(y_real, 25)
                 q3 = np.percentile(y_real, 75)
@@ -1044,6 +1211,107 @@ def _handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None)
                     print(f"Note: Filtered {num_outliers} outlier point(s) using IQR method.")
         except Exception:
             pass  # If outlier detection fails, continue with original data
+
+        # --- SMART SEEDING: Auto-detect patterns and generate seed expressions ---
+        # NOW RUNNING AFTER FILTERING (to avoid crashing on inf/nan/overflows)
+        try:
+            if 'seeds' not in locals(): seeds = []
+            
+            auto_seeds_result = generate_pattern_seeds(ctx, X, y, input_vars, verbose=verbose_mode)
+            
+            # Unpack tuple (seeds, exact_match)
+            exact_match = None
+            if isinstance(auto_seeds_result, tuple):
+                auto_seeds, exact_match = auto_seeds_result
+            else:
+                auto_seeds = auto_seeds_result
+                
+            # Short-circuit if specific exact match found (e.g. step functions)
+            if exact_match:
+                # Validate the "Exact Match" to prove it's real
+                try:
+                    import sympy as sp
+                    from ..symbolic_regression.expression_tree import symbolify_constants
+                    
+                    beautified_match = symbolify_constants(exact_match)
+                    
+                    # Calculate true MSE
+                    # Safe parse with preprocessing (handles ^ -> **, etc.)
+                    try:
+                        preprocessed_match = kparser.preprocess_expression(exact_match)
+                        local_dict = {v: sp.Symbol(v) for v in input_vars}
+                        expr_obj = kparser.safe_sympy_parse(preprocessed_match, local_dict=local_dict)
+                        # Vectorized wrappers for discrete math
+                        def _v_primepi(x): 
+                            try: return float(sp.primepi(int(x))) 
+                            except: return 0.0
+                        def _v_prime(x): 
+                            try: return float(sp.prime(int(x))) 
+                            except: return 0.0
+                        
+                        custom_modules = [{
+                            "primepi": np.vectorize(_v_primepi), 
+                            "prime_pi": np.vectorize(_v_primepi), 
+                            "ith_prime": np.vectorize(_v_prime), 
+                            "prime": np.vectorize(_v_prime), 
+                            "trunc": np.trunc,
+                            "locked": lambda x: x,
+                            "factorial": lambda x: scipy.special.gamma(x + 1),
+                            "lshift": np.left_shift,
+                            "rshift": np.right_shift,
+                            "bitwise_and": np.bitwise_and,
+                            "bitwise_or": np.bitwise_or,
+                            "bitwise_xor": np.bitwise_xor,
+                        }, "numpy", "scipy"]
+                        f_lamb = sp.lambdify(input_vars, expr_obj, modules=custom_modules)
+                        
+                        if len(input_vars) == 1:
+                              with warnings.catch_warnings():
+                                  warnings.simplefilter("ignore", RuntimeWarning)
+                                  y_pred = f_lamb(X.flatten())
+                        else:
+                              with warnings.catch_warnings():
+                                  warnings.simplefilter("ignore", RuntimeWarning)
+                                  y_pred = f_lamb(*X.T)
+                            
+                        # Handle scalar output broadcast
+                        if np.isscalar(y_pred) or (hasattr(y_pred, 'shape') and y_pred.shape == ()):
+                            y_pred = np.full_like(y, y_pred)
+                            
+                        mse = np.mean((y - y_pred)**2)
+                        
+                        if mse < 1e-9:
+                            print(f"\nResult: {beautified_match}")
+                            print(f"MSE: {mse:.6e} (Exact Match), Complexity: {len(beautified_match)}")
+                            # Persist and return ONLY if truly exact
+                            from ..function_manager import define_function
+                            define_function(ctx, func_name, input_vars, beautified_match)
+                            return
+                        else:
+                            print(f"\nResult: {beautified_match}")
+                            print(f"MSE: {mse:.6f} (Heuristic Match - Continuing Evolution)")
+                            # Not exact enough? Add to seeds and continue
+                            if auto_seeds is None: auto_seeds = []
+                            auto_seeds.append(exact_match)
+                            
+                    except Exception as e:
+                        # Validation failed? Don't stop.
+                        if verbose_mode: print(f"Exact match validation failed: {e}")
+                        if auto_seeds is None: auto_seeds = []
+                        auto_seeds.append(exact_match)
+                except Exception as e:
+                    if verbose_mode: print(f"Exact match check failed: {e}")
+                    # Continue to evolution
+                    pass
+
+            if auto_seeds:
+                seeds.extend(auto_seeds)
+                if len(auto_seeds) <= 5:
+                    print(f"Smart seeding: detected patterns, seeding with {auto_seeds}")
+                else:
+                    print(f"Smart seeding: detected {len(auto_seeds)} pattern-based seeds")
+        except Exception as e:
+             if verbose_mode: print(f"Smart seeding error: {e}")
 
         print(f"Evolving {func_name}({', '.join(input_vars)}) from {len(y)} data points...")
 
@@ -1122,9 +1390,18 @@ def _handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None)
                     try:
                         # Evaluate the discovered function on our data to check quality
                         import sympy as sp
-                        symbols_dict = {var: sp.Symbol(var) for var in input_vars}
-                        # SECURITY: Use safe AST parser
-                        discovered_expr = kparser.safe_sympy_parse(func_str, local_dict=symbols_dict)
+                        from ..sympy_defs import ALLOWED_SYMPY_NAMES
+                        
+                        # Create local dict with variables and standard functions
+                        local_ns = {var: sp.Symbol(var) for var in input_vars}
+                        local_ns.update(ALLOWED_SYMPY_NAMES)
+                        local_ns.update({"pi": sp.pi, "e": sp.E, "E": sp.E})
+                        
+                        # Preprocess to handle '^' -> '**'
+                        preprocessed_func = kparser.preprocess_expression(func_str)
+                        
+                        # SECURITY: Use safe AST parser with full context
+                        discovered_expr = kparser.safe_sympy_parse(preprocessed_func, local_dict=local_ns)
                         
                         # Calculate predictions
                         # Calculate predictions (filter complex points to avoid warnings)
@@ -1185,11 +1462,11 @@ def _handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None)
                                 f"Hybrid seeding: using find() result '{display}' (R²={r_squared:.4f}, MSE={mse_val:.6f})"
                             )
                             
-                            # EARLY RETURN: If find() result is EXCELLENT (MSE < 0.01), skip evolution
-                            # This handles cases where SVD finds perfect rational functions that
-                            # the Genetic Engine can't parse or improve
-                            if mse_val < 0.01:
-                                print(f"\n🎯 find() discovered an excellent solution (MSE={mse_val:.6f})")
+                            # EARLY RETURN: If find() result is GOOD (MSE < 0.05), skip evolution
+                            # This handles cases where SVD/regression finds good solutions that
+                            # the Genetic Engine often can't parse or improve anyway
+                            if mse_val < 0.05:
+                                print(f"\n🎯 find() discovered a good solution (MSE={mse_val:.6f})")
                                 print(f"   Skipping evolution and returning directly.")
                                 
                                 # Format and return the result
@@ -1202,7 +1479,7 @@ def _handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None)
                                 # Persist the function
                                 try:
                                     from ..function_manager import define_function
-                                    define_function(func_name, input_vars, beautified)
+                                    define_function(ctx, func_name, input_vars, beautified)
                                 except Exception:
                                     pass
                                 return
@@ -1218,7 +1495,79 @@ def _handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None)
                 print(f"Hybrid mode: find() failed ({e}), continuing with other seeds")
 
         # Old location of filter block - moved up
-        pass
+        # --- SEED SANITIZATION: Filter out toxic seeds (Inf/NaN/Complex) ---
+        if seeds and len(seeds) > 0:
+            clean_seeds = []
+            import sympy as sp
+            # Ensure input vars are symbols
+            symbols_dict = {var: sp.Symbol(var) for var in input_vars}
+            
+            for seed in seeds:
+                try:
+                    # Preprocess seed (Handle ^ -> **, etc.)
+                    # This fixes the critical bug where valid seeds were treated as XOR
+                    preprocessed_seed = kparser.preprocess_expression(seed)
+                    
+                    # Parse seed (Validation)
+                    expr = kparser.safe_sympy_parse(preprocessed_seed, local_dict=symbols_dict)
+                    
+                    # Test on data (Sanitization)
+                    # Vectorized wrappers for discrete math
+                    def _v_primepi(x): 
+                        try: return float(sp.primepi(int(x))) 
+                        except: return 0.0
+                    def _v_prime(x): 
+                        try: return float(sp.prime(int(x))) 
+                        except: return 0.0
+
+                    custom_modules = [{
+                        "primepi": np.vectorize(_v_primepi), 
+                        "prime_pi": np.vectorize(_v_primepi), 
+                        "ith_prime": np.vectorize(_v_prime), 
+                        "prime": np.vectorize(_v_prime), 
+                        "trunc": np.trunc,
+                        "locked": lambda x: x,
+                        "factorial": lambda x: scipy.special.gamma(x + 1),
+                        "lshift": np.left_shift,
+                        "rshift": np.right_shift,
+                        "bitwise_and": np.bitwise_and,
+                        "bitwise_or": np.bitwise_or,
+                        "bitwise_xor": np.bitwise_xor,
+                    }, "numpy", "scipy"]
+                    f_lamb = sp.lambdify(input_vars, expr, modules=custom_modules)
+                    
+                    try:
+                        import warnings
+                        with warnings.catch_warnings():
+                            warnings.simplefilter("ignore", RuntimeWarning)
+                            if len(input_vars) == 1:
+                                preds = f_lamb(X.flatten())
+                            else:
+                                preds = f_lamb(*X.T)
+                            
+                        # Force numeric array (handle scalar result or complex)
+                        preds_arr = np.array(preds)
+                        
+                        # RELAXED SANITIZER (v1.5 Fix):
+                        # We do NOT check np.all(np.isfinite(preds_arr)) anymore.
+                        # Complex results or NaNs are penalized by the engine, not banned here.
+                        
+                    except Exception as eval_e:
+                        # Runtime error during evaluation (e.g. ZeroDivision)
+                         if verbose_mode:
+                             print(f"   [Sanitizer] Warning: Seed '{seed}' evaluation failed ({eval_e}), but keeping it.")
+                    
+                    # If we parsed it successfully, we keep it.
+                    # CRITICAL: Append the PREPROCESSED seed, so the engine receives ** logic, not ^ logic (XOR)
+                    clean_seeds.append(preprocessed_seed)
+                        
+                except Exception as e:
+                    if verbose_mode:
+                         print(f"   [Sanitizer] Discarding broken seed '{seed}': {e}")
+            
+            if len(clean_seeds) < len(seeds):
+                 print(f"   [Sanitizer] Removed {len(seeds) - len(clean_seeds)} toxic seeds.")
+                 seeds = clean_seeds
 
         # Apply boost multiplier to evolution parameters
         # --boost N gives N times more compute resources for complex functions
@@ -1253,6 +1602,7 @@ def _handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None)
             seeds=seeds,
             boosting_rounds=1,  # Already applied via parameter scaling
             high_precision=high_precision_mode,  # Use arbitrary-precision arithmetic
+            operators=["add", "sub", "mul", "div", "sin", "cos", "exp", "log", "pow", "sqrt", "lambertw", "lshift", "rshift", "bitwise_and", "bitwise_or", "bitwise_xor", "factorial"], # Enable power laws, Lambert W, bitwise, factorial
         )
         
         # Apply operator bans if specified
@@ -1300,18 +1650,18 @@ def _handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None)
                 # Contains y'' but not y' (standalone)
                 if "+ y" in ode_str or "y +" in ode_str:
                     print("   This is Simple Harmonic Motion: acceleration = -position")
-                    print("   → The function oscillates like a wave (sin, cos)")
-                    print("   → Physical examples: pendulum, spring, vibration")
+                    print("   -> The function oscillates like a wave (sin, cos)")
+                    print("   -> Physical examples: pendulum, spring, vibration")
                 elif "- y" in ode_str or "y -" in ode_str:
                     print("   This is exponential: acceleration = position")
-                    print("   → The function grows/decays exponentially (exp, cosh, sinh)")
+                    print("   -> The function grows/decays exponentially (exp, cosh, sinh)")
             elif "y'" in ode_str and "y''" not in ode_str:
                 if "+ y" in ode_str or "y +" in ode_str:
                     print("   This is exponential decay: rate = -value")
-                    print("   → The function decays over time (e^(-x))")
+                    print("   -> The function decays over time (e^(-x))")
                 elif "- y" in ode_str or "y -" in ode_str:
                     print("   This is exponential growth: rate = value")
-                    print("   → The function grows exponentially (e^x)")
+                    print("   -> The function grows exponentially (e^x)")
             else:
                 print("   This describes how the function changes with its derivatives.")
             return
@@ -1365,6 +1715,10 @@ def _handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None)
         else:
             pareto = regressor.fit(X, y, input_vars)
 
+        if pareto is None:
+            print("Error: Genetic engine failed to find any candidate solutions.")
+            return
+
         # get_knee_point attempts to balance complexity vs MSE, but for perfect fits (MSE ~ 0)
         # we should always prefer the accurate solution even if slightly more complex.
         knee = pareto.get_knee_point()
@@ -1389,6 +1743,10 @@ def _handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None)
         # Print Result (with symbolic constant beautification)
         from ..symbolic_regression.expression_tree import symbolify_constants
         from ..utils.formatting import format_solution
+        # from ..utils.numeric import snap_expression_constants
+        
+        # Snap constants disabled by user request (prefer raw output)
+        # snapped_expr = snap_expression_constants(best.expression)
         beautified_expr = symbolify_constants(best.expression)
         print(f"\nResult: {format_solution(beautified_expr)}")
         print(f"MSE: {best.mse:.6g}, Complexity: {best.complexity}")
@@ -1431,11 +1789,11 @@ def _handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None)
                         if ode_str.startswith("y' = "):
                             rhs = ode_str[5:]  # Get the G(y) part
                             if "y**2" in rhs or "y*y" in rhs or "(1 - y)" in rhs:
-                                print("   → Logistic Growth (population with carrying capacity)")
+                                print("   -> Logistic Growth (population with carrying capacity)")
                             elif "y" in rhs and ("*" not in rhs or rhs.count("y") == 1):
-                                print("   → Exponential dynamics")
+                                print("   -> Exponential dynamics")
                             else:
-                                print("   → Autonomous ODE (rate depends on state)")
+                                print("   -> Autonomous ODE (rate depends on state)")
                         else:
                             # Linear ODE interpretation
                             has_ypp = "y''" in ode_str
@@ -1443,18 +1801,18 @@ def _handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None)
                             
                             if has_ypp:
                                 if ("y + y''" in ode_str or "y'' + y" in ode_str):
-                                    print("   → Simple Harmonic Motion (oscillating wave: sin, cos)")
+                                    print("   -> Simple Harmonic Motion (oscillating wave: sin, cos)")
                                 elif ("y - y''" in ode_str or "y'' - y" in ode_str or 
                                       "-y + y''" in ode_str or "y'' + -y" in ode_str):
-                                    print("   → Exponential/Hyperbolic (exp, cosh, sinh)")
+                                    print("   -> Exponential/Hyperbolic (exp, cosh, sinh)")
                                 else:
-                                    print("   → Second-order dynamics")
+                                    print("   -> Second-order dynamics")
                             elif has_yp:
                                 if ("y' - y" in ode_str or "y - y'" in ode_str or 
                                     "-y + y'" in ode_str):
-                                    print("   → Exponential growth (rate = value)")
+                                    print("   -> Exponential growth (rate = value)")
                                 elif ("y' + y" in ode_str or "y + y'" in ode_str):
-                                    print("   → Exponential decay (rate = -value)")
+                                    print("   -> Exponential decay (rate = -value)")
         except Exception:
             pass  # Silently fail if ODE discovery doesn't work
 
@@ -1507,30 +1865,148 @@ def _handle_load_cache(text):
 
 
 def _handle_show_cache(text: str, ctx: Any):
-
+    """Display cached items with readable formatting."""
     cache = get_persistent_cache()
     eval_cache = cache.get("eval_cache", {})
-    print(f"Cache contains {len(eval_cache)} items.")
+    subexpr_cache = cache.get("subexpr_cache", {})
+    
+    total = len(eval_cache) + len(subexpr_cache)
+    
+    # Parse arguments
+    args = text.lower().split()
+    show_count_only = "count" in args or "summary" in args
+    show_all = "all" in args
+    
+    print("=" * 70)
+    print(f"CACHE CONTENTS ({total} total items)")
+    print("=" * 70)
+    
+    if show_count_only:
+        print(f"  Eval cache: {len(eval_cache)} items")
+        print(f"  Subexpr cache: {len(subexpr_cache)} items")
+        print("\nUse 'showcache' to see recent items, or 'showcache all' for everything.")
+        return
+    
+    def _clean_key(k: str) -> str:
+        """Remove context hash prefix if present."""
+        if ":" in k and len(k.split(":")[0]) == 32: # Simple heuristic for md5 hash
+            return k.split(":", 1)[1]
+        return k
 
-    # Check for arguments "all" or "list"
-    args = text.split()
-    if len(args) > 1 and args[1].lower() in ("all", "list"):
-        print("-" * 40)
-        # Limit to reasonable amount unless piped? No just list them.
-        # But truncate values.
-        for i, (k, v) in enumerate(eval_cache.items()):
-            # k is the expression hash or string? It's the input string usually?
-            # Actually keys are hashed strings? No, persistent cache usually keys by expression string.
-            # Let's print key.
-            # Truncate value if too long
-            val_str = str(v)
-            if len(val_str) > 60:
-                val_str = val_str[:57] + "..."
-            print(f"{i+1}. {k} -> {val_str}")
-            if i >= 99 and len(args) < 3:  # Safety limit unless "all force"
-                print("... (showing first 100, use 'showcache all force' to see all)")
-                break
-        print("-" * 40)
+    def _clean_val(v: Any) -> tuple[str, str | None]:
+        """Extract result and time from cache value."""
+        res_str = ""
+        time_str = None
+        
+        # Handle dict (new format) vs string (old format)
+        data = v
+        if isinstance(v, str):
+            try:
+                data = json.loads(v)
+            except (json.JSONDecodeError, TypeError):
+                # Raw string (legacy)
+                return str(v), None
+
+        if isinstance(data, dict):
+            # Extract result
+            if "result" in data:
+                 raw_res = data["result"]
+                 # Sometimes result itself is double-encoded JSON
+                 if isinstance(raw_res, str) and raw_res.startswith("{"):
+                     try:
+                         inner = json.loads(raw_res)
+                         res_str = str(inner.get("result", raw_res))
+                     except:
+                         res_str = raw_res
+                 else:
+                     res_str = str(raw_res)
+            elif "value" in data:
+                res_str = str(data["value"])
+            else:
+                res_str = json.dumps(data) # Fallback
+            
+            # Extract timing
+            if "time" in data:
+                try:
+                    t = float(data["time"])
+                    if t < 0.001:
+                        time_str = "<1ms"
+                    else:
+                        time_str = f"{t*1000:.1f}ms"
+                except:
+                    pass
+        else:
+            res_str = str(data)
+            
+        return res_str, time_str
+
+    # === Eval Cache ===
+    eval_items = list(eval_cache.items())
+    # Sort by key for stability, or by time order if possible? 
+    # Current list order corresponds to insertion order in Py3.7+
+    
+    print(f"\n  EVAL CACHE ({len(eval_items)} items):")
+    print(f"  {'EXPRESSION':<40} | {'RESULT':<25}")
+    print("  " + "-" * 68)
+    
+    limit = 50 if not show_all else len(eval_items)
+    # improved: show MOST RECENT items first (reversed key order?)
+    # usually insertion order is oldest first. Let's show END of list first?
+    # No, 'showcache' usually implies listing. Let's stick to standard slice.
+    
+    display_items = eval_items[-limit:] if not show_all else eval_items
+    if not show_all and len(eval_items) > limit:
+         print(f"  ... ({len(eval_items) - limit} older items hidden) ...")
+
+    for k, v in display_items:
+        key_display = _clean_key(str(k))
+        val_display, time_display = _clean_val(v)
+        
+        # Truncate for table
+        if len(key_display) > 38:
+            key_display = key_display[:35] + "..."
+        if len(val_display) > 23:
+            val_display = val_display[:20] + "..."
+            
+        line = f"  {key_display:<40} | {val_display:<25}"
+        if time_display:
+            line += f" ({time_display})"
+        print(line)
+        
+    if not eval_items:
+        print("  (empty)")
+
+    # === Subexpr Cache ===
+    sub_items = list(subexpr_cache.items())
+    print(f"\n  SUBEXPR CACHE ({len(sub_items)} items):")
+    print(f"  {'SUB-EXPRESSION':<40} | {'VALUE':<25}")
+    print("  " + "-" * 68)
+    
+    limit_sub = 20 if not show_all else len(sub_items)
+    display_sub = sub_items[-limit_sub:] if not show_all else sub_items
+    if not show_all and len(sub_items) > limit_sub:
+         print(f"  ... ({len(sub_items) - limit_sub} older items hidden) ...")
+
+    for k, v in display_sub:
+        key_display = _clean_key(str(k))
+        val_display, time_display = _clean_val(v)
+        
+        if len(key_display) > 38:
+            key_display = key_display[:35] + "..."
+        if len(val_display) > 23:
+            val_display = val_display[:20] + "..."
+            
+        line = f"  {key_display:<40} | {val_display:<25}"
+        if time_display:
+            line += f" ({time_display})"
+        print(line)
+
+    if not sub_items:
+        print("  (empty)")
+
+    print("\n" + "=" * 70)
+    print("Commands: 'clearcache', 'showcache all', 'savecache'")
+    print("=" * 70)
 
 
 def _handle_health_command(text: str, ctx: Any):
@@ -1823,11 +2299,27 @@ def handle_find_command_raw(text: str, ctx: Any) -> bool:
             # args can be multiple: f(1, 2)
             args = [a.strip() for a in args_str.split(",")]
 
-            # We store as tuple: (name, args_list, value)
-            # But find_function_from_data expects specific format?
-            # Let's check signature. usually: (data_points, param_names)
-            # data_points = [ ([x1, x2], y), ... ]
-            data_points.append((name, args, val_str))
+            # PASTE ERROR DETECTION: Check if val_str contains another function call
+            # e.g., "26.4f(0)=12.2" from paste error "f(0.35)=26.4f(0)=12.2"
+            concat_match = re.search(r'^([0-9.\-+eE]+)([a-zA-Z_]\w*\s*\([^)]+\)\s*=.+)$', val_str)
+            if concat_match:
+                # Split the concatenated value into: actual value + next function call
+                actual_val = concat_match.group(1)
+                remaining = concat_match.group(2)
+                
+                # Store the first point with corrected value
+                data_points.append((name, args, actual_val))
+                
+                # Recursively parse the remaining concatenated part
+                m_remaining = POINT_PATTERN.match(remaining)
+                if m_remaining:
+                    r_name = m_remaining.group(1)
+                    r_args = [a.strip() for a in m_remaining.group(2).split(",")]
+                    r_val = m_remaining.group(3)
+                    data_points.append((r_name, r_args, r_val))
+            else:
+                # Normal case - store as tuple: (name, args_list, value)
+                data_points.append((name, args, val_str))
 
     if target_func and data_points:
         # Filter points for target function
@@ -1915,14 +2407,14 @@ def handle_find_command_raw(text: str, ctx: Any) -> bool:
                 _handle_evolve(evolve_cmd, ctx, variables=None)
                 return True
 
-                try:
-                    # Fix: Pass context as first argument
-                    define_function(ctx, target_func, target_vars, result_str)
-                    # Automatically save to cache not needed? define_function does it?
-                    # define_function updates global cache but maybe not disk cache unless save_functions called?
-                    # But it's available in REPL session.
-                except Exception as e:
-                    print(f"Warning: Failed to define function '{target_func}': {e}")
+            try:
+                # Fix: Pass context as first argument
+                define_function(ctx, target_func, target_vars, result_str)
+                # Automatically save to cache not needed? define_function does it?
+                # define_function updates global cache but maybe not disk cache unless save_functions called?
+                # But it's available in REPL session.
+            except Exception as e:
+                print(f"Warning: Failed to define function '{target_func}': {e}")
         else:
             # SUGGESTION BRIDGE (Engineering Standard: User Experience)
             auto_evolve = "--auto-evolve" in text.lower()
@@ -1954,7 +2446,150 @@ def handle_find_command_raw(text: str, ctx: Any) -> bool:
 
         return True
 
+
+
     return False
+
+
+# --- Call Command Logic (Batch Evaluation) ---
+
+# Pre-defined sets
+_CALL_SETS = {
+    "default": [
+        # Integers
+        -20, -19, -18, -17, -16, -15, -14, -13, -12, -11, -10, -9, -8, -7, -6, -5, -4, -3, -2, -1, 0, 
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+        # Fractions/Decimals
+        0.5, 0.3, 0.25, 0.22, 0.21, 0.18, 0.15, 0.12, 0.09, 0.08, 0.07, 0.06, 0.04, 0.03, 0.02, 
+        0.018, 0.015, 0.012, 0.01, 0.009, 0.008, 0.007, 0.006, 0.004, 0.003, 0.002, 
+        0.005, 0.0005, 0.0015, 0.0008, 0.0006, 0.0004, 0.0002, 0.0001, 0.001,
+        -0.5, -0.3, -0.25, -0.22, -0.21, -0.18, -0.15, -0.12, -0.09, -0.08, -0.07, -0.06, -0.04, -0.03, -0.02,
+        -0.018, -0.015, -0.012, -0.01, -0.009, -0.008, -0.007, -0.006, -0.004, -0.003, -0.002, 
+        -0.005, -0.0005, -0.0015, -0.0008, -0.0006, -0.0004, -0.0002, -0.0001, -0.001,
+        # Special Values
+        "e", "pi", "sin(1)", "sin(pi)", "sqrt(2)", "sqrt(5)", "2*pi", "log(10)", "cos(0)",
+        "1/3", "-3/4", "3/4", "-1/3",
+        # Custom from request
+        -2.5, 0.99, -0.99, 12.345, -12.345, 19.9, -19.9, 15.5, -15.5, 3.333, -3.333,
+        # More Integers/Decimals from massive list
+        4.5, 4.4, 4.3, 4.2, 4.1, 4.0, 3.9, 3.8, 3.7, 3.6, 3.5, 3.4, 3.3, 3.2, 3.1, 3.0, 
+        2.9, 2.8, 2.7, 2.6, 2.5, 2.4, 2.3, 2.2, 2.1, 2.0, 1.9, 1.8, 1.7, 1.6, 1.5, 1.4, 1.3, 1.2, 1.1, 1.0,
+        -4.5, -4.4, -4.3, -4.2, -4.1, -4.0, -3.9, -3.8, -3.7, -3.6, -3.5, -3.4, -3.3, -3.2, -3.1, -3.0,
+        -2.9, -2.8, -2.7, -2.6, -2.4, -2.3, -2.2, -2.1, -2.0, -1.9, -1.8, -1.7, -1.6, -1.5, -1.4, -1.3, -1.2, -1.0,
+        # Signs
+        "-e", "-pi", "-sin(1)", "-sin(pi)", "-sqrt(2)", "-sqrt(5)", "-2*pi", "-log(10)", "-cos(0)",
+    ]
+}
+
+def _handle_callset_command(text: str, ctx: Any):
+    """
+    Handle 'callset <name> <val1>, <val2>...' to define a custom set.
+    """
+    parts = text.split(maxsplit=2)
+    if len(parts) < 3:
+        print("Usage: callset <name> <val1>, <val2>, ...")
+        return
+
+    set_name = parts[1].strip()
+    values_str = parts[2]
+    
+    # Check if this overrides default
+    if set_name == "default":
+        print("Warning: Overriding 'default' set.")
+
+    # Parse values (simple split by comma)
+    values = [v.strip() for v in values_str.split(",") if v.strip()]
+    
+    _CALL_SETS[set_name] = values
+    print(f"Set '{set_name}' defined with {len(values)} values.")
+
+
+def _handle_callm_command(text: str, ctx: Any):
+    """
+    Handle 'callm <func> [set_name]' command (Multi-line output).
+    """
+    # Just redirect to call command with multiline=True
+    # Replace 'callm' with 'call' for parsing transparency if needed, or just pass parts
+    _handle_call_command(text.replace("callm", "call", 1), ctx, multiline=True)
+
+
+def _get_call_results(ctx: Any, func_name: str, set_name: str = "default") -> list[str]:
+    """
+    Helper to generate list of 'f(x)=y' strings for a given function and set.
+    """
+    if set_name not in _CALL_SETS:
+        return []
+        
+    inputs = _CALL_SETS[set_name]
+    results = []
+    
+    # Check if func_name exists or is valid?
+    # evaluate_safely handles it.
+    
+    for val in inputs:
+        expr = f"{func_name}({val})"
+        res = evaluate_safely(expr)
+        if res.get("ok"):
+            results.append(f"{expr} = {res.get('result')}")
+        else:
+            # Skip errors or include? For altvd generation, we probably want valid points.
+            pass
+            
+    return results
+
+def _handle_call_command(text: str, ctx: Any, multiline: bool = False):
+    """
+    Handle 'call <func> [set_name]' command.
+    """
+    parts = text.split(maxsplit=2)
+    if len(parts) < 2:
+        print("Usage: call <func_name> [set_name]")
+        return
+        
+    func_name = parts[1].strip()
+    
+    # Determine input set
+    set_name = "default"
+    if len(parts) > 2:
+        set_name = parts[2].strip()
+        
+    if set_name not in _CALL_SETS:
+        print(f"Error: Unknown set '{set_name}'. Use 'callset {set_name} ...' to define it.")
+        available = ", ".join(_CALL_SETS.keys())
+        print(f"Available sets: {available}")
+        return
+        
+    inputs = _CALL_SETS[set_name]
+    
+    if multiline:
+        print(f"Calling '{func_name}' with set '{set_name}' ({len(inputs)} inputs)...")
+    
+    count = 0
+    results = []
+    
+    for val in inputs:
+        expr = f"{func_name}({val})"
+        res = evaluate_safely(expr)
+        
+        if res.get("ok"):
+            output = f"{expr} = {res.get('result')}"
+            if multiline:
+                print(output)
+            else:
+                results.append(output)
+            count += 1
+        else:
+            output = f"{expr} = Error: {res.get('error')}"
+            if multiline:
+                print(output)
+            else:
+                results.append(output)
+            
+    if not multiline:
+        # Print all in one line (comma separated)
+        print(", ".join(results))
+            
+    print(f"Completed {count} calls.")
 
 def _load_data_file(path):
     """Load data from a CSV file (or others if pandas avail) into a dictionary of numpy arrays.
@@ -2519,12 +3154,13 @@ def _detect_modulo_patterns(X, y, verbose: bool = False):
     if not failed and checks > 0 and matches >= checks * 0.8:
         if verbose:
             print(f"   Forensic Analysis: Checking Modulo pattern...")
-            print(f"      → Detected periodic zeros with period T={best_T}")
-            print(f"      → Pattern: f(x) = x % {best_T}")
-            print(f"      → Match rate: {matches}/{checks} checked points")
+            print(f"      -> Detected periodic zeros with period T={best_T}")
+            print(f"      -> Pattern: f(x) = x % {best_T}")
+            print(f"      -> Match rate: {matches}/{checks} checked points")
         
         seeds.append(f"mod(x, {best_T})")
         # Also try "x % T" (operator syntax)
         seeds.append(f"x % {best_T}") 
         
     return seeds
+                                                                                                                        

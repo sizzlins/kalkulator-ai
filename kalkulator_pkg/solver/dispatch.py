@@ -107,7 +107,12 @@ def solve_single_equation(
             - approx: List of approximate solutions (strings or None)
             - error: Error message if ok is False
     """
-    parts = eq_str.split("=", 1)
+    # v4.2 Fix: Support '==' for equality check (previously split incorrectly on first '=')
+    if "==" in eq_str:
+        parts = eq_str.split("==", 1)
+    else:
+        parts = eq_str.split("=", 1)
+
     if len(parts) != 2:
         return {
             "ok": False,
@@ -143,6 +148,11 @@ def solve_single_equation(
         clear_cache_hits()
     except ImportError:
         pass
+    except ImportError:
+        pass
+    
+
+
     lhs = evaluate_safely(lhs_s, allowed_functions=allowed_functions)
     # Capture cache hits from LHS evaluation
     cache_hits: list[tuple[str, str]] = []
@@ -340,6 +350,24 @@ def solve_single_equation(
                     "error": f"Variable '{find_var}' not present.",
                     "error_code": "VARIABLE_NOT_FOUND",
                 }
+            
+            # Check for trig/transcendental functions - use numeric fallback directly
+            # Check for trig/transcendental functions - use numeric fallback directly
+            if NUMERIC_FALLBACK_ENABLED and equation.has(sp.sin, sp.cos, sp.tan, sp.exp, sp.log, sp.gamma, sp.factorial):
+                equation_expr = left_expr - right_expr
+                numeric_roots = _numeric_roots_for_single_var(
+                    equation_expr, sym, interval=(-4 * sp.pi, 4 * sp.pi)
+                )
+                if numeric_roots:
+                    exacts = [str(r) for r in numeric_roots]
+                    approx = [str(sp.N(r)) for r in numeric_roots]
+                    return {
+                        "ok": True,
+                        "type": "equation",
+                        "exact": exacts,
+                        "approx": approx,
+                    }
+                    
             try:
                 sols = sp.solve(equation, sym)
             except NotImplementedError:
@@ -408,7 +436,13 @@ def solve_single_equation(
                         "error_code": "NO_REAL_SOLUTIONS",
                     }
 
-            exacts = [str(s) for s in real_sols]
+            exacts = []
+            seen_exacts = set()
+            for s in real_sols:
+                s_str = str(s)
+                if s_str not in seen_exacts:
+                    exacts.append(s_str)
+                    seen_exacts.add(s_str)
             return {
                 "ok": True,
                 "type": "equation",
@@ -417,9 +451,14 @@ def solve_single_equation(
             }
         if len(symbols) == 1:
             sym = symbols[0]
-            # Check if equation contains trigonometric functions - use numeric fallback directly
-            if NUMERIC_FALLBACK_ENABLED and equation.has(sp.sin, sp.cos, sp.tan):
+            # Check for trig/transcendental functions - use numeric fallback directly
+            # Added sp.exp/sp.log to prevent hangs on identity-like equations (e.g., exp(a*x) = 2^x)
+            # Check for trig/transcendental functions - use numeric fallback directly
+            if NUMERIC_FALLBACK_ENABLED and equation.has(sp.sin, sp.cos, sp.tan, sp.exp, sp.log, sp.gamma, sp.factorial):
                 equation_expr = left_expr - right_expr
+                # Use a wider interval for exponentials/logs? Standard -4pi to 4pi is usually enough for local roots
+                # but exponentials can be monotonic. _numeric_roots_for_single_var handles open domains poorly?
+                # It uses a grid search.
                 numeric_roots = _numeric_roots_for_single_var(
                     equation_expr, sym, interval=(-4 * sp.pi, 4 * sp.pi)
                 )
@@ -725,7 +764,8 @@ def solve_single_equation(
             # If Poly construction failed, try general solve
             if "poly" not in locals() or poly is None:
                 # Check for trig functions first before attempting sp.solve()
-                if NUMERIC_FALLBACK_ENABLED and equation.has(sp.sin, sp.cos, sp.tan):
+                # Check for trig functions first before attempting sp.solve()
+                if NUMERIC_FALLBACK_ENABLED and equation.has(sp.sin, sp.cos, sp.tan, sp.gamma, sp.factorial):
                     equation_expr = left_expr - right_expr
                     numeric_roots = _numeric_roots_for_single_var(
                         equation_expr, sym, interval=(-4 * sp.pi, 4 * sp.pi)

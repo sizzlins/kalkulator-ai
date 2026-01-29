@@ -92,7 +92,12 @@ def compile_rpn_numba(raw_tokens: list, var_map: dict) -> tuple[np.ndarray, np.n
     for type_code, val in raw_tokens:
         if type_code == 'CONST':
             opcodes.append(OP_CONST)
-            values.append(float(val))
+            # Handle complex constants by taking real part (Numba RPN is float64 only)
+            # Complex logic is handled by slow path if needed, but RPN is fast path.
+            if isinstance(val, complex):
+                values.append(float(val.real))
+            else:
+                values.append(float(val))
         elif type_code == 'VAR':
             opcodes.append(OP_VAR)
             values.append(float(var_map.get(val, 0)))
@@ -242,7 +247,13 @@ def evaluate_rpn_numba(opcodes: np.ndarray, values: np.ndarray, X: np.ndarray) -
                 sp -= 1
                 base = stack[sp-1]
                 exp = np.clip(stack[sp], -100, 100)
-                stack[sp-1] = np.power(np.abs(base) + 1e-300, exp)
+                # Allow negative base if exponent is integer
+                if np.abs(exp - np.round(exp)) < 1e-9:
+                    # Integer exponent
+                    stack[sp-1] = np.power(base, np.round(exp))
+                else:
+                    # Fractional exponent: force positive base
+                    stack[sp-1] = np.power(np.abs(base) + 1e-300, exp)
             elif op == OP_MAX:
                 sp -= 1
                 if stack[sp-1] > stack[sp]:
@@ -358,7 +369,28 @@ def _evaluate_rpn_python(opcodes: np.ndarray, values: np.ndarray, X: np.ndarray)
             stack[-1] = stack[-1] / (r + 1e-10)
         elif op == OP_POW:
             r = stack.pop()
-            stack[-1] = np.power(np.abs(stack[-1]) + 1e-300, np.clip(r, -100, 100))
+            base = stack[-1]
+            
+            # Check for integer exponents (allow negative base)
+            # Use relaxed tolerance for float representation of integers
+            is_integer = np.abs(r - np.round(r)) < 1e-9
+            
+            # Default to abs(base) for fractional exponents
+            # But allow real base calculation for integer exponents
+            
+            # Vectorized implementation of mixed logic:
+            # 1. Calculate with full base (potentially negative)
+            # 2. Calculate with abs base
+            # 3. Choose based on is_integer mask
+            
+            # Note: np.power(negative, integer) works in numpy
+            # But np.power(negative, float) gives nan
+            
+            # Safe implementation:
+            # If all are integers, just do power? No, r is array.
+            
+            base_safe = np.where(is_integer, base, np.abs(base) + 1e-300)
+            stack[-1] = np.power(base_safe, np.clip(r, -100, 100))
         elif op == OP_MAX:
             r = stack.pop()
             stack[-1] = np.maximum(stack[-1], r)

@@ -681,11 +681,7 @@ def preprocess_expression(
 
     # Convert √ to sqrt()
     # Handle both √x and √(expr)
-    # SQRT_PATTERN needs to be defined, assuming it's available in the context
-    # For example: SQRT_PATTERN = re.compile(r'√\(([^)]+)\)|√(\w+)')
-    # For this change, I'll assume SQRT_PATTERN is defined elsewhere or needs to be added.
-    # As per the instruction, I'm just inserting the line.
-    # processed_str = SQRT_PATTERN.sub(r'sqrt(\1)', processed_str) # This line is commented out as SQRT_PATTERN is not defined in the provided context.
+    processed_str = SQRT_PATTERN.sub(r'sqrt(\1)', processed_str)
 
     # Convert Factorial (!) syntax: 5!, x!, (1+2)!
     # Must lookbehind or match valid predecessor, and ensure NOT followed by = (!=)
@@ -711,10 +707,52 @@ def preprocess_expression(
     processed_str = processed_str.replace("π", "pi")
     processed_str = processed_str.replace(":", "/")
     
+    # Convert Unicode superscript characters to **N exponentiation
+    # e.g., x² → x**2, frac(x)² → frac(x)**2
+    superscript_map = {
+        "⁰": "**0", "¹": "**1", "²": "**2", "³": "**3", "⁴": "**4",
+        "⁵": "**5", "⁶": "**6", "⁷": "**7", "⁸": "**8", "⁹": "**9",
+        "⁻": "-",  # For negative exponents like ⁻² → **-2
+    }
+    # Handle multi-digit superscripts like ¹² → **12
+    # First, find consecutive superscript digits and handle them
+    import re
+    superscript_pattern = re.compile(r'([⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+)')
+    def convert_superscript(match):
+        chars = match.group(1)
+        result = "**"
+        for c in chars:
+            if c == "⁻":
+                result += "-"
+            elif c == "⁰":
+                result += "0"
+            elif c == "¹":
+                result += "1"
+            elif c == "²":
+                result += "2"
+            elif c == "³":
+                result += "3"
+            elif c == "⁴":
+                result += "4"
+            elif c == "⁵":
+                result += "5"
+            elif c == "⁶":
+                result += "6"
+            elif c == "⁷":
+                result += "7"
+            elif c == "⁸":
+                result += "8"
+            elif c == "⁹":
+                result += "9"
+        return result
+    processed_str = superscript_pattern.sub(convert_superscript, processed_str)
+    
     # Use Safe Tokenizer for robust structural transformation
     # Handles: Implicit mult, Forbidden tokens, Syntax sugar (^, mod)
     try:
         from .tokenizer import transform_input
+        # Debug: Print ensuring we see exactly what is passed
+        # print(f"DEBUG_PARSER_INPUT: {repr(processed_str)}") 
         processed_str = transform_input(processed_str)
     except Exception as e:
         raise ValidationError(f"Parsing error: {str(e)}", "TOKENIZER_ERROR") from e

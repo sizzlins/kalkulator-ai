@@ -1689,6 +1689,187 @@ def check_log_linear_transformations(
     return False, None
 
 
+def detect_damped_sinusoid(
+    X_data: Any, y_data: Any, variable_names: list[str], verbose: bool = False
+) -> tuple[bool, str | None, float]:
+    """Detect damped sinusoid patterns: f(x) = e^(A*x) * sin(B*x).
+    
+    Algorithm (based on Gemini's approach):
+    1. Slope analysis near zero: f(x)/x ≈ B when x→0 (since sin(Bx) ≈ Bx)
+    2. Envelope extraction: divide f(x) by sin(Bx) to get e^(Ax)
+    3. Logarithmic regression on envelope to find A
+    
+    Args:
+        X_data: Input data (n_samples,) or (n_samples, 1)
+        y_data: Output data (n_samples,)
+        variable_names: List of variable names
+        verbose: Print debug info
+        
+    Returns:
+        Tuple (success, function_string, mse)
+    """
+    import numpy as np
+    from sklearn.linear_model import LinearRegression
+    
+    # [User Fix] Check for 1D data ONLY
+    X_arr = np.array(X_data)
+    if X_arr.ndim > 1 and X_arr.shape[1] > 1:
+        return False, None, float('inf')
+
+    # Handle complex data: Skip if significant imaginary part
+    if np.iscomplexobj(X_data) or np.iscomplexobj(y_data):
+        try:
+             if np.any(np.abs(np.imag(X_data)) > 1e-9) or np.any(np.abs(np.imag(y_data)) > 1e-9):
+                 return False, None, float('inf')
+        except: pass
+
+    try:
+        X_data = np.array(X_data, dtype=float).flatten()
+        y_data = np.array(y_data, dtype=float).flatten()  # Flatten y as well
+    except:
+        return False, None, float('inf')
+    
+    if len(X_data) < 10:
+        return False, None, float('inf')
+        
+    var_name = variable_names[0] if variable_names else "x"
+    
+    # Step 1: Slope analysis near zero to find frequency B
+    # Find points near zero (|x| < 0.1) where we can use sin(Bx) ≈ Bx
+    near_zero_mask = (np.abs(X_data) > 1e-6) & (np.abs(X_data) < 0.1)
+    if np.sum(near_zero_mask) < 3:
+        # Try slightly larger range
+        near_zero_mask = (np.abs(X_data) > 1e-6) & (np.abs(X_data) < 0.5)
+        
+    if np.sum(near_zero_mask) < 3:
+        return False, None, float('inf')
+    
+    x_near_zero = X_data[near_zero_mask]
+    y_near_zero = y_data[near_zero_mask]
+    
+    # f(x)/x ≈ B for small x (since e^(Ax) ≈ 1 and sin(Bx) ≈ Bx)
+    ratios = y_near_zero / x_near_zero
+    B_estimate = np.median(ratios)  # Use median to be robust to outliers
+    
+    if verbose:
+        print(f"   Damped Sinusoid: Slope near zero = {B_estimate:.4f}")
+    
+    # Snap B to common frequencies: integers, pi, 2pi, etc.
+    B_candidates = [1, 2, 3, 4, 5, 6, np.pi, 2*np.pi, 0.5*np.pi]
+    best_B = min(B_candidates, key=lambda b: abs(b - abs(B_estimate)))
+    if B_estimate < 0:
+        best_B = -best_B
+        
+    if verbose:
+        print(f"   Damped Sinusoid: Snapped B = {best_B:.4f}")
+    
+    # Step 2: Envelope extraction - divide by sin(Bx) to get e^(Ax)
+    sin_vals = np.sin(best_B * X_data)
+    
+    # Only use points where |sin(Bx)| > 0.1 to avoid division by near-zero
+    valid_mask = np.abs(sin_vals) > 0.1
+    if np.sum(valid_mask) < 5:
+        return False, None, float('inf')
+    
+    x_valid = X_data[valid_mask]
+    y_valid = y_data[valid_mask]
+    sin_valid = sin_vals[valid_mask]
+    
+    # Envelope = f(x) / sin(Bx) = e^(Ax)
+    envelope = y_valid / sin_valid
+    
+    # Step 3: Log regression to find A
+    # ln(envelope) = A*x
+    # Only use positive envelope values for log
+    pos_mask = envelope > 0
+    if np.sum(pos_mask) < 5:
+        # Try with absolute values (for alternating signs)
+        envelope_abs = np.abs(envelope)
+        pos_mask = envelope_abs > 1e-10
+        
+    if np.sum(pos_mask) < 5:
+        return False, None, float('inf')
+    
+    x_for_log = x_valid[pos_mask]
+    env_for_log = np.abs(envelope[pos_mask])
+    
+    try:
+        log_env = np.log(env_for_log)
+        model = LinearRegression()
+        model.fit(x_for_log.reshape(-1, 1), log_env)
+        A_estimate = model.coef_[0]
+        intercept = model.intercept_
+        
+        # The intercept should be close to 0 (since e^(A*0) = 1)
+        # If it's far from 0, we might have a scaling factor
+        scale = np.exp(intercept)
+        
+        if verbose:
+            print(f"   Damped Sinusoid: A = {A_estimate:.4f}, scale = {scale:.4f}")
+        
+        # Snap A to nice values (including stronger decay rates ±1, ±2)
+        A_candidates = [-2, -1.5, -1, -0.75, -0.5, -0.4, -0.3, -0.25, -0.2, -0.15, -0.1, -0.05, 
+                        0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.75, 1, 1.5, 2]
+        best_A = min(A_candidates, key=lambda a: abs(a - A_estimate))
+        
+        if verbose:
+            print(f"   Damped Sinusoid: Snapped A = {best_A}")
+        
+        # Step 4: Validate the fit
+        # Compute MSE with best_A and best_B
+        y_pred = np.exp(best_A * X_data) * np.sin(best_B * X_data)
+        if abs(scale - 1.0) > 0.1:
+            # Include scaling factor
+            y_pred_scaled = scale * np.exp(best_A * X_data) * np.sin(best_B * X_data)
+            mse_scaled = np.mean((y_data - y_pred_scaled) ** 2)
+            mse_unscaled = np.mean((y_data - y_pred) ** 2)
+            if mse_scaled < mse_unscaled:
+                y_pred = y_pred_scaled
+                
+        mse = np.mean((y_data - y_pred) ** 2)
+        
+        if verbose:
+            print(f"   Damped Sinusoid: MSE = {mse:.6g}")
+        
+        # Only accept if MSE is good enough (< 0.01 for normalized data)
+        y_var = np.var(y_data)
+        relative_mse = mse / y_var if y_var > 1e-10 else mse
+        
+        if relative_mse < 0.01:  # R² > 0.99
+            # Format the result
+            def fmt_num(v):
+                if abs(v - round(v)) < 0.001 and abs(v) < 100:
+                    return str(int(round(v)))
+                if abs(v - np.pi) < 0.01:
+                    return "pi"
+                if abs(v - 2*np.pi) < 0.01:
+                    return "2*pi"
+                if abs(v - 0.5*np.pi) < 0.01:
+                    return "pi/2"
+                return f"{v:.4g}"
+            
+            A_str = fmt_num(best_A)
+            B_str = fmt_num(best_B)
+            
+            # Build expression
+            if best_A == 0:
+                func_str = f"sin({B_str}*{var_name})"
+            elif A_str.startswith("-"):
+                func_str = f"exp({A_str}*{var_name})*sin({B_str}*{var_name})"
+            else:
+                func_str = f"exp({A_str}*{var_name})*sin({B_str}*{var_name})"
+            
+            if verbose:
+                print(f"   Damped Sinusoid: FOUND {func_str}")
+                
+            return True, func_str, mse
+            
+    except Exception as e:
+        if verbose:
+            print(f"   Damped Sinusoid: Failed with {e}")
+    
+    return False, None, float('inf')
+
 def _add_transcendental_features(col, name, features, feature_names, y_data):
     """Helper to add transcendental features for a single variable with robust NaN/Inf handling."""
     local_feats = []
@@ -2019,11 +2200,12 @@ def solve_rational_function_svd(
         
         if n_features == 1:
             for d in range(p_deg + 1):
-                name = f"{param_names[0]}^{d}" if d > 1 else (param_names[0] if d == 1 else "1")
+                # Use ** for exponentiation (Python/SymPy compatible), not ^ (which is bitwise XOR)
+                name = f"{param_names[0]}**{d}" if d > 1 else (param_names[0] if d == 1 else "1")
                 p_terms.append( (name, lambda x, d=d: x[0]**d) )
             
             for d in range(q_deg + 1):
-                name = f"{param_names[0]}^{d}" if d > 1 else (param_names[0] if d == 1 else "1")
+                name = f"{param_names[0]}**{d}" if d > 1 else (param_names[0] if d == 1 else "1")
                 q_terms.append( (name, lambda x, d=d: x[0]**d) )
         else:
             return False, "", 1e9
@@ -2098,16 +2280,29 @@ def solve_rational_function_svd(
             print(f"     Raw coefficients (before snapping): {[f'{v:.4g}' for v in c_final]}")
         
         def snap_coefficient(val):
-            # Snap very small values to zero (noise elimination)
-            if abs(val) < 0.1:
-                return 0.0
-            # Snap near-integer values
-            if abs(val - round(val)) < 0.15:
-                return round(val)
-            # Snap to common simple fractions
+            # 1. Snap near-integer values (Strongest signal)
+            # CRITICAL FIX: Tolerance set to 0.05. 
+            # This ensures that 3.14 (pi) is NOT snapped to 3 (dist 0.14),
+            # but 3.001 (dist 0.001) IS snapped to 3.
+            rounded = round(val)
+            if abs(val - rounded) < 0.05 and abs(rounded) >= 1:
+                return rounded
+                
+            # 2. Check for integer inverses (e.g. 0.025 -> 1/40)
+            if abs(val) > 1e-9:
+                inv = 1.0 / val
+                if abs(inv - round(inv)) < 0.05:
+                    return 1.0 / round(inv)
+
+            # 3. Snap to common simple fractions (0.5, 0.33, etc.)
             for frac in [0.5, 0.25, 0.75, 1.0/3, 2.0/3]:
-                if abs(abs(val) - frac) < 0.1:
+                if abs(abs(val) - frac) < 0.05:
                     return frac if val > 0 else -frac
+                    
+            # 4. Snap noise to zero (Only if it failed above checks)
+            if abs(val) < 0.05:
+                return 0.0
+                
             return val
         
         c_final = np.array([snap_coefficient(v) for v in c_final])

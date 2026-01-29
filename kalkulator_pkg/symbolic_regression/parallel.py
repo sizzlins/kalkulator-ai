@@ -195,27 +195,10 @@ def evolve_island_worker(
         # v3.6 Audit Fix: Explicitly unregister from resource_tracker to avoid crash on exit.
         # The runtime auto-registers segments on attach, leading to "File Not Found" errors
         # when workers exit and try to unlink segments the main process still needs.
-        # v3.6 Audit Fix: Explicitly unregister from resource_tracker to avoid crash on exit.
-        # The runtime auto-registers segments on attach, leading to "File Not Found" errors
-        # when workers exit and try to unlink segments the main process still needs.
-        # This MUST run on all platforms (Windows/Linux) as per Auditor "Must-Do".
-        try:
-             # On Python 3.8+, resource_tracker handles shared_memory specifically
-             from multiprocessing import resource_tracker
-             
-             # Helper to safely unregister
-             def _safe_unregister(name):
-                 try:
-                     # 2nd arg "shared_memory" is required in modern Python
-                     resource_tracker.unregister(name, "shared_memory")
-                 except Exception:
-                     pass # Best effort (might already be unregistered)
-                     
-             _safe_unregister(owner_X.shm.name)
-             _safe_unregister(owner_y.shm.name)
-             
-        except ImportError:
-             pass
+        # v3.6 Audit Fix: Removed resource_tracker.unregister hack.
+        # The runtime auto-registers segments on attach. We allow this, as
+        # the main process (SharedMemoryOwner) is responsible for unlink().
+        # Explicit unregister calls here caused race conditions and crashes.
         
         # Run evolution
         new_pop = strategy.evolve(population, X, y, gen)

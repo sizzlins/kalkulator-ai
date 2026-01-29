@@ -34,6 +34,10 @@ class EvolutionTrainer:
     including parallel execution, island migration, and convergence checks.
     Extracted from GeneticSymbolicRegressor to decouple concerns.
     
+    v3.4 Audit Remediation: Memory management decoupled via MemoryManager.
+    The trainer no longer directly creates SharedMemory - it delegates to
+    the injected memory_manager, enabling testability and platform portability.
+    
     Boosting Behavior (v3.3 Documentation):
     ----------------------------------------
     When boosting_rounds > 1, the model is an ADDITIVE ENSEMBLE:
@@ -50,10 +54,14 @@ class EvolutionTrainer:
     a single clean expression like 'E = m*c**2'.
     """
     
-    def __init__(self, config: GeneticConfig, evolution_strategy: EvolutionStrategy, pareto_front: ParetoFront):
+    def __init__(self, config: GeneticConfig, evolution_strategy: EvolutionStrategy, 
+                 pareto_front: ParetoFront, memory_manager=None):
+        from .memory_manager import NoOpMemoryManager
+        
         self.config = config
         self.strategy = evolution_strategy
         self.pareto_front = pareto_front
+        self.memory_manager = memory_manager or NoOpMemoryManager()
         
     def train(
         self,
@@ -92,45 +100,46 @@ class EvolutionTrainer:
         best_mse_observed = float('inf')
         patience_counter = 0
 
-        # DEBUG LOGGING
-        try:
-             with open("verification_progress.txt", "a") as f: 
-                 f.write(f"DEBUG: Entered train. n_jobs={n_jobs}, islands={len(islands)}\n")
-        except: pass
+        # v3.4 Audit Fix: Memory management delegated to injected manager
+        executor = None
+        shm_X_info = None
+        shm_y_info = None
         
-        with ExitStack() as stack:
-            executor = None
-            shm_X_info = None
-            shm_y_info = None
-            
+        try:
             if use_parallel:
                 try:
-                     with open("verification_progress.txt", "a") as f: f.write("DEBUG: Attempting parallel init\n")
-                     # ... (parallel setup) ...
-                     from concurrent.futures import ProcessPoolExecutor
-                     from .parallel import managed_shared_memory, evolve_island_worker
-                     # ...
-                     shm_X = stack.enter_context(managed_shared_memory(X_train))
-                     shm_X_info = {'name': shm_X.name, 'shape': X_train.shape, 'dtype': X_train.dtype}
-                     shm_y = stack.enter_context(managed_shared_memory(y_target))
-                     shm_y_info = {'name': shm_y.name, 'shape': y_target.shape, 'dtype': y_target.dtype}
-                     executor = stack.enter_context(ProcessPoolExecutor(max_workers=n_jobs))
+                    from .parallel import evolve_island_worker
+                    
+                    # Delegate memory allocation to manager
+                    mem_info = self.memory_manager.prepare(X_train, y_target)
+                    shm_X_info = mem_info.get('shm_X_info')
+                    shm_y_info = mem_info.get('shm_y_info')
+                    
+                    # Get executor from manager
+                    executor = self.memory_manager.get_executor(n_jobs)
+                    
+                    if executor is None:
+                        use_parallel = False
+                        
                 except (ImportError, OSError) as e:
                     if self.config.verbose: print(f"Parallel init failed: {e}. Falling back to serial.")
                     use_parallel = False
                     executor = None
             
-            try:
-                 with open("verification_progress.txt", "a") as f: f.write(f"DEBUG: Loop start. use_parallel={use_parallel}\n")
-            except: pass
-
             for gen in range(self.config.generations):
+                # if self.config.verbose and gen % 10 == 0:
+                #      print(f"DEBUG: Starting Gen {gen}. Parallel={use_parallel}")
+
                 # Timeout Check (Global)
                 if self.config.timeout and (time.time() - start_time_global > self.config.timeout):
+                    if self.config.verbose: print("DEBUG: Timeout reached.")
                     break
                     
                 # Evolve Islands
                 if use_parallel and executor:
+                    from .parallel import evolve_island_worker
+                    from concurrent.futures import wait, ALL_COMPLETED, TimeoutError as FuturesTimeoutError
+                    
                     futures = []
                     for i in range(len(islands)):
                         futures.append(executor.submit(
@@ -138,12 +147,43 @@ class EvolutionTrainer:
                             islands[i], shm_X_info, shm_y_info, 
                             self.config, gen, self.strategy
                         ))
-                    islands = [f.result() for f in futures]
+                    
+                    # Calculate remaining time
+                    elapsed = time.time() - start_time_global
+                    if self.config.timeout:
+                        remaining = self.config.timeout - elapsed
+                        # Ensure we don't pass negative timeout
+                        if remaining < 0.1: remaining = 0.1
+                        if self.config.verbose:
+                            print(f"[Debug] Gen {gen}: Waiting for workers (Timeout={remaining:.2f}s)...")
+                    else:
+                        remaining = None
+                        if self.config.verbose:
+                             pass # print(f"[Debug] Gen {gen}: Waiting for workers (No Timeout)...")
+                        
+                    done, not_done = wait(futures, timeout=remaining, return_when=ALL_COMPLETED)
+                    
+                    if self.config.verbose:
+                        pass # print(f"[Debug] Gen {gen}: Wait returned. Done={len(done)}, NotDone={len(not_done)}")
+
+                    if not_done:
+                        if self.config.verbose:
+                            print(f"[Timeout] Generation {gen} timed out waiting for {len(not_done)} workers.")
+                        # Attempt to cancel running futures
+                        for f in not_done:
+                            f.cancel()
+                        break
+                        
+                    islands = [f.result() for f in done]
                 else:
                     for i in range(len(islands)):
-                        islands[i] = self.strategy.evolve(
+                        new_pop = self.strategy.evolve(
                             islands[i], X_train, y_target, gen, sample_weight
                         )
+                        # CRITICAL FIX: Capture evaluated parents' fitness before replacing with children
+                        # The parents were evaluated inside evolve(), so they now have scores.
+                        self._update_pareto_front([islands[i]])
+                        islands[i] = new_pop
                 
                 # Migration
                 if gen > 0 and gen % self.config.migration_interval == 0:
@@ -151,30 +191,91 @@ class EvolutionTrainer:
                     
                 # Update Pareto Front
                 self._update_pareto_front(islands)
-                    
-        return islands
+                
+                # Smart Logging: Only print if improved or heartbeat
+                # v4.5: More frequent logging (check every gen) to prevent "hang" perception
+                if self.config.verbose:
+                    best_sol = self.pareto_front.get_best()
+                    if best_sol:
+                        current_best_mse = best_sol.mse
+                        # Initialize tracking if needed
+                        if not hasattr(self, '_last_printed_mse'):
+                            self._last_printed_mse = float('inf')
+                            self._last_printed_gen = 0
+                        
+                        # Conditions: 
+                        # 1. Significant improvement (> 0.1%)
+                        # 2. Heartbeat (every 10 generations) - Was 50
+                        # 3. First generation
+                        improvement = (self._last_printed_mse - current_best_mse)
+                        # Handle potential complex numbers or division by zero
+                        denom = abs(self._last_printed_mse) + 1e-9 if np.isfinite(self._last_printed_mse) else 1e-9
+                        rel_improvement = abs(improvement) / denom
+                        
+                        is_improvement = rel_improvement > 0.001
+                        is_heartbeat = (gen - self._last_printed_gen) >= 10
+                        is_start = (gen == 0)
+                        
+                        if is_start or is_improvement or is_heartbeat:
+                            expr_display = best_sol.expression
+                            if len(expr_display) > 500:
+                                expr_display = expr_display[:500] + "..."
+                            print(f"Generation {gen}: Best MSE {current_best_mse:.2e} ({expr_display})")
+                            self._last_printed_mse = current_best_mse
+                            self._last_printed_gen = gen
+                        
+                        # GENERATION EARLY STOPPING
+                        # If we found a perfect solution, stop evolving immediately.
+                        if best_sol.mse < self.config.early_stop_mse:
+                            if self.config.verbose:
+                                print(f"Perfect solution found at Generation {gen} (MSE < {self.config.early_stop_mse}). Stopping evolution.")
+                            break
+                    else:
+                        if gen % 20 == 0:
+                            print(f"Generation {gen}: No valid solutions yet.")
+            
+            return islands
+        finally:
+            # v3.4 Audit Fix: Cleanup delegated to memory manager
+            self.memory_manager.cleanup()
 
     def _update_pareto_front(self, islands):
         """Update Pareto Front with current population."""
         import sympy as sp
+        # if getattr(self.config, 'verbose', False): print(f"DEBUG: Updating Pareto Front...")
+        count = 0
         for island in islands:
             for tree in island:
                 if tree.fitness is None or not np.isfinite(tree.fitness):
                     continue
                 
                 try:
-                    sympy_expr = tree.to_sympy()
+                    # if getattr(self.config, 'verbose', False): print(f"DEBUG: Processing tree complexity={tree.complexity()}")
+                    if tree.complexity() > 50:
+                         # Skip expensive SymPy conversion for complex trees
+                         sympy_expr = None
+                         pretty_str = tree.to_string()
+                    else:
+                         # if getattr(self.config, 'verbose', False): print(f"DEBUG: Converting to SymPy...")
+                         # Debug print to catch hang
+                         # if getattr(self.config, 'verbose', False): print(f"DEBUG: Converting tree (depth={tree.depth()})...")
+                         sympy_expr = tree.to_sympy()
+                         # if getattr(self.config, 'verbose', False): print(f"DEBUG: Converting to string...")
+                         pretty_str = tree.to_pretty_string(sympy_expr)
                     
                     sol = ParetoSolution(
-                        expression=str(tree),
+                        expression=pretty_str,
                         sympy_expr=sympy_expr,
                         mse=tree.fitness,
                         complexity=tree.complexity(),
                         tree=tree
                     )
                     self.pareto_front.add(sol)
-                except Exception:
+                    count += 1
+                except Exception as e:
+                    if getattr(self.config, 'verbose', False): print(f"DEBUG: Tree conversion failed: {e}")
                     continue
+        # if getattr(self.config, 'verbose', False): print(f"DEBUG: Pareto Front Updated ({count} trees processed).")
 
     def train_full_model(
         self,
@@ -183,117 +284,163 @@ class EvolutionTrainer:
         X_val: np.ndarray,
         y_val: np.ndarray,
         variable_names: list[str],
-        sample_weight: np.ndarray = None
+        sample_weight: np.ndarray = None,
+        seeds: list[str] = None
     ):
-        """Orchestrate the full training process including Boosting."""
+        """Train the full boosting model."""
+        import numpy as np
         from .genetic_config import GeneticConfig
         from .strategies import BoostingStrategy
         
         # boosting loop logic moved from GeneticSymbolicRegressor
         boosted_models = []
-        y_residual = y_train.copy()
+        
+        # v4.3 Audit Fix: Distinguish Physical Residual (y - F) from Target Gradient
+        # Initialize Physical Residual (R_0 = y_train)
+        physical_residual = y_train.copy() # Actual error: y_true - F_current(x)
+        
         best_tree_final = None
         
         rounds = self.config.boosting_rounds
         if rounds < 1: rounds = 1
         
+        # Helper for Loss Calculation logic
+        loss_type = getattr(self.config, 'loss_function', 'mse').lower()
+        huber_delta = getattr(self.config, 'huber_delta', 1.35)
+        
+        import time
         start_time_global = time.time()
         
+        # DEBUG: Inspect data entering training
+        # if self.config.verbose:
+        #     print(f"DEBUG: train_full_model data inspection:")
+        #     print(f"  X_train shape: {X_train.shape}")
+        #     if len(X_train) > 0:
+        #         print(f"  X_train[0:5]: {X_train[0:5].flatten()}")
+        #     print(f"  y_train shape: {y_train.shape}")
+        #     if len(y_train) > 0:
+        #         print(f"  y_train[0:5]: {y_train[0:5]}")
+        #     if seeds:
+        #         print(f"  Seeds received: {len(seeds)}")
+        
         # Parallel Config
-        n_jobs = getattr(self.config, 'n_jobs', 1)
-        if n_jobs == -1:
-            import multiprocessing
-            n_jobs = multiprocessing.cpu_count()
-        use_parallel = n_jobs > 1 and self.config.n_islands > 1
+        # v4.4: Restore Parallel Execution (now safe via MemoryManager)
+        n_islands = getattr(self.config, 'n_islands', 1)
+        use_parallel = (n_islands > 1)
+        n_jobs = n_islands if use_parallel else 1
+        
+        if self.config.verbose and use_parallel:
+            print(f"   [Parallel] Using {n_jobs} workers (Islands={n_islands})...")
+
+        # v4.6 Stability Fix: Force Serial on Windows
+        # Multiprocessing on Windows (spawn) is prone to deadlocks/hangs in this architecture.
+        # User reported repeated hangs. Safest to disable.
+        import sys
+        if sys.platform == 'win32' and use_parallel:
+            if self.config.verbose:
+                print(f"   [Parallel] Windows detected. Forcing SERIAL mode for stability.")
+            use_parallel = False
+            n_jobs = 1
         
         for round_idx in range(rounds):
             if self.config.verbose and rounds > 1:
                 print(f"--- Boosting Round {round_idx + 1}/{rounds} ---")
+                
+            # 1. Calculate Target for this tree (Negative Gradient)
+            # pseudo_residual = - Gradient(Loss(y, F))
+            # For MSE: - (F - y) = y - F = physical_residual
+            # For Huber: Clip(physical_residual)
             
-            # Initialize Islands (Need helper or move logic)
-            # Since _initialize_islands was on Regressor, we need to adapt.
-            # We can implement a simple initializer here or pass a factory.
-            # Re-implementing simplified island init here for decoupling.
-            islands = self._init_islands_internal(variable_names, X_train, y_residual)
+            if loss_type == 'huber':
+                abs_r = np.abs(physical_residual)
+                mask_small = abs_r <= huber_delta
+                mask_large = ~mask_small
+                
+                target_gradient = np.zeros_like(physical_residual)
+                # Small error: Gradient is residual
+                target_gradient[mask_small] = physical_residual[mask_small]
+                # Large error: Gradient is constant delta * sign(residual)
+                target_gradient[mask_large] = huber_delta * np.sign(physical_residual[mask_large])
+                
+                if self.config.verbose:
+                    n_outliers = np.sum(mask_large)
+                    if n_outliers > 0:
+                        print(f"   Huber Active: Clipped {n_outliers} outliers for training target.")
+            else:
+                target_gradient = physical_residual.copy()
+            
+            
+            # 2. Train Tree on Target Gradient
+            # Initialize Islands using Target
+            islands = self._init_islands_internal(variable_names, X_train, target_gradient, seeds=seeds)
             
             # Run Evolution Round
             islands = self.train(
-                islands, X_train, y_residual, X_val, y_val,
+                islands, X_train, target_gradient, X_val, y_val,
                 sample_weight=sample_weight,
                 use_parallel=use_parallel,
                 n_jobs=n_jobs,
                 start_time_global=start_time_global
             )
             
-            # End of Round
+            # 3. Select Best Tree
             best_round = self.pareto_front.get_best()
-            with open("verification_progress.txt", "a") as f: f.write(f"DEBUG: Best round retrieved: {best_round is not None}\n")
-
+             
             if not best_round:
                 if self.config.verbose: print("Evolution failed to find any valid solution this round.")
                 break
                 
-            # Store Model
+            # 4. Store Model and Update
             learning_rate = getattr(self.config, 'learning_rate', 0.1)
             boosted_models.append((learning_rate, best_round.tree))
-            best_tree_final = best_round.tree # Track latest
+            best_tree_final = best_round.tree
             
-            if rounds == 1:
-                with open("verification_progress.txt", "a") as f: f.write("DEBUG: Rounds=1, breaking loop\n")
-                break
-            
-            # Update Residuals
-            # We need the update logic. It was on Regressor as well.
-            # Implemented here directly using the new Pseudo-Residual logic?
-            # Or call a helper? We should define `update_residuals` on EvolutionTrainer or Strategy.
-            # Strategy is better.
-            
-            # Corrected method name to match definition
-            success, y_residual = self._update_boosting_residuals(round_idx, X_train, y_residual)
-            if not success:
-                break
+            # Update Physical Residual
+            try:
+                # Use fast evaluate
+                tree_pred = best_round.tree.evaluate_fast(X_train)
+                # Ensure scalar is broadcast
+                if hasattr(tree_pred, 'shape') and tree_pred.shape != X_train.shape[0]:
+                     pass # handled by broadcasting usually, but careful
+                # Just using scalar check
+                import numpy as np
+                if np.isscalar(tree_pred): tree_pred = np.full(X_train.shape[0], tree_pred)
                 
-            # Clear Pareto Front for next round
-            self.pareto_front = ParetoFront() # Reset
+                # F_new = F_old + lr * T
+                # R_new = y - F_new = R_old - lr * T
+                physical_residual = physical_residual - (learning_rate * tree_pred)
+                
+                resid_mse = np.mean(physical_residual**2)
+                if self.config.verbose:
+                    print(f"Round {round_idx+1} Post-Update: Physical MSE = {resid_mse:.4e}")
+
+                # EARLY STOPPING
+                if resid_mse < 1e-9:
+                     if self.config.verbose: print(f"Perfect physical fit (MSE < 1e-9). Stopping boosting.")
+                     break
+                     
+            except Exception as e:
+                print(f"Boosting Update Failed: {e}")
+                break
+            
+            # Clear Pareto Front for next round ONLY if this isn't the last round
+            if round_idx < rounds - 1:
+                self.pareto_front = ParetoFront() # Reset
             
         return best_tree_final, boosted_models
 
-    def _init_islands_internal(self, variable_names, X, y):
+    def _init_islands_internal(self, variable_names, X, y, seeds=None):
         # Simplified island initialization
         # Inline Population class to avoid import issues
-        class Population(list):
-            def __init__(self, size, variable_names, config, random_state):
-                super().__init__()
-                self.size = size
-                self.variable_names = variable_names
-                self.config = config
-                if random_state is not None:
-                    random.seed(random_state)
-            
-            def initialize(self):
-                # Simple initialization
-                depths = range(2, self.config.max_depth + 1)
-                methods = ["grow", "full"]
-                self.clear()
-                while len(self) < self.size:
-                    depth = depths[len(self) % len(depths)]
-                    method = methods[len(self) % len(methods)]
-                    tree = ExpressionTree.random_tree(
-                        variables=self.variable_names,
-                        max_depth=depth,
-                        operators=self.config.operators,
-                        method=method
-                    )
-                    tree.age = 0
-                    self.append(tree)
-
+        # v3.3 Audit Fix: Move Population to module level for pickle support
+        from .population import Population
         islands = []
         for i in range(self.config.n_islands):
             # Seed diversity
             seed = int(time.time() * 1000) + i
             # Create population
             pop = Population(
-               size=self.config.population_size // self.config.n_islands,
+                size=self.config.population_size // self.config.n_islands,
                variable_names=variable_names,
                config=self.config,
                random_state=seed
@@ -301,9 +448,29 @@ class EvolutionTrainer:
             # Initialize (Ramped Half-and-Half)
             # We need X, y to evaluate initial fitness? 
             # Usually we init random trees first.
-            pop.initialize()
+            # if self.config.verbose: print(f"DEBUG: Initializing Island {i}...")
+            pop.initialize(seeds=seeds)
+            # if self.config.verbose: print(f"DEBUG: Island {i} Initialized. Evaluating...")
             # Evaluate
             self.strategy.evaluate_population(pop, X, y, sample_weight=None)
+            # if self.config.verbose: print(f"DEBUG: Island {i} Evaluated.")
+            
+            # if seeds and self.config.verbose:
+            #     try:
+            #         # print("DEBUG: Seed Predictions:")
+            #         for idx, tree in enumerate(pop[:len(seeds)]):
+            #             # Evaluate on X to see what it predicts
+            #             y_pred = tree.evaluate(X)
+            #             # print(f"  Seed {idx} ({tree}): MSE={tree.fitness:.4f}")
+            #             # Safe printing
+            #             pred_snip = str(y_pred[:5]) if hasattr(y_pred, "__getitem__") else str(y_pred)
+            #             truth_snip = str(y[:5]) if hasattr(y, "__getitem__") else str(y)
+            #             # print(f"    Pred[0:5]: {pred_snip}")
+            #             # print(f"    Truth[0:5]: {truth_snip}")
+            #     except Exception as e:
+            #         # print(f"DEBUG: Seed inspection failed: {e}")
+            #         pass
+            
             islands.append(pop)
         return islands
 
@@ -359,14 +526,40 @@ class GeneticSymbolicRegressor(BaseEstimator, RegressorMixin):
         # Parallel execution
         self._executor = None
 
-    def fit(self, X: np.ndarray, y: np.ndarray, variable_names: list[str] = None, sample_weight=None) -> ParetoFront:
-        """Fit the model using Boosting and Evolution strategies."""
+    def fit(self, X: np.ndarray, y: np.ndarray, variable_names: list[str] = None, sample_weight=None, seeds=None):
+        """Fit the model."""
         
         # 1. Initialization
         if variable_names is None:
             variable_names = [f"x{i}" for i in range(X.shape[1])]
         if len(y.shape) == 1: y = y.flatten()
-        
+
+        # Fallback to config.seeds if explicit seeds not provided
+        if seeds is None and getattr(self.config, 'seeds', None):
+            seeds = self.config.seeds
+            
+        # v4.3 Agentic Fix: Automatically run Forensic Analysis if no seeds provided
+        if not seeds:
+            try:
+                from .forensic_analysis import generate_pattern_seeds
+                if self.config.verbose: print("   [Forensic] No seeds provided. Running forensic analysis...")
+                # ctx=None as it appears unused/optional
+                forensic_result = generate_pattern_seeds(None, X, y, variable_names, verbose=self.config.verbose)
+                
+                if isinstance(forensic_result, tuple):
+                    # Exact match found (seeds, best_match_str)
+                    seeds = forensic_result[0]
+                    if self.config.verbose: print(f"   [Forensic] Exact match found: {forensic_result[1]}")
+                elif isinstance(forensic_result, list):
+                    seeds = forensic_result
+                    
+                if seeds and self.config.verbose:
+                    print(f"   [Forensic] Generated {len(seeds)} seeds: {seeds[:5]}...")
+            except ImportError:
+                if self.config.verbose: print("   [Forensic] Warning: forensic_analysis module not found.")
+            except Exception as e:
+                if self.config.verbose: print(f"   [Forensic] Analysis failed: {e}")
+
         self.strategies = {
             'boosting': BoostingStrategy(self.config),
             'evolution': EvolutionStrategy(self.config)
@@ -388,12 +581,35 @@ class GeneticSymbolicRegressor(BaseEstimator, RegressorMixin):
         
         # Delegate to Trainer with correct weights
         self.best_tree, self.boosted_models = trainer.train_full_model(
-             X_train, y_train, X_val, y_val, variable_names, w_train
+             X_train, y_train, X_val, y_val, variable_names, w_train, seeds=seeds
         )
+
         # Update pareto front from trainer
         self.pareto_front = trainer.pareto_front
+
+        # v4.6 Agentic Fix: Polish discrete constants if they exist (Fix Funny Constants)
+        if self.best_tree:
+            # We use X_train/y_train for polishing as it's the primary fit data
+            self.best_tree.polish_discrete_constants(X_train, y_train)
             
-    def fit_with_transformations(self, X: np.ndarray, y: np.ndarray, variable_names: list[str]) -> tuple[str, float, str]:
+            # Update Pareto Front with the polished tree so get_expression() sees it
+            try:
+                # Calculate raw MSE (standard metric for Pareto)
+                pred = self.best_tree.evaluate_fast(X_train).flatten()
+                mse = np.mean((y_train.flatten() - pred)**2)
+                
+                sol = ParetoSolution(
+                    expression=self.best_tree.to_pretty_string(),
+                    sympy_expr=None,
+                    mse=mse,
+                    complexity=self.best_tree.complexity(),
+                    tree=self.best_tree.copy()
+                )
+                self.pareto_front.add(sol)
+            except Exception:
+                pass
+            
+    def fit_with_transformations(self, X: np.ndarray, y: np.ndarray, variable_names: list[str], seeds: list[str] = None) -> tuple[str, float, str]:
         """Fit model in multiple spaces (direct, log, inverse) and pick best.
         
         This method helps discover functions like exp(x) (linear in log space)
@@ -420,7 +636,7 @@ class GeneticSymbolicRegressor(BaseEstimator, RegressorMixin):
             cfg = copy.deepcopy(self.config)
             
             reg = GeneticSymbolicRegressor(cfg)
-            reg.fit(X, y_target, variable_names)
+            reg.fit(X, y_target, variable_names, seeds=seeds)
             
             best_tree = reg.best_tree
             if best_tree is None:
@@ -433,34 +649,66 @@ class GeneticSymbolicRegressor(BaseEstimator, RegressorMixin):
         
         # 1. Direct Space
         try:
+            # Fallback to config.seeds if explicit seeds not provided
+            if seeds is None and getattr(self.config, 'seeds', None):
+                seeds = self.config.seeds
+
+            if self.config.verbose:
+                print("   [Multiplex] 1/3: Running Direct Space (y = f(x))...")
+
             # For direct space, we can just use 'self' if we want, but cleaner to use fresh instance
             # and update self at the end with the winner.
             res = run_space(y, "direct")
             if res:
                 tree, pred, expr = res
                 mse = np.mean((y - pred)**2)
+                if self.config.verbose:
+                    print(f"   [Multiplex] Direct Space result: {expr} (MSE={mse:.4g})")
                 candidates.append((expr, mse, "direct", tree))
         except Exception:
+            import traceback
+            print("[CRITICAL] Direct Space failed with error:")
+            traceback.print_exc()
             pass
+            
+        # EARLY EXIT OPTIMIZATION:
+        # If Direct Space found a perfect solution (MSE < early_stop_mse), 
+        # there is no need to try other spaces (they can't beat 0 error).
+        # This prevents potential hangs/crashes in transformed spaces and saves time.
+        best_direct_mse = candidates[0][1] if candidates else float('inf')
+        if best_direct_mse < getattr(self.config, 'early_stop_mse', 1e-9):
+            if self.config.verbose:
+                print(f"   [Multiplex] Direct Space found perfect solution (MSE={best_direct_mse:.4e}). Halted further search.")
+            # Return immediately by sorting candidates (Direct will be first)
+            candidates.sort(key=lambda x: x[1])
+            return candidates[0][0], candidates[0][1], "direct"
+
 
         # 2. Log Space (if y > 0)
         if np.all(y > 0):
             try:
+                if self.config.verbose:
+                    print("   [Multiplex] 2/3: Running Log Space (z = ln(y))...")
                 y_log = np.log(y)
                 res = run_space(y_log, "log")
                 if res:
                     tree, pred_log, expr_log = res
                     # Transform back: exp(pred_log)
                     pred = np.exp(pred_log)
-                    mse = np.mean((y - pred)**2)
-                    full_expr = f"exp({expr_log})"
-                    candidates.append((full_expr, mse, "log", tree)) # We can't really store the tree directly as "the" tree for predict...
+                    if expr_log and str(expr_log).strip():
+                        mse = np.mean((y - pred)**2)
+                        full_expr = f"exp({expr_log})"
+                        if self.config.verbose:
+                            print(f"   [Multiplex] Log Space result: {full_expr} (MSE={mse:.4g})")
+                        candidates.append((full_expr, mse, "log", tree))
             except Exception:
                 pass
 
         # 3. Inverse Space (if y != 0)
         if np.all(y != 0):
             try:
+                if self.config.verbose:
+                    print("   [Multiplex] 3/3: Running Inverse Space (z = 1/y)...")
                 y_inv = 1.0 / y
                 res = run_space(y_inv, "inverse")
                 if res:
@@ -473,14 +721,71 @@ class GeneticSymbolicRegressor(BaseEstimator, RegressorMixin):
                     if np.any(mask):
                         mse = np.mean((y[mask] - pred[mask])**2)
                         full_expr = f"1/({expr_inv})"
+                        if self.config.verbose:
+                            print(f"   [Multiplex] Inverse Space result: {full_expr} (MSE={mse:.4g})")
                         candidates.append((full_expr, mse, "inverse", tree))
             except Exception:
                 pass
 
-        # Pick best
+        # 4. Square Space (z = y^2) - The "Radical Buster"
+        # Target: y = sqrt(f(x)) -> z = f(x)
+        # Condition: y must be predominantly non-negative (to allow unique sqrt reconstruction)
+        # We allow a small tolerance for numerical noise near zero (-1e-9)
+        if np.all(y > -1e-9):
+            try:
+                if self.config.verbose:
+                    print("   [Multiplex] 4/4: Running Square Space (z = y^2)...")
+                y_sq = y ** 2
+                res = run_space(y_sq, "square")
+                if res:
+                    tree, pred_sq, expr_sq = res
+                    # Reconstruction: y = sqrt(z)
+                    # Protect against negative predictions from the polynomial model
+                    with np.errstate(invalid='ignore'):
+                        pred = np.sqrt(np.maximum(0, pred_sq))
+                    
+                    if np.any(np.isfinite(pred)):
+                        mse = np.mean((y - pred)**2)
+                        full_expr = f"sqrt({expr_sq})"
+                        if self.config.verbose:
+                            print(f"   [Multiplex] Square Space result: {full_expr} (MSE={mse:.4g})")
+                        candidates.append((full_expr, mse, "square", tree))
+            except Exception:
+                pass
+
         if not candidates:
             return "0", float('inf'), "none"
             
+        # v4.3 Fix: "Square Space Hallucination" Sanity Check
+        # Reject transformed space results if they don't offer a significant improvement
+        # or if they are effectively random guesses (MSE ~ Variance).
+        try:
+            y_variance = np.var(y)
+            if y_variance < 1e-12: y_variance = 1.0
+            
+            filtered_candidates = []
+            for c in candidates:
+                expr, mse, space, tree = c
+                if space == "direct":
+                    # Always keep direct as baseline (even if bad)
+                    filtered_candidates.append(c)
+                else:
+                    # Transformed spaces must earn their keep!
+                    # 1. Must be better than the mean (MSE < Variance)
+                    # 2. Must be decent fit (MSE < 0.5 * Variance means R^2 > 0.5)
+                    # 3. Must not be astronomical (MSE < 1e9)
+                    if mse < 0.5 * y_variance and mse < 1e9:
+                        filtered_candidates.append(c)
+                    elif self.config.verbose:
+                        print(f"   [Multiplex] REJECTED {space} space result (MSE={mse:.4g} vs Var={y_variance:.4g}) - too poor.")
+            
+            if filtered_candidates:
+                candidates = filtered_candidates
+            # If all filtered (e.g. all bad), fall back to original candidates (likely picking best of bad bunch)
+            
+        except Exception as e:
+            print(f"   [Multiplex] Sanity check warning: {e}")
+
         candidates.sort(key=lambda x: x[1]) # Sort by MSE
         best_expr, best_mse, best_space, best_tree_obj = candidates[0]
         
@@ -531,7 +836,10 @@ class GeneticSymbolicRegressor(BaseEstimator, RegressorMixin):
                     mse = self.strategies['evolution'].calculate_fitness(tree, X, y)
                     tree._cached_mse = mse  # Cache for next time
                 
-                if mse < 1e6:
+                # Agent Handoff Rule 2: Relaxed Threshold
+                # Raise limit to 1e20 to accept singularity-penalized solutions (MSE ~ 1e15)
+                # so the genetic loop has a starting point to optimize from.
+                if mse < 1e20:
                     sol = ParetoSolution(
                         expression=tree.to_pretty_string(),
                         sympy_expr=None, # Lazy load later
@@ -618,7 +926,7 @@ class GeneticSymbolicRegressor(BaseEstimator, RegressorMixin):
                 
         return np.zeros(X.shape[0])
 
-    def _initialize_islands(self, variable_names, X_train, y_target):
+    def _initialize_islands(self, variable_names, X_train, y_target, seeds=None):
         """Initialize population islands."""
         islands = []
         for _ in range(self.config.n_islands):
@@ -626,6 +934,7 @@ class GeneticSymbolicRegressor(BaseEstimator, RegressorMixin):
                 variable_names, self.config.population_size, 
                 seeds=self.config.seeds, X=X_train, y=y_target
             )
+            pop.initialize(seeds=seeds)
             islands.append(pop)
         return islands
 
@@ -746,9 +1055,12 @@ class GeneticSymbolicRegressor(BaseEstimator, RegressorMixin):
                 except (ImportError, OSError) as e:
                     if self.config.verbose: print(f"Parallel init failed: {e}. Falling back to serial.")
                     use_parallel = False
-                    executor = None
+            executor = None
 
-            for gen in range(self.config.generations):
+        # Pre-evolution update: Capture seeds immediately!
+        self._update_pareto_front(islands)
+
+        for gen in range(self.config.generations):
                 # Timeout Check (Global)
                 if self.config.timeout and (time.time() - start_time_global > self.config.timeout):
                     break
@@ -818,4 +1130,5 @@ def discover_equation(X: np.ndarray, y: np.ndarray, **kwargs) -> ParetoFront:
             
     config = GeneticConfig(**config_params)
     regressor = GeneticSymbolicRegressor(config)
-    return regressor.fit(X, y)
+    regressor.fit(X, y)
+    return regressor.pareto_front

@@ -110,8 +110,15 @@ https://github.com/sizzlins/kalkulator-ai/blob/main/kalkulator.exe
   - `--verbose`: Show progress.
   - `--hybrid`: Seed with find() result.
 - **Shortcuts** (common evolve combinations):
-  - `alt f(...)`: **ULTIMATE** (`--hybrid --verbose --boost 3 --transform`)
-  - `all f(...)`: Full power (`--hybrid --verbose --boost 3`)
+  - `alt f(...)`: **ULTIMATE** (`--hybrid --boost 3 --transform`) **(Quiet Mode)**
+  - `altv f(...)`: **Forensic** (`--hybrid --verbose --boost 3 --transform`)
+  - `altvd f(...)`: **Debug** (`--hybrid --verbose --super-verbose --debug --boost 3 --transform`)
+  - `all f(...)`: Full power (`--verbose --boost 3`)
+  - `all4 f(...)`: Boost 4 (`--verbose --boost 4`)
+  - `alld4 f(...)`: Boost 4 + Transform (`--verbose --transform --boost 4`)
+  - `alt4 f(...)`: Ultimate Boost 4 (`--verbose --transform --boost 4`)
+  - `altv4 f(...)`: Forensic Boost 4 (`--super-verbose --transform --boost 4`)
+  - `altvd4 f(...)`: Debug Boost 4 (`--super-verbose --transform --debug --boost 4`)
   - `b f(...)`: Fast mode (`--verbose --boost 3`)
   - `h f(...)`: Smart mode (`--hybrid --verbose`)
   - `v f(...)`: Verbose (`--verbose`)

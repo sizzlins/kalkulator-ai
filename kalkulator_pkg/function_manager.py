@@ -64,6 +64,11 @@ except ImportError:
 # Built-in function names (Lazy)
 _CACHED_BUILTINS = None
 
+# Module-level function registry for worker subprocess
+# Used by update_function_registry_from_dump() and worker_evaluate()
+# Main process uses context.function_registry instead
+_function_registry: dict[str, tuple[list[str], "sp.Expr"]] = {}
+
 def get_builtin_names():
     global _CACHED_BUILTINS
     if _CACHED_BUILTINS is not None:
@@ -183,14 +188,14 @@ def _parse_to_exact_fraction(
                             # Once we find a match with a small denominator, we can stop
                             # (or continue to check if an even smaller denominator exists)
 
-            # Return the best (simplest) rational found, or exact if no simpler one found
+            # Return the best (simpler) rational found, or exact if no simpler one found
             return best_frac
         except (ValueError, TypeError):
             # Not a simple decimal - try symbolic evaluation (e.g., "pi", "e", "pi/2")
             try:
                 import sympy as sp_sym
-
-                from ..parser import safe_sympy_parse
+                
+                from .parser import safe_sympy_parse
                 
                 local_ns = {
                     "pi": sp_sym.pi,
@@ -333,13 +338,27 @@ def list_functions(context: Context) -> dict[str, tuple[list[str], str]]:
     return result
 
 
-def get_function_registry_hash(context: Context) -> str:
+def get_function_registry_hash(context=None) -> str:
     """Get a hash of the current function registry state.
 
+    Args:
+        context: Optional Context object. If None, tries to get global context.
+
     Returns:
-        MD5 hash string of the registry content
+        MD5 hash string of the registry content, or empty string if no context.
     """
     import hashlib
+
+    if context is None:
+        # Try to get from global REPL context if available
+        try:
+            from .cli.context import get_current_context
+            context = get_current_context()
+        except (ImportError, AttributeError):
+            pass
+    
+    if context is None or not hasattr(context, 'function_registry'):
+        return ""
 
     # Sort keys to ensure consistent order
     # Convert values to string representation for hashing
@@ -1951,7 +1970,8 @@ def find_function_from_data(
         parsed_x_tuple = []
 
         # Check if any input is complex
-        for x_arg in x_tuple:
+        x_inputs = x_tuple if isinstance(x_tuple, (list, tuple, np.ndarray)) else [x_tuple]
+        for x_arg in x_inputs:
             if is_complex_value(x_arg):
                 is_complex = True
                 break
@@ -2038,7 +2058,7 @@ def find_function_from_data(
     if len(numeric_data) >= 3 and len(symbolic_data) > 0:
         for try_skip in [False, True]:
             success, func_str, factored, msg = find_function_from_data(
-                numeric_data, param_names, skip_linear=try_skip
+                context, numeric_data, param_names, skip_linear=try_skip
             )
 
             if success:
@@ -2494,9 +2514,9 @@ def find_function_from_data(
                 if success_svd:
                     print(f"     Function: {func_svd}")
             
-            if success_svd and mse_svd < 1e-9:
+            if success_svd and mse_svd < 1e-6:  # Relaxed from 1e-9 to catch excellent rational fits
                  if verbose:
-                     print(f"     → Early return: MSE < 1e-9 (machine precision)")
+                     print(f"     → Early return: MSE < 1e-6 (excellent rational fit)")
                  return (True, func_svd, None, f"RationalSVD (MSE={mse_svd:.2e})")
             
             # Store as candidate even if not perfect - we'll compare later
@@ -2731,7 +2751,7 @@ def find_function_from_data(
                 
                 if max_cos_err < 1e-3:
                     if verbose:
-                        print(f"     → ACCEPTING cos({freq_label}*x) as solution")
+                        print(f"     -> ACCEPTING cos({freq_label}*x) as solution")
                     if freq_label == "1":
                         return (True, f"cos({var_name})", None, None)
                     else:
@@ -3009,6 +3029,114 @@ def find_function_from_data(
                                 return (True, func_str, None, None)
                 except Exception:
                     pass
+
+            # --- NEW: Sqrt(Polynomial) Detection (y = sqrt(P(x))) ---
+            # Compute y^2 and check if it fits a polynomial (e.g. sqrt(x^2+1))
+            try:
+                # Basic domain check: y must be real
+                # Complex handling: if y is purely real, we proceed.
+                if all(np.isreal(y) for y in y_vals):
+                    y_sq_vals = [y**2 for y in y_vals]
+                    
+                    # 1D Case: Use standard polyfit for robustness with floats
+                    if len(param_names) == 1:
+                        # Extract scalar x values
+                        # Assumption: x is always first element of tuple and is scalar
+                        try:
+                            X_scalars = []
+                            for p in data_points:
+                                val = p[0]
+                                if isinstance(val, (list, tuple, np.ndarray)):
+                                    X_scalars.append(val[0])
+                                else:
+                                    X_scalars.append(val)
+                            
+                            # Fit polynomial degree 2
+                            coeffs = np.polyfit(X_scalars, y_sq_vals, 2)
+                            # coeffs is [a, b, c] for ax^2 + bx + c
+                            
+                            # Calculate MSE
+                            p_func = np.poly1d(coeffs)
+                            y_sq_pred = p_func(X_scalars)
+                            mse_sq = np.mean((y_sq_vals - y_sq_pred) ** 2)
+                            
+                            # Tolerance: normalized by variance? or absolute?
+                            # If fit is very good.
+                            if mse_sq < 1e-6:
+                                # Construct string
+                                a, b, c = coeffs
+                                
+                                # Snap small coeffs to 0 and integers
+                                def snap(val):
+                                    if abs(val) < 1e-9: return 0
+                                    if abs(val - round(val)) < 1e-9: return int(round(val))
+                                    return val
+                                    
+                                a, b, c = snap(a), snap(b), snap(c)
+                                
+                                # Build string: ax^2 + bx + c
+                                var = param_names[0]
+                                terms = []
+                                
+                                # ax^2
+                                if abs(a) > 0:
+                                    if a == 1: terms.append(f"{var}^2")
+                                    elif a == -1: terms.append(f"-{var}^2")
+                                    else: terms.append(f"{a}*{var}^2")
+                                
+                                # bx
+                                if abs(b) > 0:
+                                    term = f"{b}*{var}" if b != 1 and b != -1 else (f"{var}" if b==1 else f"-{var}")
+                                    if b > 0 and terms: term = f"+{term}"
+                                    terms.append(term)
+                                    
+                                # c
+                                if abs(c) > 0:
+                                    term = f"{c}"
+                                    if c > 0 and terms: term = f"+{term}"
+                                    terms.append(term)
+                                    
+                                if not terms: terms.append("0")
+                                poly_str = "".join(terms).replace("+-", "-")
+                                
+                                # Determine Sign (Positive or Negative Branch)
+                                # Evaluate predicted sqrt magnitude for all points
+                                pred_sq_vals = p_func(X_scalars)
+                                with np.errstate(invalid='ignore'):
+                                    pred_mag = np.sqrt(np.maximum(0, pred_sq_vals))
+                                
+                                # Check +sqrt(P(x))
+                                mse_pos = np.mean((y_vals - pred_mag) ** 2)
+                                # Check -sqrt(P(x))
+                                mse_neg = np.mean((y_vals - (-pred_mag)) ** 2)
+                                
+                                # Select best branch
+                                if mse_pos < mse_neg:
+                                    sign_prefix = ""
+                                    best_mse = mse_pos
+                                else:
+                                    sign_prefix = "-"
+                                    best_mse = mse_neg
+                                    
+                                # Final Validation: Is the selected branch actually good?
+                                # (Avoid hallucinating if neither fits well, though mse_sq was low)
+                                # If y is complex mix of +/-, MSE will be high for both.
+                                y_var = np.var(y_vals) if len(y_vals) > 1 else 1.0
+                                if y_var < 1e-12: y_var = 1.0
+                                
+                                # Accept if MSE is reasonably low compared to variance
+                                if best_mse < 0.1 * y_var:
+                                    return (True, f"{sign_prefix}sqrt({poly_str})", None, None)
+
+                        except Exception:
+                            pass
+                    
+                    # TODO: Multivariate case could use LinearRegression with polynomial features
+
+            except Exception as e:
+                if verbose:
+                    print(f"[SV] Sqrt(Poly) check failed: {e}")
+                pass
 
             # --- POTENTIAL FIELD DETECTION (1/sqrt(x^2+c)) ---
             pot_shifts = [1, -1, 2, -2, 0.5, -0.5]
@@ -5815,14 +5943,29 @@ def parse_find_function_command(expr: str) -> tuple[str, list[str]] | None:
     return (func_name, params)
 
 
-def get_function_registry_dump() -> dict[str, tuple[list[str], str]]:
+def get_function_registry_dump(context=None) -> dict[str, tuple[list[str], str]]:
     """Get a serializable dump of the function registry.
+
+    Args:
+        context: Optional Context object containing the function registry.
+                 If None, returns empty dict (backward compatibility).
 
     Returns:
         Dict mapping function name to (params, body_str)
     """
+    if context is None:
+        # Try to get from global REPL context if available
+        try:
+            from .cli.context import get_current_context
+            context = get_current_context()
+        except (ImportError, AttributeError):
+            pass
+    
+    if context is None or not hasattr(context, 'function_registry'):
+        return {}
+    
     dump = {}
-    for name, (params, body) in _function_registry.items():
+    for name, (params, body) in context.function_registry.items():
         dump[name] = (params, str(body))
     return dump
 

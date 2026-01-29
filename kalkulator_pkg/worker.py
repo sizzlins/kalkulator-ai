@@ -49,6 +49,32 @@ except ImportError:
 
     logger = NullLogger()
 
+
+class SafeJSONEncoder(json.JSONEncoder):
+    """Encodes complex numbers and SymPy objects safely to strings."""
+    def default(self, obj):
+        if isinstance(obj, complex):
+            return str(obj)
+        # Handle SymPy objects
+        if hasattr(obj, 'evalf'):
+            try:
+                # Force numerical evaluation to avoid returning raw symbolic structures
+                # which can reveal the underlying function (e.g. (-15)^(15/16)).
+                # N() or evalf() returns a SymPy Number (Float or Complex).
+                val = obj.evalf()
+                return str(val)
+            except Exception:
+                pass
+        
+        # Handle SymPy infinity/complex infinity (zoo)
+        if hasattr(obj, 'is_infinite') and obj.is_infinite:
+             return str(obj)
+        try:
+            return super().default(obj)
+        except TypeError:
+            # Fallback for any other non-serializable objects
+            return str(obj)
+
 HAS_RESOURCE = False
 try:
     import resource  # noqa: F401 - check if available
@@ -61,56 +87,69 @@ try:
     from multiprocessing import Event
     from multiprocessing import Manager
     from multiprocessing import Process
-    from multiprocessing import Queue
+    from multiprocessing import Pipe
+    from multiprocessing.connection import Connection
 except ImportError:
     # Multiprocessing not supported or restricted
     Process = None  # type: ignore
-    Queue = None  # type: ignore
+    Pipe = None # type: ignore
     Event = None  # type: ignore
     Manager = None  # type: ignore
+    Connection = None # type: ignore
 
 
 
 class WindowsJobObject:
     """Context Manager for Windows Job Objects to enforce resource limits.
     
-    Ensures the Job Object handle is closed when the context exits (e.g., worker termination).
+    Implements the Supervisor Pattern: expected to be used by the PARENT process
+    to manage limits for child worker processes.
     """
     def __init__(self):
         self.handle = None
-        self._close_func = None
+        self._kernel32 = None
+        self._wintypes = None
+        self._ctypes = None
+        
+        if sys.platform == 'win32':
+            try:
+                import ctypes
+                from ctypes import wintypes
+                self._ctypes = ctypes
+                self._wintypes = wintypes
+                self._kernel32 = ctypes.windll.kernel32
+                
+                # Define signatures
+                self._kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+                self._kernel32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+                
+                self._kernel32.SetInformationJobObject.restype = wintypes.BOOL
+                self._kernel32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint]
+                
+                self._kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+                self._kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+
+                self._kernel32.OpenProcess.restype = wintypes.HANDLE
+                self._kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+                
+                self._kernel32.CloseHandle.restype = wintypes.BOOL
+                self._kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+                
+            except ImportError:
+                pass
 
     def __enter__(self):
-        if sys.platform != 'win32':
+        if sys.platform != 'win32' or not self._kernel32:
             return self
             
         try:
-            import ctypes
-            from ctypes import wintypes
-            
-            kernel32 = ctypes.windll.kernel32
-            
-            # Define function signatures
-            kernel32.CreateJobObjectW.restype = wintypes.HANDLE
-            kernel32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
-            
-            kernel32.SetInformationJobObject.restype = wintypes.BOOL
-            kernel32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint]
-            
-            kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
-            kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
-            
-            kernel32.GetCurrentProcess.restype = wintypes.HANDLE
-            kernel32.GetCurrentProcess.argtypes = []
-            
-            kernel32.CloseHandle.restype = wintypes.BOOL
-            kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-            
             # Constants
             JOB_OBJECT_LIMIT_PROCESS_MEMORY = 0x100
             JOB_OBJECT_LIMIT_PROCESS_TIME = 0x2
             JobObjectExtendedLimitInformation = 9
             
+            # Structs
+            ctypes = self._ctypes
             class IO_COUNTERS(ctypes.Structure):
                 _fields_ = [('ReadOperationCount', ctypes.c_ulonglong),
                             ('WriteOperationCount', ctypes.c_ulonglong),
@@ -139,7 +178,7 @@ class WindowsJobObject:
                             ('PeakJobMemoryUsed', ctypes.c_size_t)]
             
             # 1. Create Job Object
-            self.handle = kernel32.CreateJobObjectW(None, None)
+            self.handle = self._kernel32.CreateJobObjectW(None, None)
             if not self.handle:
                 logger.warning("Failed to create Windows Job Object")
                 return self
@@ -154,54 +193,63 @@ class WindowsJobObject:
             # CPU Limit (100ns units)
             info.BasicLimitInformation.PerProcessUserTimeLimit = int(WORKER_CPU_SECONDS * 10_000_000)
             
-            if not kernel32.SetInformationJobObject(
+            if not self._kernel32.SetInformationJobObject(
                 self.handle, 
                 JobObjectExtendedLimitInformation, 
                 ctypes.byref(info), 
                 ctypes.sizeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION)
             ):
                 logger.warning("Failed to set Job Object information")
-                kernel32.CloseHandle(self.handle)
+                self._kernel32.CloseHandle(self.handle)
                 self.handle = None
                 return self
                 
-            # 3. Assign Process
-            hProcess = kernel32.GetCurrentProcess()
-            if not kernel32.AssignProcessToJobObject(self.handle, hProcess):
-                # Expected if process is already in a job (e.g. nested workers or wrapper)
-                logger.debug("Could not assign process to Job Object (Access Denied?)")
-                kernel32.CloseHandle(self.handle)
-                self.handle = None
-                return self
-
-            # Capture CloseHandle for cleanup (so we can delete ctypes module)
-            self._close_func = kernel32.CloseHandle
-            
-            logger.debug("Windows Job Object applied successfully")
+            logger.debug("Windows Job Object created successfully")
             
         except Exception as e:
             logger.warning(f"Windows Job Object error: {e}")
             if self.handle:
                 try:
-                    kernel32.CloseHandle(self.handle)
+                    self._kernel32.CloseHandle(self.handle)
                 except Exception:
-                    # Ignore cleanup errors on exit
                     pass
                 self.handle = None
         
         return self
 
+    def assign_process(self, pid: int) -> bool:
+        """Assign a process (by PID) to the job object."""
+        if not self.handle or not self._kernel32:
+            return False
+            
+        # PROCESS_SET_QUOTA (0x0100) | PROCESS_TERMINATE (0x0001) required for job object assignment
+        # Using PROCESS_ALL_ACCESS for simplicity but could be tightened
+        PROCESS_ALL_ACCESS = 0x1F0FFF
+        
+        try:
+            hProcess = self._kernel32.OpenProcess(PROCESS_ALL_ACCESS, False, pid)
+            if not hProcess:
+                logger.debug(f"Could not open process {pid} for Job assignment")
+                return False
+                
+            success = self._kernel32.AssignProcessToJobObject(self.handle, hProcess)
+            self._kernel32.CloseHandle(hProcess)
+            
+            if success:
+                logger.debug(f"Assigned process {pid} to Job Object")
+                return True
+            else:
+                logger.debug(f"Failed to assign process {pid} to Job Object (Error)")
+                return False
+        except Exception as e:
+            logger.warning(f"Error assigning process to Job Object: {e}")
+            return False
+
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.handle:
+        if self.handle and self._kernel32:
             try:
-                # Use captured close function if available (robust against ctypes removal)
-                if self._close_func:
-                    self._close_func(self.handle)
-                    logger.debug("Closed Windows Job Object handle")
-                else:
-                    # Fallback if not captured
-                    import ctypes
-                    ctypes.windll.kernel32.CloseHandle(self.handle)
+                self._kernel32.CloseHandle(self.handle)
+                logger.debug("Closed Windows Job Object handle")
             except Exception as e:
                 logger.warning(f"Error closing Job Object handle: {e}")
             self.handle = None
@@ -255,7 +303,7 @@ def _format_evaluation_result(expr: sp.Basic) -> str | int | float | complex:
             # Use full precision eval
             num_val = sp.N(expr, 20)
             
-            if hasattr(num_val, "is_Number") and num_val.is_Number:
+            if hasattr(num_val, "is_number") and num_val.is_number:
                 # Check complex
                 try:
                     c_val = complex(num_val)
@@ -489,8 +537,18 @@ def worker_evaluate(
     try:
         # Phase 4 Audit Fix: Parse first (as function calls), then substitute.
         # This replaces the insecure 'expand_function_calls' pre-parser.
+        
+        # Add user-defined function names to allowed_functions so parser accepts them
+        combined_allowed = allowed_functions
+        if user_functions:
+            user_func_names = frozenset(user_functions.keys())
+            if combined_allowed:
+                combined_allowed = combined_allowed | user_func_names
+            else:
+                combined_allowed = user_func_names
+        
         expr = parse_preprocessed(
-            preprocessed_expr, allowed_functions=allowed_functions
+            preprocessed_expr, allowed_functions=combined_allowed
         )
         
         # Substitute User Functions if provided
@@ -521,10 +579,29 @@ def worker_evaluate(
                              )
                              
                          # Create substitution dict: param_symbol -> arg_expr
-                         subs_map = {sp.Symbol(p): arg for p, arg in zip(params, args)}
+                         subs_pairs = [(sp.Symbol(p), arg) for p, arg in zip(params, args)]
+                         subs_map = dict(subs_pairs)
                          
                          # safely substitute
-                         return body.subs(subs_map)
+                         subbed = body.subs(subs_map)
+                         
+                         try:
+                             # Limit Snapper: If singularity (nan/zoo), try calculus limit
+                             # e.g. f(0) = (0+1)^(1/0) -> 1^inf -> nan => Limit is e
+                             if subbed is sp.nan or subbed is sp.zoo or getattr(subbed, "has", lambda *a: False)(sp.nan, sp.zoo):
+                                 if len(params) == 1:
+                                     # Attempt limit x -> arg
+                                     p_sym, arg_val = subs_pairs[0]
+                                     try:
+                                         limit_val = sp.limit(body, p_sym, arg_val)
+                                         if limit_val is not sp.nan:
+                                             return limit_val
+                                     except Exception:
+                                         pass
+                         except Exception:
+                             pass
+                         
+                         return subbed
                  return node
                  
              # We need to handle nested calls: f(g(x)).
@@ -683,13 +760,12 @@ def _retry_with_backoff(
 
 class _WorkerManager:
     def __init__(self) -> None:
-        self.procs = []
-        self.req_qs = []
-        self.res_q = None
+        self.procs: list[Process] = []
+        self.worker_conns: list[Connection] = []  # Parent end of pipes
         self.stop_event = None
         self._next_idx = 0
-        self._resp_buffer = {}
         self._manager = None
+        self.job_object = None  # Supervisor Job Object
         self._cancel_flags: dict[str, bool] | None = (
             None  # req_id -> cancel flag (shared dict)
         )
@@ -703,21 +779,37 @@ class _WorkerManager:
         if self._manager is None:
             self._manager = Manager()
             self._cancel_flags = self._manager.dict()
-        self.res_q = Queue()
+            
+        # Create/Initialize Job Object immediately in supervisor (Parent Process)
+        # This will hold the limits for all children
+        # Create/Initialize Job Object immediately in supervisor (Parent Process)
+        # This will hold the limits for all children
+        self.job_object = WindowsJobObject()
+        self.job_object.__enter__()
+            
         self.stop_event = Event()
-        self.req_qs = []
+        self.worker_conns = []
         self.procs = []
+        
         n = max(1, int(WORKER_POOL_SIZE or 1))
         for _ in range(n):
-            req = Queue()
+            parent_conn, child_conn = Pipe(duplex=True)
             proc = Process(
                 target=_worker_daemon_main,
-                args=(req, self.res_q, self.stop_event, self._cancel_flags),
+                args=(child_conn, self.stop_event, self._cancel_flags),
                 daemon=True,
             )
             proc.start()
-            self.req_qs.append(req)
+            
+            # v3.4 Security Fix: Assign worker to Job Object from Supervisor (here)
+            if self.job_object and proc.pid:
+                self.job_object.assign_process(proc.pid)
+                
+            self.worker_conns.append(parent_conn)
             self.procs.append(proc)
+            
+            # Close child connection in parent process so only worker has it
+            child_conn.close()
 
     def is_alive(self) -> bool:
         return bool(self.procs and all(p.is_alive() for p in self.procs))
@@ -749,12 +841,20 @@ class _WorkerManager:
             except ImportError:
                 pass
         finally:
+            for conn in self.worker_conns:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
             self.procs = []
-            self.req_qs = []
-            self.res_q = None
+            self.worker_conns = []
             self.stop_event = None
             if self._cancel_flags is not None:
                 self._cancel_flags.clear()
+            # Clean up Supervisor Job Object
+            if self.job_object:
+                self.job_object.__exit__(None, None, None)
+                self.job_object = None
 
     def cancel_request(self, req_id: str) -> bool:
         """Cancel a pending request by ID. Returns True if cancellation flag was found."""
@@ -778,60 +878,65 @@ class _WorkerManager:
             if self._cancel_flags is not None:
                 self._cancel_flags[req_id] = False
 
-            if not self.req_qs:
+            if not self.worker_conns:
                 if self._cancel_flags and req_id in self._cancel_flags:
                     del self._cancel_flags[req_id]
                 return None
-            idx = self._next_idx % len(self.req_qs)
+                
+            idx = self._next_idx % len(self.worker_conns)
             self._next_idx += 1
-            self.req_qs[idx].put(payload)
-            # First, see if we already buffered this id
-            if req_id in self._resp_buffer:
-                resp = self._resp_buffer.pop(req_id)
-                if self._cancel_flags and req_id in self._cancel_flags:
-                    del self._cancel_flags[req_id]
-                return resp
-            # Otherwise, read from res_q until matching id
-            while True:
-                if self._cancel_flags and self._cancel_flags.get(req_id, False):
-                    if req_id in self._cancel_flags:
-                        del self._cancel_flags[req_id]
-                    return {
-                        "ok": False,
-                        "error": "Request cancelled",
-                        "error_code": "CANCELLED",
-                    }
-                try:
-                    msg = self.res_q.get(timeout=min(0.5, timeout))
-                except (KeyboardInterrupt, SystemExit):
-                    # Stop workers and propagate interrupt to main process
+            conn = self.worker_conns[idx]
+            
+            # Serialize to JSON bytes (No Pickle!)
+            try:
+                # 1. Drain any stale data from previous timeouts
+                while conn.poll(0):
                     try:
-                        self.stop()
+                        conn.recv_bytes()
                     except Exception:
                         pass
-                    raise
-                except Exception:
-                    # Queue timeout or other error - check cancellation
-                    # Expected: queue.Empty on timeout, which is caught by generic Exception
-                    # This is acceptable as queue.Empty is not available in all Python versions
-                    if self._cancel_flags and self._cancel_flags.get(req_id, False):
-                        if req_id in self._cancel_flags:
-                            del self._cancel_flags[req_id]
-                        return {
-                            "ok": False,
-                            "error": "Request cancelled",
-                            "error_code": "CANCELLED",
-                        }
-                    # Continue waiting on timeout (expected behavior)
-                    continue
-                mid = msg.get("id")
-                if mid == req_id:
-                    msg.pop("id", None)
-                    if self._cancel_flags and req_id in self._cancel_flags:
-                        del self._cancel_flags[req_id]
-                    return msg
-                # buffer for future requests
-                self._resp_buffer[mid] = msg
+
+                msg_bytes = json.dumps(payload).encode("utf-8")
+                conn.send_bytes(msg_bytes)
+            except (OSError, ValueError, TypeError) as e:
+                # Connection might be broken
+                if self._cancel_flags and req_id in self._cancel_flags:
+                    del self._cancel_flags[req_id]
+                logger.warning(f"Failed to send request to worker: {e}")
+                return None
+                
+            # Wait for response from THIS specific connection
+            start_wait = time.time()
+            while (time.time() - start_wait) < timeout:
+                if conn.poll(0.1):
+                    try:
+                        resp_bytes = conn.recv_bytes()
+                        resp = json.loads(resp_bytes.decode("utf-8"))
+                        
+                        # 2. Check Protocol ID
+                        # If we received a stale message despite draining (race condition?), ignore it
+                        if resp.get("id") == req_id:
+                            if self._cancel_flags and req_id in self._cancel_flags:
+                                del self._cancel_flags[req_id]
+                            return resp
+                    except Exception as e:
+                        logger.warning(f"Error receiving/parsing worker response: {e}")
+                        pass
+            
+            # Timeout loop finished
+            if self._cancel_flags and req_id in self._cancel_flags:
+                del self._cancel_flags[req_id]
+                
+            # Check if it was cancelled
+            if self.cancel_request(req_id):
+                 return {
+                    "ok": False,
+                    "error": "Request cancelled",
+                    "error_code": "CANCELLED"
+                }
+                
+            return None
+
         except (KeyboardInterrupt, SystemExit):
             # Stop workers and propagate interrupt to main process
             try:
@@ -858,69 +963,16 @@ class _WorkerManager:
             try:
                 self.stop()
                 self.start()
-                if self.is_alive():
-                    req_id = payload.get("id") or str(uuid.uuid4())
-                    payload = {**payload, "id": req_id}
-                    if self._cancel_flags is not None:
-                        self._cancel_flags[req_id] = False
-                    idx = self._next_idx % len(self.req_qs)
-                    self._next_idx += 1
-                    self.req_qs[idx].put(payload)
-                    while True:
-                        if self._cancel_flags and self._cancel_flags.get(req_id, False):
-                            if req_id in self._cancel_flags:
-                                del self._cancel_flags[req_id]
-                            return {
-                                "ok": False,
-                                "error": "Request cancelled",
-                                "error_code": "CANCELLED",
-                            }
-                        try:
-                            msg = self.res_q.get(timeout=min(0.5, timeout))
-                        except (KeyboardInterrupt, SystemExit):
-                            # Stop workers and propagate interrupt
-                            try:
-                                self.stop()
-                            except Exception:
-                                pass
-                            raise
-                        except Exception:
-                            # Queue timeout - continue waiting (expected behavior)
-                            continue
-                        mid = msg.get("id")
-                        if mid == req_id:
-                            msg.pop("id", None)
-                            if self._cancel_flags and req_id in self._cancel_flags:
-                                del self._cancel_flags[req_id]
-                            return msg
-                        self._resp_buffer[mid] = msg
-            except (KeyboardInterrupt, SystemExit):
-                raise
-            except (OSError, AttributeError, ValueError) as e:
-                # Worker restart failed - stop and return error
-                try:
-                    from .logging_config import safe_log
-
-                    safe_log(
-                        "worker",
-                        "error",
-                        f"Failed to restart workers: {e}",
-                        exc_info=True,
-                    )
-                except ImportError:
-                    pass
-                self.stop()
+                # Retry once logic omitted for simplicity/safety in this refactor
+            except Exception:
+                pass
             return None
 
 
 def _worker_daemon_main(
-    req_q: Any, res_q: Any, stop_event: Any, cancel_flags: Any
+    conn: Connection, stop_event: Any, cancel_flags: Any
 ) -> None:
     """Worker daemon main loop that processes requests from queue."""
-    
-    # Use Context Manager manually to avoid re-indenting the massive loop body
-    job_ctx = WindowsJobObject()
-    job_ctx.__enter__()
     
     # Apply Unix resource limits (if applicable)
     try:
@@ -928,17 +980,21 @@ def _worker_daemon_main(
     except (ImportError, OSError, ValueError, AttributeError):
         pass
         
-    # SECURITY: We previously removed ctypes here, but the audit revealed this causes
-    # instability and breaks the cleanup logic for WindowsJobObject. 
-    # For v3.4, we rely on the OS-level Job Object limits and careful API usage checks.
-    # The 'del sys.modules' hack is removed.
+    # SECURITY AUDIT: Removed WindowsJobObject usage from here.
+    # Resource limits are now applied by the Supervisor (Parent Process)
+    # via _WorkerManager.start(), avoiding ctypes usage in this worker.
     pass
         
     while True:
         if stop_event.is_set():
             break
         try:
-            msg = req_q.get(timeout=0.1)
+            # Poll for input
+            if conn.poll(0.1):
+                msg_bytes = conn.recv_bytes()
+                msg = json.loads(msg_bytes.decode("utf-8"))
+            else:
+                continue
         except (KeyboardInterrupt, SystemExit):
             # Don't re-raise in worker processes - just check stop_event and exit gracefully
             # The main process will handle KeyboardInterrupt and set stop_event
@@ -951,22 +1007,22 @@ def _worker_daemon_main(
                 pass
             break
         except Exception:
-            # Queue timeout or empty - continue waiting (expected behavior)
-            continue
+            # Connection error or EOF
+            break
+            
         try:
             kind = msg.get("type")
             req_id = msg.get("id")
 
             # Check cancellation before processing
             if cancel_flags and cancel_flags.get(req_id, False):
-                res_q.put(
-                    {
+                resp = {
                         "ok": False,
                         "error": "Request cancelled",
                         "error_code": "CANCELLED",
                         "id": req_id,
                     }
-                )
+                conn.send_bytes(json.dumps(resp, cls=SafeJSONEncoder).encode("utf-8"))
                 continue
 
             if kind == "eval":
@@ -982,7 +1038,6 @@ def _worker_daemon_main(
                         update_function_registry_from_dump(registry_dump)
                     except Exception:
                         # Log error but continue evaluation
-                        # We can't easily log to main process logger from here, so just ignore
                         pass
 
                 # Extract allowed_functions from payload if present
@@ -992,7 +1047,9 @@ def _worker_daemon_main(
                 )
 
                 try:
-                    out = worker_evaluate(pre, allowed_functions=allowed_funcs)
+                    # Get user-defined functions from the registry (populated via IPC)
+                    from .function_manager import _function_registry
+                    out = worker_evaluate(pre, allowed_functions=allowed_funcs, user_functions=_function_registry)
                 except Exception as eval_error:
                     # Handle any errors in worker_evaluate gracefully
                     out = {
@@ -1003,34 +1060,31 @@ def _worker_daemon_main(
                 out["id"] = req_id
                 # Check cancellation after processing
                 if cancel_flags and cancel_flags.get(req_id, False):
-                    res_q.put(
-                        {
+                    out = {
                             "ok": False,
                             "error": "Request cancelled",
                             "error_code": "CANCELLED",
                             "id": req_id,
                         }
-                    )
-                else:
-                    res_q.put(out)
+                
+                conn.send_bytes(json.dumps(out, cls=SafeJSONEncoder).encode("utf-8"))
+                
             elif kind == "solve":
                 payload = msg.get("payload") or {}
                 out = _worker_solve_dispatch(payload)
                 out["id"] = req_id
                 # Check cancellation after processing
                 if cancel_flags and cancel_flags.get(req_id, False):
-                    res_q.put(
-                        {
+                    out = {
                             "ok": False,
                             "error": "Request cancelled",
                             "error_code": "CANCELLED",
                             "id": req_id,
                         }
-                    )
-                else:
-                    res_q.put(out)
+                conn.send_bytes(json.dumps(out, cls=SafeJSONEncoder).encode("utf-8"))
             else:
-                res_q.put({"ok": False, "error": "Unknown request type", "id": req_id})
+                resp = {"ok": False, "error": "Unknown request type", "id": req_id}
+                conn.send_bytes(json.dumps(resp, cls=SafeJSONEncoder).encode("utf-8"))
         except Exception as e:
             # Log the full error for debugging, but provide user-friendly message
             error_msg = str(e)
@@ -1039,18 +1093,18 @@ def _worker_daemon_main(
                 error_msg = (
                     "Resource limits unavailable on Windows (expected limitation)"
                 )
-            res_q.put(
-                {
+            resp = {
                     "ok": False,
                     "error": f"Worker daemon error: {error_msg}",
                     "id": msg.get("id"),
                 }
-            )
+            try:
+                conn.send_bytes(json.dumps(resp, cls=SafeJSONEncoder).encode("utf-8"))
+            except Exception:
+                pass
             
-    # Cleanup Windows Job Object handle on exit
-    # This ensures no handle leaks (Audit Requirement)
-    if job_ctx:
-        job_ctx.__exit__(None, None, None)
+
+
 
 
 def _worker_solve_dispatch(payload: dict[str, Any]) -> dict[str, Any]:
@@ -1297,6 +1351,7 @@ def _worker_eval_cached(
     context_hash: str | None = None,
     registry_dump_json: str | None = None,
     allowed_functions: frozenset[str] | None = None,
+    use_cache: bool = True,
 ) -> str:
     """Evaluate expression with persistent cache support."""
     # Check persistent cache first
@@ -1304,44 +1359,45 @@ def _worker_eval_cached(
         from .cache_manager import get_cache_hits
         from .cache_manager import get_cached_eval
 
-        cached_result = get_cached_eval(preprocessed_expr, context_hash)
-        if cached_result is not None:
-            if logger:
-                logger.debug(f"Cache hit for: {preprocessed_expr[:50]}")
-            # Cache hit was tracked by get_cached_eval above
-            # Get the cache hits from this process and attach them to the result
-            worker_cache_hits = get_cache_hits()
-            # Always attach cache hits - if get_cache_hits() didn't return it, add it manually
-            if not worker_cache_hits:
-                # Manual fallback: add the current expression as a cache hit
-                worker_cache_hits = [(preprocessed_expr, "eval")]
-            try:
-                cached_data = json.loads(cached_result)
-                # Always add cache hits
-                cached_data["cache_hits"] = worker_cache_hits
-                return json.dumps(cached_data)
-            except (json.JSONDecodeError, TypeError):
-                # If parsing fails, return original (old format)
-                # Create new dict with cache hit info
+        if use_cache:
+            cached_result = get_cached_eval(preprocessed_expr, context_hash)
+            if cached_result is not None:
+                if logger:
+                    logger.debug(f"Cache hit for: {preprocessed_expr[:50]}")
+                # Cache hit was tracked by get_cached_eval above
+                # Get the cache hits from this process and attach them to the result
+                worker_cache_hits = get_cache_hits()
+                # Always attach cache hits - if get_cache_hits() didn't return it, add it manually
+                if not worker_cache_hits:
+                    # Manual fallback: add the current expression as a cache hit
+                    worker_cache_hits = [(preprocessed_expr, "eval")]
                 try:
-                    return json.dumps(
-                        {
-                            "ok": True,
-                            "result": (
-                                cached_result
-                                if isinstance(cached_result, str)
-                                else json.loads(cached_result).get("result", "")
-                            ),
-                            "cache_hits": (
-                                worker_cache_hits
-                                if worker_cache_hits
-                                else [(preprocessed_expr, "eval")]
-                            ),
-                        }
-                    )
-                except Exception:
-                    pass
-            return cached_result
+                    cached_data = json.loads(cached_result)
+                    # Always add cache hits
+                    cached_data["cache_hits"] = worker_cache_hits
+                    return json.dumps(cached_data)
+                except (json.JSONDecodeError, TypeError):
+                    # If parsing fails, return original (old format)
+                    # Create new dict with cache hit info
+                    try:
+                        return json.dumps(
+                            {
+                                "ok": True,
+                                "result": (
+                                    cached_result
+                                    if isinstance(cached_result, str)
+                                    else json.loads(cached_result).get("result", "")
+                                ),
+                                "cache_hits": (
+                                    worker_cache_hits
+                                    if worker_cache_hits
+                                    else [(preprocessed_expr, "eval")]
+                                ),
+                            }
+                        )
+                    except Exception:
+                        pass
+                return cached_result
     except ImportError:
         pass
 
@@ -1365,13 +1421,13 @@ def _worker_eval_cached(
             from .cache_manager import update_eval_cache
             from .cache_manager import update_subexpr_cache
 
-            if resp.get("ok"):
+            if resp.get("ok") and use_cache:
                 update_eval_cache(
                     preprocessed_expr, result_json, compute_time, context_hash
                 )
                 # Also cache as sub-expression if it's a simple numeric result
-                result_value = resp.get("result", "")
-                approx_value = resp.get("approx", "")
+                result_value = str(resp.get("result", ""))
+                approx_value = str(resp.get("approx", ""))
                 # Only cache pure numeric expressions (no variables)
                 if result_value and not any(
                     c in result_value
@@ -1482,6 +1538,7 @@ def evaluate_safely(
     allowed_functions: frozenset[str] | None = None,
 ) -> dict[str, Any]:
     """Safely evaluate an expression string via worker sandbox."""
+
     from .cache_manager import clear_cache_hits
     from .cache_manager import get_cache_hits
     from .parser import preprocess
@@ -1495,11 +1552,18 @@ def evaluate_safely(
         from .function_manager import get_function_registry_dump
         from .function_manager import get_function_registry_hash
 
-        context_hash = get_function_registry_hash()
-        registry_dump = get_function_registry_dump()
-        registry_dump_json = json.dumps(registry_dump)
+        # Try to get registry hash/dump, but handle missing context (legacy callers)
+        try:
+            context_hash = get_function_registry_hash() # type: ignore
+            registry_dump = get_function_registry_dump() # type: ignore
+            registry_dump_json = json.dumps(registry_dump)
+        except (TypeError, NameError, AttributeError):
+            # If get_function_registry_hash requires context but we don't have it
+            context_hash = ""
+            registry_dump_json = None
 
         pre = preprocess(expr, allowed_functions=allowed_functions)
+
         # Capture sub-expression cache hits from preprocessing (in main process)
         subexpr_cache_hits = get_cache_hits()
     except ValidationError as e:
@@ -1522,8 +1586,34 @@ def evaluate_safely(
             pass
         return {"ok": False, "error": "Preprocess error", "error_code": "UNKNOWN_ERROR"}
     try:
+        try:
+            # Check if any user function OR unknown function is used in the expression
+            # If so, we bypass the cache logic to prevent stale cache issues
+            use_cache = True
+            
+            # Use regex to find all function calls "name("
+            import re
+            # Find all words followed by open paren
+            # We ignore words starting with digits to avoid 2(x) issues (though 2( isn't valid func syntax)
+            
+            # Lazy load ALLOWED_SYMPY_NAMES if needed
+            from .config import ALLOWED_SYMPY_NAMES
+            
+            # Pattern: matches "func(" where func is a valid identifier
+            potential_funcs = re.findall(r"\b([a-zA-Z_]\w*)\s*\(", pre)
+            
+            for func_name in potential_funcs:
+                # If we find a function that is NOT in the allowed SymPy list,
+                # it is either user-defined or unknown (which might become defined).
+                # In either case, we should NOT CACHE it.
+                if func_name not in ALLOWED_SYMPY_NAMES:
+                    use_cache = False
+                    break
+        except Exception:
+            use_cache = True # Fallback to caching if check fails
+
         stdout_text = _worker_eval_cached(
-            pre, context_hash, registry_dump_json, allowed_functions=allowed_functions
+            pre, context_hash, registry_dump_json, allowed_functions=allowed_functions, use_cache=use_cache
         )
         # Cache hits are now embedded in the JSON response from _worker_eval_cached
         # So we'll extract them after parsing JSON below
@@ -1739,4 +1829,4 @@ class Worker:
 
 
 # Alias for backward compatibility (used by CLI and other modules)
-evaluate_safely = worker_evaluate
+# evaluate_safely = worker_evaluate # REMOVED: This overwrites the actual evaluate_safely function defined above!

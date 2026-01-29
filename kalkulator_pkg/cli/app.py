@@ -34,13 +34,17 @@ from ..config import VAR_NAME_RE
 from ..config import VERSION
 from ..parser import format_superscript
 from ..parser import split_top_level_commas
-# Solver imports moved to local scope for lazy loading
-# from ..solver import solve_inequality
-# from ..solver import solve_single_equation
-# from ..solver import solve_system
+# Solver imports
+from ..solver import solve_inequality
+from ..solver import solve_single_equation
+from ..solver import solve_system
 from ..types import ParseError
 from ..types import ValidationError
-# from ..worker import evaluate_safely
+from ..worker import evaluate_safely
+
+def _solve_modulo_system_if_applicable(parts, var, output_format):
+    # Stub: Modulo system solver not implemented yet
+    return False, 0
 
 _logger = logging.getLogger(__name__)
 
@@ -223,6 +227,10 @@ MATH
 DISCOVERY
   f(1)=1, f(pi)=0...      Find function from data points (supports symbolic constants)
     --auto-evolve         Auto-switch to evolve if exact finding fails
+  call f          Batch evaluate f on default set (single-line)
+  callm f         Batch evaluate f on default set (multi-line)
+  call f myset    Evaluate f on custom input set
+  callset myset 1,2,3... Define custom input set
   evolve f(x) from...     Genetic algorithm discovery
     --hybrid              Seed with find() result
     --boost N             N× resources (pop/gen/timeout)
@@ -235,8 +243,17 @@ DISCOVERY
 
 SHORTCUTS (for evolve)
   alt f(...)    ULTIMATE:   --hybrid --verbose --boost 3 --transform
-  altv f(...)   DEBUG:      --hybrid --super-verbose --boost 3 --transform
-  all f(...)    Full power: --hybrid --verbose --boost 3
+  altv f(...)   FORENSIC:   --hybrid --verbose --boost 3 --transform
+  altvd f(...)  DEBUG:      --hybrid --verbose --super-verbose --debug --boost 3 --transform
+  all f(...)    Full Power: --verbose --boost 3
+  
+  4-Series (Boost 4):
+  all4 f(...)   --verbose --boost 4
+  alld4 f(...)  --verbose --transform --boost 4
+  alt4 f(...)   --verbose --transform --boost 4
+  altv4 f(...)  --super-verbose --transform --boost 4
+  altvd4 f(...) --super-verbose --transform --debug --boost 4
+
   b f(...)      Fast mode:  --verbose --boost 3
   h f(...)      Smart mode: --hybrid --verbose
   v f(...)      Verbose:    --verbose

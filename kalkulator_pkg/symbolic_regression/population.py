@@ -18,23 +18,53 @@ class Population(list):
             random.seed(random_state)
             
     def initialize(self, seeds: list[str] = None):
-        """Initialize population using standard ramped half-and-half."""
-        # We need to replicate the logic from EvolutionStrategy.initialize_population
-        # Or better yet, we can't easily access Strategy here without cycle.
-        # We will implement a basic initialization here since strict Strategy dependency is hard?
-        # Actually, let's just use the logic directly.
+        """Initialize population with ramped half-and-half and optional seeds."""
+        self.clear()
         
+        # 1. Seed Injection
+        if seeds:
+            from ..parser import safe_sympy_parse
+            from ..config import ALLOWED_SYMPY_NAMES
+            import sympy as sp
+            
+            # Prepare local dict for parsing
+            local_dict = {v: sp.Symbol(v) for v in self.variable_names}
+            full_local_dict = {**ALLOWED_SYMPY_NAMES, **local_dict}
+            
+            injected_count = 0
+            # Cap injection at 50% of population
+            max_injected = max(1, self.size // 2)
+            
+            for seed_str in seeds:
+                if injected_count >= max_injected: break
+                try:
+                    # v4.4: Use safe parser instead of unsafe sympify
+                    # This standardizes parsing and prevents execution of malicious/toxic seeds
+                    expr = safe_sympy_parse(seed_str, local_dict=full_local_dict)
+                    # Convert to tree
+                    tree = ExpressionTree.from_sympy(expr, self.variable_names)
+                    if tree:
+                        tree.age = 0
+                        self.append(tree)
+                        injected_count += 1
+                except Exception:
+                    # Ignore invalid seeds silently
+                    pass
+            
+            if injected_count > 0:
+                # We can't easily log from here without passing a logger or checking config.verbose
+                # but that's okay.
+                pass
+
+        # 2. Random Trees (Ramped Half-and-Half)
+        # Fill the rest of the population
         depths = range(2, self.config.max_depth + 1)
         methods = ["grow", "full"]
         
-        self.clear()
-        
-        # 1. Seeds (skip for now or handle basic)
-        
-        # 2. Random Trees
         while len(self) < self.size:
             depth = depths[len(self) % len(depths)]
             method = methods[len(self) % len(methods)]
+            
             tree = ExpressionTree.random_tree(
                 variables=self.variable_names,
                 max_depth=depth,

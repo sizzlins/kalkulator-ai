@@ -211,7 +211,49 @@ def shrink_mutation(tree: ExpressionTree) -> ExpressionTree:
     return new_tree
 
 
+
+def insert_mutation(
+    tree: ExpressionTree, operators: list[str] | None = None
+) -> ExpressionTree:
+    """Insert mutation: Insert a random unary operator above a random node.
+    
+    This allows evolving nested structures like floor(expr) from expr.
+    
+    Args:
+        tree: Tree to mutate
+        operators: Allowed operators
+        
+    Returns:
+        Mutated tree (new copy)
+    """
+    if operators is None:
+        operators = ["sin", "cos", "exp", "square", "floor", "trunc"]
+        
+    unary_ops = [op for op in operators if op in UNARY_OPERATORS]
+    if not unary_ops:
+        return tree.copy()
+        
+    new_tree = tree.copy()
+    
+    # Pick a random node to wrap
+    target = new_tree.get_random_node()
+    
+    # Create wrapper node
+    new_op = random.choice(unary_ops)
+    wrapper = ExpressionNode(
+        node_type=NodeType.UNARY_OP, 
+        value=new_op, 
+        children=[target.copy_subtree()]
+    )
+    
+    # Replace in tree
+    new_tree.replace_subtree(target, wrapper)
+    
+    return new_tree
+
+
 def constant_optimization(
+
     tree: ExpressionTree,
     X: np.ndarray,
     y: np.ndarray,
@@ -241,7 +283,7 @@ def constant_optimization(
 
     # Find all constant nodes
     nodes = new_tree.get_all_nodes()
-    constants = [n for n in nodes if n.node_type == NodeType.CONSTANT]
+    constants = [n for n in nodes if n.node_type == NodeType.CONSTANT and not getattr(n, 'locked', False)]
 
     if not constants:
         return new_tree
@@ -252,7 +294,7 @@ def constant_optimization(
         np.clip(pred, -1e100, 1e100, out=pred)  # Guard overflow
         diff = pred - y
         np.clip(diff, -1e100, 1e100, out=diff)  # Guard square
-        current_mse = np.mean(diff**2)
+        current_mse = np.mean(np.abs(diff)**2)
     except (ValueError, OverflowError, TypeError, FloatingPointError):
         return new_tree
 
@@ -289,44 +331,9 @@ def constant_optimization(
                 except (OverflowError, ValueError, RuntimeWarning, FloatingPointError):
                     const_node.value = original_value
 
-            # Robust Integer Snapping (Agent Handoff Rule 5: Root Cause)
-            current_val = const_node.value
-
-            # Handle complex values (prevent TypeError: doesn't define __round__)
-            if isinstance(current_val, (complex, np.complex128, np.complex64)):
-                if abs(current_val.imag) > 1e-10:
-                    continue  # Skip complex numbers with significant imaginary part
-                current_val = float(current_val.real)
-            
-            try:
-                nearest_int = round(current_val)
-            except (TypeError, ValueError):
-                # Fallback for types that don't support round (complex, etc.)
-                continue
-            
-            # Only test if we are reasonably close (avoid snapping 15.5 to 16)
-            # Widen tolerance to 0.05 to catch "flat landscape" drift (e.g., 16.011)
-            if abs(current_val - nearest_int) < 0.05:
-                try:
-                    const_node.value = nearest_int
-                    pred = new_tree.evaluate(X)
-                    diff = pred - y
-                    # Use magnitude squared error
-                    squared_error = np.abs(diff) ** 2
-                    np.clip(squared_error, 0, 1e100, out=squared_error)
-                    mse_int = np.mean(squared_error)
-                    
-                    # Accept integer if it's better, equal, or extremely close (within 5% tolerance for parsimony)
-                    # Note: On perfect data, mse_int should be lower. 
-                    # On noisy data, we allow a slight penalty for the sake of interpretability.
-                    if mse_int <= current_mse * 1.05: 
-                        current_mse = mse_int
-                        # Keep the integer value
-                    else:
-                        # Revert if integer is significantly worse
-                        const_node.value = current_val
-                except (ValueError, OverflowError, TypeError, FloatingPointError):
-                    const_node.value = current_val
+        # v4.0 Audit Remediation: Removed 5% "Integer Snapping" bias.
+        # This heuristics was flagged as scientifically invalid (e.g. 3.04 != 3).
+        # We now accept the optimizer's result as-is.
 
     return new_tree
 
@@ -362,9 +369,22 @@ def optimize_constants_bfgs(
     new_tree = tree.copy()
     new_tree.fold_constants()
     
+    # NEW: Check for discrete primitives to prevent Livelock/Hang
+    # Gradient-based optimizers (BFGS) get stuck on flat surfaces (floor, ceil, sign).
+    all_nodes_check = new_tree.get_all_nodes()
+    discrete_primitives = {'floor', 'ceil', 'ceiling', 'sign', 'signum', 'step', 'heaviside', 
+                          'bitwise_or', 'bitwise_and', 'bitwise_xor', 'lshift', 'rshift', 
+                          'factorial', 'gamma', 'lucas', 'fibonacci'}
+    
+    for node in all_nodes_check:
+        if node.node_type in (NodeType.UNARY_OP, NodeType.BINARY_OP) and node.value in discrete_primitives:
+             # print(f"[Debug] Skipping gradient optimization due to discrete primitive: {node.value}")
+             return new_tree
+
+    
     # Find all constant nodes
     nodes = new_tree.get_all_nodes()
-    constants = [n for n in nodes if n.node_type == NodeType.CONSTANT]
+    constants = [n for n in nodes if n.node_type == NodeType.CONSTANT and not getattr(n, 'locked', False)]
     
     if not constants:
         return new_tree
@@ -405,14 +425,15 @@ def optimize_constants_bfgs(
                 return 1e10
                 
             residuals = pred - y
-            squared_error = residuals ** 2
+            squared_error = np.abs(residuals) ** 2
             
             if sample_weight is not None:
                 mse = np.average(squared_error, weights=sample_weight)
             else:
                 mse = np.mean(squared_error)
                 
-            return float(mse) if np.isfinite(mse) else 1e10
+            # Ensure purely real result (np.abs ensures positive real, but type might linger)
+            return float(np.real(mse)) if np.isfinite(mse) else 1e10
         except (ValueError, OverflowError, TypeError, FloatingPointError):
             return 1e10
     
@@ -439,6 +460,11 @@ def optimize_constants_bfgs(
                      object.__setattr__(c, 'value', result.x[i] + 1j * constants[i].value.imag)
                 else:
                     object.__setattr__(c, 'value', result.x[i])
+            
+            # CRITICAL FIX: Update fitness to reflect optimized constants
+            # The tree was copied from parent, so it holds OLD fitness.
+            # We must update it to the new optimized MSE.
+            new_tree.fitness = float(np.real(result.fun)) if np.isfinite(result.fun) else None
         else:
             # print("DEBUG: Optimization failed/worsened, reverting.")
             pass

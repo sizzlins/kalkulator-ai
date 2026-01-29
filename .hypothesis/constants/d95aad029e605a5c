@@ -1,0 +1,4 @@
+# file: C:\Users\LOQ\PycharmProjects\kalkulator-ai\kalkulator_pkg\config.py
+# hypothesis_version: 6.150.2
+
+['(\\d+(?:\\.\\d+)?)%', '0.001', '0.01', '0.05', '0.1', '1.4.1', '100', '10000', '1024', '12', '15', '1e-10', '1e-12', '1e-6', '1e-8', '20', '200', '2048', '256', '3', '3.0', '30', '4', '400', '50', '5000', '60', '80', 'ALLOWED_SYMPY_NAMES', 'TRANSFORMATIONS', 'auto', 'bitwise_and', 'bitwise_or', 'bitwise_xor', 'lshift', 'rshift', 'true', '√\\s*\\(']

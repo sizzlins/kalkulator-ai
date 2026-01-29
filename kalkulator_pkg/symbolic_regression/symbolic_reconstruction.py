@@ -30,44 +30,50 @@ def reconstruct_constant(value: float, tolerance: float = 1e-4, max_denom: int =
         print(f"[SV] CONSTANT RECONSTRUCTION:\n     Analyzing coeff: {value:.11f}", file=sys.stderr)
         print(f"     Checking candidates: ['int', 'rational', 'pi', 'e', 'linear_combos']", file=sys.stderr)
 
-    # 1. Rational Check
-    import fractions
-    try:
-        f = fractions.Fraction(value).limit_denominator(max_denom)
-        err = abs(value - float(f))
-        if verbose and err > 1e-10:
-             print(f"     ❌ Match: {f} (Error: {err:.2e})", file=sys.stderr)
-             
-        if err < tolerance:
-            if verbose: print(f"     ✅ MATCH: {f} (Error: {err:.2e}) -> Snapped!", file=sys.stderr)
-            return str(f)
-    except: pass
+    # v4.0 Audit Remediation: Removed Rational Reconstruction (The "Rational Trap")
+    # We do not attempt to force floats into fractions like 22/7.
+    # The data must speak for itself.
+    # import fractions
+    # try:
+    #     f = fractions.Fraction(value).limit_denominator(max_denom)
+    #     ...
+    # except: pass
 
     # 2. Single Scaling
     for sym, name, val in CONSTANTS:
         if abs(val) < 1e-9: continue
         
-        # Check ratio
+        # Check ratio (Integer only)
         ratio = value / val
         try:
-            frac = fractions.Fraction(ratio).limit_denominator(max_denom)
-            cand_val = float(frac) * val
-            err = abs(value - cand_val)
+            # v4.0 Audit: Only allow nice integer multiples (e.g. 2pi, 3pi), NOT 13/7pi.
+            # We also allow simple fractions like pi/2 (0.5)
             
-            cand_name = f"{frac}*{name}"
-            if frac == 1: cand_name = name
-            elif frac == -1: cand_name = f"-{name}"
-            
-            if verbose and err > tolerance: # Only show interesting misses? Or some?
-                # To avoid spam, maybe only show if error is "kinda close" (e.g. < 0.1)
-                if err < 0.5:
-                     print(f"     ❌ Match: {cand_name} (Error: {err:.2e})", file=sys.stderr)
-
-            if err < tolerance / abs(val): # Scaled or absolute? Logic above used abs check.
-                # Re-check stricter tolerance for consistency
+            near_int = round(ratio)
+            if abs(ratio - near_int) < 0.01: # Strict 1% for integer multiples
+                cand_val = near_int * val
+                err = abs(value - cand_val)
+                
+                cand_name = f"{near_int}*{name}"
+                if near_int == 1: cand_name = name
+                elif near_int == -1: cand_name = f"-{name}"
+                elif near_int == 0: cand_name = "0"
+                
                 if err < tolerance:
-                    if verbose: print(f"     ✅ MATCH: {cand_name} (Error: {err:.2e}) -> Snapped!", file=sys.stderr)
-                    return cand_name
+                     if verbose: print(f"     ✅ MATCH: {cand_name} (Error: {err:.2e}) -> Snapped!", file=sys.stderr)
+                     return cand_name
+                     
+            # Optional: Check for halves (0.5, 1.5, etc) - Common in physics (1/2 mv^2)
+            # Remove if audit demands absolute purity, but 0.5 is very common.
+            # Let's keep 0.5 but strict.
+            if abs(2*ratio - round(2*ratio)) < 0.01:
+                 halves = round(2*ratio)
+                 if halves % 2 != 0: # Only odd halves (1/2, 3/2)
+                     cand_val = (halves / 2.0) * val
+                     err = abs(value - cand_val)
+                     if err < tolerance:
+                         return f"{halves}/2 * {name}"
+
         except: pass
 
     # 3. Linear Combination

@@ -547,12 +547,16 @@ def format_solution(val: Any) -> str:
             # Check if string contains symbolic functions that should be evaluated
             if any(
                 func in val
-                for func in ["log(", "sin(", "cos(", "exp(", "sqrt(", "*I*", "*pi"]
+                for func in ["log(", "sin(", "cos(", "exp(", "sqrt(", "*I*", "*pi", "I)", "i)"]
             ):
-                parsed = sp.sympify(val)
+                # Map lowercase 'i' to SymPy's imaginary unit I
+                # This fixes Euler's identity: exp(pi*i) should evaluate to -1
+                parsed = sp.sympify(val, locals={'i': sp.I, 'e': sp.E, 'pi': sp.pi})
                 if hasattr(parsed, "free_symbols") and not parsed.free_symbols:
                     # No free symbols - evaluate numerically
-                    val = parsed.evalf()
+                    # First simplify to handle cases like exp(I*pi) -> -1
+                    simplified = sp.simplify(parsed)
+                    val = simplified.evalf()
         except Exception:
             # If parsing fails, keep original string
             pass

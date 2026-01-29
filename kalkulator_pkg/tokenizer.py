@@ -44,6 +44,11 @@ def transform_input(text: str) -> str:
     text = text.replace("×", "*").replace("–", "-").replace("−", "-")
     text = text.replace(":", "/")
     
+    # v4.7 Security Fix: Tokenizer Crash Prevention
+    # Python's tokenizer chokes on backslashes at end of line or specific locations.
+    # Since mathematical expressions don't use backslashes, we can safely remove them.
+    text = text.replace("\\", "")
+    
     # Python tokenizer requires bytes
     try:
         tokens = list(tokenize.tokenize(io.BytesIO(text.encode('utf-8')).readline))

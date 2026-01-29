@@ -17,34 +17,80 @@ from .utils.custom_functions import log10
 class lshift(sp.Function):
     @classmethod
     def eval(cls, x, y):
+        try: x, y = sp.sympify(x), sp.sympify(y)
+        except: return None
         if x.is_number and y.is_number:
-            return sp.Integer(int(x) << int(y))
+            try:
+                if not (x.is_real and y.is_real): return sp.Integer(0)
+                # Python's lshift raises ValueError for negative shift count
+                return sp.Integer(int(x) << int(y))
+            except (ValueError, TypeError, OverflowError):
+                # Return 0 for invalid shifts (matches safe_lshift behavior)
+                return sp.Integer(0)
 
 class rshift(sp.Function):
     @classmethod
     def eval(cls, x, y):
+        try: x, y = sp.sympify(x), sp.sympify(y)
+        except: return None
         if x.is_number and y.is_number:
-            return sp.Integer(int(x) >> int(y))
+            try:
+                if not (x.is_real and y.is_real): return sp.Integer(0)
+                return sp.Integer(int(x) >> int(y))
+            except (ValueError, TypeError, OverflowError):
+                return sp.Integer(0)
 
 class bitwise_xor(sp.Function):
     @classmethod
     def eval(cls, x, y):
+        try: x, y = sp.sympify(x), sp.sympify(y)
+        except: return None
         if x.is_number and y.is_number:
-            return sp.Integer(int(x) ^ int(y))
+            try:
+                if not (x.is_real and y.is_real): return sp.Integer(0)
+                return sp.Integer(int(x) ^ int(y))
+            except (ValueError, TypeError, OverflowError):
+                return sp.Integer(0)
 
 class bitwise_and(sp.Function):
     @classmethod
     def eval(cls, x, y):
+        try: x, y = sp.sympify(x), sp.sympify(y)
+        except: return None
         if x.is_number and y.is_number:
-            return sp.Integer(int(x) & int(y))
+            try:
+                if not (x.is_real and y.is_real): return sp.Integer(0)
+                return sp.Integer(int(x) & int(y))
+            except (ValueError, TypeError, OverflowError):
+                return sp.Integer(0)
 
 class bitwise_or(sp.Function):
     @classmethod
     def eval(cls, x, y):
+        try: x, y = sp.sympify(x), sp.sympify(y)
+        except: return None
         if x.is_number and y.is_number:
-            return sp.Integer(int(x) | int(y))
+            try:
+                if not (x.is_real and y.is_real): return sp.Integer(0)
+                return sp.Integer(int(x) | int(y))
+            except (ValueError, TypeError, OverflowError):
+                return sp.Integer(0)
+
+class SafePrime(sp.Function):
+    """Safe wrapper for prime(n) that handles symbolic arguments."""
+    @classmethod
+    def eval(cls, n):
+        if n.is_Number:
+            try:
+                # Handle floats that are integers
+                val = float(n)
+                if val.is_integer() and val > 0:
+                    return sp.prime(int(val))
+            except:
+                pass
 
 ALLOWED_SYMPY_NAMES = {
+    "pow": sp.Pow, # Explicitly allow pow(b, e) syntax
     "pi": sp.pi,
     "e": sp.E,
     "E": sp.E,
@@ -94,6 +140,7 @@ ALLOWED_SYMPY_NAMES = {
     "det": sp.det,
     # Special functions
     "LambertW": sp.LambertW,
+    "lambertw": sp.LambertW, # lowercase alias
     "min": sp.Min,
     "Min": sp.Min,  # uppercase alias
     "max": sp.Max,
@@ -105,6 +152,7 @@ ALLOWED_SYMPY_NAMES = {
     "floor": sp.floor,
     "ceiling": sp.ceiling,
     "ceil": sp.ceiling,  # alias
+    "trunc": lambda x: sp.sign(x) * sp.floor(sp.Abs(x)),  # Truncation toward zero
     # Number theory
     "gcd": sp.gcd,
     "lcm": sp.lcm,
@@ -127,6 +175,9 @@ ALLOWED_SYMPY_NAMES = {
     "besselj": sp.besselj,  # Bessel function of first kind
     "primepi": sp.primepi,  # Prime-counting function
     "prime_pi": sp.primepi, # Alias
+    "prime": SafePrime,      # N-th prime (Safe Wrapper)
+    "ith_prime": SafePrime,  # Alias
+    "SafePrime": SafePrime,  # Internal class name for re-parsing
     "lshift": lshift,
     "rshift": rshift,
     "bitwise_xor": bitwise_xor,
@@ -143,6 +194,10 @@ ALLOWED_SYMPY_NAMES = {
     "heaviside": lambda x: sp.Heaviside(x, sp.Rational(1, 2)), # 0.5 at x=0
     "Heaviside": lambda x: sp.Heaviside(x, sp.Rational(1, 2)),
     "round": lambda x: sp.floor(x + sp.Rational(1, 2)),
+    "neg": lambda x: -x,
+    "inv": lambda x: 1/x,
+    # Singularity Locking
+    "locked": sp.Function("locked"),
     # Recurrence
     "fibonacci": sp.fibonacci,
     "lucas": sp.lucas,

@@ -1,0 +1,4 @@
+# file: C:\Users\LOQ\PycharmProjects\kalkulator-ai\kalkulator_pkg\types.py
+# hypothesis_version: 6.150.2
+
+['PARSE_ERROR', 'SOLVER_ERROR', 'VALIDATION_ERROR', 'approx', 'error', 'exact', 'free_symbols', 'inequality', 'ok', 'result', 'solution', 'solutions', 'type']

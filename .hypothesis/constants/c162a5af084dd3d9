@@ -1,0 +1,4 @@
+# file: C:\Users\LOQ\PycharmProjects\kalkulator-ai\kalkulator_pkg\sympy_defs.py
+# hypothesis_version: 6.150.2
+
+['Abs', 'AccumBounds', 'E', 'Eq', 'Ge', 'Gt', 'Heaviside', 'I', 'LambertW', 'Le', 'Lt', 'Matrix', 'Max', 'Min', 'Mod', 'Ne', 'Piecewise', '__lshift__', '__rshift__', 'abs', 'acos', 'acosh', 'arccos', 'arcsin', 'arctan', 'asin', 'asinh', 'atan', 'atan2', 'atanh', 'besselj', 'binomial', 'bitwise_and', 'bitwise_or', 'bitwise_xor', 'cbrt', 'ceil', 'ceiling', 'cos', 'cosh', 'cot', 'csc', 'det', 'diff', 'e', 'erf', 'exp', 'expand', 'factor', 'factorial', 'fibonacci', 'floor', 'frac', 'gamma', 'gcd', 'heaviside', 'integrate', 'lcm', 'limit', 'ln', 'log', 'log10', 'log2', 'lshift', 'lucas', 'matrix', 'max', 'min', 'mod', 'nan', 'oo', 'pi', 'prime_pi', 'primepi', 'root', 'round', 'rshift', 'sec', 'sign', 'simplify', 'sin', 'sinc', 'sinh', 'sqrt', 'tan', 'tanh', 'zoo']

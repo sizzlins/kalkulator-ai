@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 #     VERSION = importlib.metadata.version("kalkulator")
 # except Exception:
 #     # Fallback if package not installed
-VERSION = "1.4.1"
+VERSION = "1.4.2"
 
 # Resource limits (can be overridden via environment variables)
 WORKER_CPU_SECONDS = int(os.getenv("KALKULATOR_WORKER_CPU_SECONDS", "30"))

@@ -195,6 +195,9 @@ def _numeric_roots_for_single_var(
     roots: list[float] = []
     interval_min, interval_max = float(interval[0]), float(interval[1])
 
+    # Check for transcendentals once (used to skip symbolic strategies that might hang)
+    has_transcendental = expr.has(sp.exp, sp.log, sp.sin, sp.cos, sp.tan, sp.asin, sp.acos, sp.atan, sp.sinh, sp.cosh, sp.tanh)
+
     # Strategy 0: Try direct inverse for simple trig equations (sin(x)=c, cos(x)=c, tan(x)=c)
     # This is the most precise method - uses exact arcsin/arccos/arctan + periodicity
     try:
@@ -205,53 +208,58 @@ def _numeric_roots_for_single_var(
         pass  # Fall through to other strategies
 
     # Strategy 1: Try solveset over the reals within interval
-    try:
-        from sympy import solveset
+    # Skip for transcendentals to avoid potential hangs in symbolic solving
+    # Strategy 0 (Simple Trig) already handled the easy cases
+    if not has_transcendental:
+        try:
+            from sympy import solveset
 
-        solset = solveset(
-            sp.Eq(expr, 0), variable, domain=sp.Interval(interval_min, interval_max)
-        )
-        finite_values = []
-        for solution in solset:
-            try:
-                solution_value = float(sp.N(solution))
-                finite_values.append(solution_value)
-            except (ValueError, TypeError):
-                continue
-        if finite_values:
-            unique_values_list = []
-            for x_val in finite_values:
+            solset = solveset(
+                sp.Eq(expr, 0), variable, domain=sp.Interval(interval_min, interval_max)
+            )
+            finite_values = []
+            for solution in solset:
                 try:
-                    unique_values_list.append(round(x_val, 12))
-                except (TypeError, ValueError):
-                    pass
-            unique_values = sorted(set(unique_values_list))
-            return [sp.N(root_val) for root_val in unique_values]
-    except (ValueError, TypeError, NotImplementedError):
-        pass
+                    solution_value = float(sp.N(solution))
+                    finite_values.append(solution_value)
+                except (ValueError, TypeError):
+                    continue
+            if finite_values:
+                unique_values_list = []
+                for x_val in finite_values:
+                    try:
+                        unique_values_list.append(round(x_val, 12))
+                    except (TypeError, ValueError):
+                        pass
+                unique_values = sorted(set(unique_values_list))
+                return [sp.N(root_val) for root_val in unique_values]
+        except (ValueError, TypeError, NotImplementedError):
+            pass
 
     # Strategy 2: Try polynomial root finding
-    try:
-        poly = sp.Poly(expr, variable)
-        if poly is not None and poly.total_degree() > 0:
-            for root in poly.nroots():
-                if abs(sp.im(root)) < NUMERIC_TOLERANCE:
-                    roots.append(float(sp.re(root)))
-            if roots:
-                unique_roots_list = []
-                for x_val in roots:
-                    try:
-                        unique_roots_list.append(round(x_val, 12))
-                    except (TypeError, ValueError):
-                         pass
-                unique_roots = sorted(set(unique_roots_list))
-                return [sp.N(root_val) for root_val in unique_roots]
-    except (ValueError, TypeError):
-        pass
-    except sp.polys.polyerrors.PolynomialError:
-        # Expression is not a polynomial (e.g., contains trig functions, exponentials, etc.)
-        # Skip this strategy and continue to Strategy 3
-        pass
+    # Skip for transcendentals as Poly construction can hang (e.g. exp(a*x) - 2^x)
+    if not has_transcendental:
+        try:
+            poly = sp.Poly(expr, variable)
+            if poly is not None and poly.total_degree() > 0:
+                for root in poly.nroots():
+                    if abs(sp.im(root)) < NUMERIC_TOLERANCE:
+                        roots.append(float(sp.re(root)))
+                if roots:
+                    unique_roots_list = []
+                    for x_val in roots:
+                        try:
+                            unique_roots_list.append(round(x_val, 12))
+                        except (TypeError, ValueError):
+                             pass
+                    unique_roots = sorted(set(unique_roots_list))
+                    return [sp.N(root_val) for root_val in unique_roots]
+        except (ValueError, TypeError):
+            pass
+        except sp.polys.polyerrors.PolynomialError:
+            # Expression is not a polynomial (e.g., contains trig functions, exponentials, etc.)
+            # Skip this strategy and continue to Strategy 3
+            pass
 
     # Strategy 3: Detect sign changes and use nsolve
     interval_min, interval_max = interval_min, interval_max

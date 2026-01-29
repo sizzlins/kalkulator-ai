@@ -1,4 +1,5 @@
 import sympy as sp
+from sympy import re, im
 
 from ..config import NUMERIC_TOLERANCE
 
@@ -229,8 +230,29 @@ def _solve_quadratic_equation(equation: sp.Eq, variable: sp.Symbol) -> list[sp.B
         # Try polynomial approach for quadratics
         poly = sp.Poly(equation.lhs - equation.rhs, variable)
         if poly is not None and poly.degree() == 2:
+            # Try exact roots first
+            try:
+                exact_roots = poly.all_roots()
+                # Deduplicate exact roots while preserving order/sort
+                unique_roots = sorted(list(set(exact_roots)), key=lambda x: (x.is_real, re(x), im(x)) if hasattr(x, 'is_real') else str(x))
+                if not unique_roots: unique_roots = exact_roots # Fallback
+                return [r for r in unique_roots if abs(sp.im(r)) < NUMERIC_TOLERANCE]
+            except (NotImplementedError, ValueError):
+                pass
+            
+            # Fallback to numeric roots
             roots = poly.nroots()
-            return [r for r in roots if abs(sp.im(r)) < NUMERIC_TOLERANCE]
+            # Deduplicate numeric roots with tolerance
+            unique_roots = []
+            for r in roots:
+                is_dup = False
+                for u in unique_roots:
+                    if abs(r - u) < NUMERIC_TOLERANCE:
+                        is_dup = True
+                        break
+                if not is_dup:
+                    unique_roots.append(r)
+            return [r for r in unique_roots if abs(sp.im(r)) < NUMERIC_TOLERANCE]
     except (ValueError, TypeError):
         pass
 

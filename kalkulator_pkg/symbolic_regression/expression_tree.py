@@ -26,6 +26,16 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import sympy as sp
 
+try:
+    import sympy as sp
+except ImportError:
+    sp = None
+
+try:
+    from scipy import special as scipy_special
+except ImportError:
+    scipy_special = None
+
 # Lazy import for Numba evaluator (optional dependency)
 _numba_evaluator = None
 def _get_numba_evaluator():
@@ -194,8 +204,28 @@ def safe_mul(x, y):
 
 
 def safe_div(x, y):
-    # Allow division by zero (produces inf) -> penalized later
-    return x / y
+    # Protected division (Agent Handoff Rule 1: Fix Hang)
+    # Avoid division by zero which causes hangs/crashes in optimized backends
+    # If denominator is too small, return 1.0 (standard Koza protection)
+    # Handle scalar or array
+    try:
+        # Check if y is scalar-like
+        if np.isscalar(y):
+            if abs(y) < 1e-9: return 1.0
+            return x / y
+        
+        # Array handling
+        with np.errstate(divide='ignore', invalid='ignore'):
+            result = x / y
+            # Replace infinite/NaN values where y was small
+            mask = np.abs(y) < 1e-9
+            if np.any(mask):
+                # If x and y are arrays, result[mask] = 1.0
+                # If x is scalar, result[mask] = 1.0
+                result[mask] = 1.0
+            return result
+    except:
+        return 1.0
 
 
 def safe_pow(x, y):
@@ -252,7 +282,7 @@ def safe_pow(x, y):
             result = np.power(x_clipped, y_clipped)
             return np.clip(result, -1e100, 1e100)
             
-    except Exception as e:
+    except (ZeroDivisionError, OverflowError, FloatingPointError, ValueError, TypeError) as e:
         # print(f"DEBUG: safe_pow crashed: {e}") 
         return np.zeros_like(x) if isinstance(x, np.ndarray) else 0.0
 
@@ -285,7 +315,7 @@ def safe_lambertw(x):
     try:
         if abs(x) > 1e100: return 0.0
         return scipy_special.lambertw(x)
-    except:
+    except (ZeroDivisionError, OverflowError, FloatingPointError, ValueError, TypeError):
         return 0.0
 
 
@@ -303,7 +333,7 @@ def safe_round(x):
             else:
                 return np.zeros_like(x, dtype=float) if hasattr(x, 'shape') else 0.0
         return np.round(x)
-    except:
+    except (ZeroDivisionError, OverflowError, FloatingPointError, ValueError, TypeError):
         return np.zeros_like(x, dtype=float) if hasattr(x, 'shape') else 0.0
 
 
@@ -311,7 +341,7 @@ def safe_erf(x):
     """Error function (Gaussian integral)."""
     try:
         return scipy_special.erf(np.clip(np.real(x) if np.iscomplexobj(x) else x, -100, 100))
-    except:
+    except (ZeroDivisionError, OverflowError, FloatingPointError, ValueError, TypeError):
         return 0.0
 
 
@@ -326,7 +356,7 @@ def safe_heaviside(x):
         if np.iscomplexobj(x):
             x = np.real(x)
         return np.heaviside(x, 0.5)
-    except:
+    except (ZeroDivisionError, OverflowError, FloatingPointError, ValueError, TypeError):
         return 0.0
 
 
@@ -345,7 +375,7 @@ def safe_mod(x, y):
         else:
             y = np.where(np.abs(y) < 1e-10, 1.0, y)
         return np.mod(x, y)
-    except:
+    except (ZeroDivisionError, OverflowError, FloatingPointError, ValueError, TypeError):
         return 0.0
 
 
@@ -395,10 +425,34 @@ def safe_prime_pi(x):
 
         try:
             return float(primepi(int(val)))
-        except Exception:
+        except (ZeroDivisionError, OverflowError, FloatingPointError, ValueError, TypeError):
             return 0.0
     
     return np.vectorize(_count_primes, otypes=[float])(x)
+
+
+def safe_ith_prime(x):
+    """N-th prime number p_n. Vectorized."""
+    from sympy import prime
+
+    def _get_prime(val):
+        if np.iscomplexobj(val) or isinstance(val, complex) or not np.isfinite(val):
+            return 0.0
+
+        try:
+            val_real = np.real(val)
+            n = int(val_real)
+            if n < 1: 
+                return 0.0
+            # Cap to prevent hangs on huge inputs
+            if n > 100_000:
+                 return float(n * np.log(n)) # Approximation
+
+            return float(prime(n))
+        except:
+             return 0.0
+
+    return np.vectorize(_get_prime, otypes=[float])(x)
 
 
 def safe_fibonacci(x):
@@ -412,7 +466,7 @@ def safe_fibonacci(x):
     try:
         # Analytic continuation: handles non-integer x correctly
         return (phi**x - np.cos(np.pi * x) * phi**(-x)) / sqrt5
-    except:
+    except (ZeroDivisionError, OverflowError, FloatingPointError, ValueError, TypeError):
         return 0.0
 
 
@@ -424,7 +478,7 @@ def safe_lucas(x):
     phi = 1.618033988749895
     try:
         return phi**x + np.cos(np.pi * x) * phi**(-x)
-    except:
+    except (ZeroDivisionError, OverflowError, FloatingPointError, ValueError, TypeError):
         return 0.0
 
 
@@ -437,20 +491,20 @@ def safe_bitwise_xor(x, y):
         return 0.0
     try:
         return float(int(np.real(x)) ^ int(np.real(y)))
-    except:
+    except (ZeroDivisionError, OverflowError, FloatingPointError, ValueError, TypeError):
         return 0.0
 
 def safe_bitwise_and(x, y):
     if not (np.isscalar(x) and np.isscalar(y)) or not (np.isreal(x) and np.isreal(y)): return 0.0
     if not (np.isfinite(x) and np.isfinite(y)): return 0.0
     try: return float(int(np.real(x)) & int(np.real(y)))
-    except: return 0.0
+    except (ZeroDivisionError, OverflowError, FloatingPointError, ValueError, TypeError): return 0.0
 
 def safe_bitwise_or(x, y):
     if not (np.isscalar(x) and np.isscalar(y)) or not (np.isreal(x) and np.isreal(y)): return 0.0
     if not (np.isfinite(x) and np.isfinite(y)): return 0.0
     try: return float(int(np.real(x)) | int(np.real(y)))
-    except: return 0.0
+    except (ZeroDivisionError, OverflowError, FloatingPointError, ValueError, TypeError): return 0.0
 
 def safe_lshift(x, y):
     if not (np.isscalar(x) and np.isscalar(y)) or not (np.isreal(x) and np.isreal(y)): return 0.0
@@ -459,16 +513,17 @@ def safe_lshift(x, y):
         iy = int(np.real(y))
         if iy < 0 or iy > 64: return 0.0 # Cap shift
         return float(int(np.real(x)) << iy)
-    except: return 0.0
+    except (ZeroDivisionError, OverflowError, FloatingPointError, ValueError, TypeError): return 0.0
 
 def safe_rshift(x, y):
+    # print(f"DEBUG safe_rshift: x={x} ({type(x)}), y={y} ({type(y)})") 
     if not (np.isscalar(x) and np.isscalar(y)) or not (np.isreal(x) and np.isreal(y)): return 0.0
     if not (np.isfinite(x) and np.isfinite(y)): return 0.0
     try:
         iy = int(np.real(y))
         if iy < 0 or iy > 64: return 0.0
         return float(int(np.real(x)) >> iy)
-    except: return 0.0
+    except (ZeroDivisionError, OverflowError, FloatingPointError, ValueError, TypeError): return 0.0
 
 
 
@@ -489,7 +544,7 @@ def safe_frac(x):
                 return 0.0
 
         return x - np.floor(x)
-    except Exception:
+    except (ZeroDivisionError, OverflowError, FloatingPointError, ValueError, TypeError):
         # Fallback
         if hasattr(x, 'shape'):
              return np.zeros_like(x)
@@ -504,7 +559,7 @@ def safe_floor(x):
             else:
                 return np.zeros_like(x, dtype=float) if hasattr(x, 'shape') else 0.0
         return np.floor(x)
-    except:
+    except (ZeroDivisionError, OverflowError, FloatingPointError, ValueError, TypeError):
         return np.zeros_like(x, dtype=float) if hasattr(x, 'shape') else 0.0
 
 def safe_ceil(x):
@@ -516,7 +571,7 @@ def safe_ceil(x):
             else:
                 return np.zeros_like(x, dtype=float) if hasattr(x, 'shape') else 0.0
         return np.ceil(x)
-    except:
+    except (ZeroDivisionError, OverflowError, FloatingPointError, ValueError, TypeError):
         return np.zeros_like(x, dtype=float) if hasattr(x, 'shape') else 0.0
 
 UNARY_OPERATORS: dict[str, Callable[[float], float]] = {
@@ -542,10 +597,13 @@ UNARY_OPERATORS: dict[str, Callable[[float], float]] = {
     "bessel_j0": lambda x: _lazy_scipy_special('j0')(x),  # Bessel function of first kind, order 0
     "bessel_j1": lambda x: _lazy_scipy_special('j1')(x),  # Bessel function of first kind, order 1
     "gamma": lambda x: _lazy_scipy_special('gamma')(x),   # Gamma function (extends factorials)
+    "factorial": lambda x: _lazy_scipy_special('gamma')(x + 1), # Factorial x! = gamma(x+1)
     "prime_pi": safe_prime_pi,      # Prime-counting function π(x)
+    "ith_prime": safe_ith_prime,    # N-th prime function p_n
     "floor": safe_floor,            # Safe Floor function
     "ceil": safe_ceil,              # Safe Ceiling function
     "ceiling": safe_ceil,           # Alias for SymPy compatibility
+    "trunc": lambda x: np.sign(x) * np.floor(np.abs(x)),  # Truncation toward zero (like Python int())
     "frac": safe_frac,              # Fractional part (FUNCTION not lambda)
     "lambertw": safe_lambertw,      # Lambert W function
     "sign": safe_sign,              # Sign function (-1, 0, 1)
@@ -588,7 +646,40 @@ def _get_sympy_ops():
         return _sympy_ops
 
     import sympy as sp
+    from ..sympy_defs import lshift, rshift, bitwise_xor, bitwise_and, bitwise_or
+
     
+    # Custom SymPy Functions for Bitwise Shifts
+    
+    def _safe_gamma(*args):
+        try:
+            if len(args) == 1:
+                x = args[0]
+            elif len(args) == 2 and args[0] is None: # Sometimes passed as (None, x)?
+                x = args[1] 
+            else:
+                x = args[0]
+                
+            if hasattr(x, 'is_Number') and not x.is_Number: return sp.gamma(x)
+            # Check for non-positive integers to avoid pole error
+            if hasattr(x, 'is_integer') and x.is_integer and x <= 0: return sp.zoo
+            return sp.gamma(x)
+        except (ValueError, TypeError, AttributeError):
+            return sp.zoo
+
+    def _safe_factorial(*args):
+        try:
+            if len(args) == 1:
+                x = args[0]
+            else:
+                x = args[0]
+
+            if hasattr(x, 'is_Number') and not x.is_Number: return sp.factorial(x)
+            if hasattr(x, 'is_integer') and x.is_integer and x < 0: return sp.zoo
+            return sp.factorial(x)
+        except (ValueError, TypeError, AttributeError):
+            return sp.zoo
+
     # Define ops inside here to avoid top-level dependency
     unary = {
         "sin": sp.sin,
@@ -612,9 +703,17 @@ def _get_sympy_ops():
         "atanh": sp.atanh,
         "bessel_j0": lambda x: sp.besselj(0, x),
         "bessel_j1": lambda x: sp.besselj(1, x),
-        "prime_pi": sp.primepi,
+        "bessel_j1": lambda x: sp.besselj(1, x),
+        "gamma": _safe_gamma,
+        "factorial": _safe_factorial,
+        "bessel_j1": lambda x: sp.besselj(1, x),
+        "prime_pi": lambda x: sp.primepi(int(x)) if x.is_real and x.is_finite else sp.Integer(0),
+        "primepi": lambda x: sp.primepi(int(x)) if x.is_real and x.is_finite else sp.Integer(0), # Alias
+        "ith_prime": lambda x: sp.prime(int(x)) if x.is_real and x.is_finite and x > 0 else sp.Integer(0),
+        "prime": lambda x: sp.prime(int(x)) if x.is_real and x.is_finite and x > 0 else sp.Integer(0), # Alias
         "floor": sp.floor,
         "ceil": sp.ceiling,
+        "trunc": lambda x: sp.sign(x) * sp.floor(sp.Abs(x)),  # Truncate towards zero
         "frac": lambda x: x - sp.floor(x),
         "lambertw": sp.LambertW,
         "sign": sp.sign,
@@ -637,11 +736,12 @@ def _get_sympy_ops():
         "pow": lambda x, y: x**y,
         "max": sp.Max,
         "min": sp.Min,
-        "bitwise_xor": sp.Function("bitwise_xor"),
-        "bitwise_and": sp.Function("bitwise_and"),
-        "bitwise_or": sp.Function("bitwise_or"),
-        "lshift": sp.Function("lshift"),
-        "rshift": sp.Function("rshift"),
+        "bitwise_xor": bitwise_xor,
+        "bitwise_and": bitwise_and,
+        "bitwise_or": bitwise_or,
+        "lshift": lshift,
+        "rshift": rshift,
+
         "mod": sp.Mod,
         "atan2": sp.atan2,
     }
@@ -666,10 +766,46 @@ class ExpressionNode:
     value: Any
     children: list[ExpressionNode] = field(default_factory=list)
     parent: ExpressionNode | None = field(default=None, repr=False)
+    locked: bool = False  # If True, constant optimization will skip this node
 
-    def __setattr__(self, name, value):
-        """Force mutability (Audit Fix for frozen-behavior crash)."""
-        object.__setattr__(self, name, value)
+    # Note: No __setattr__ override needed since dataclass is not frozen.
+    # The previous hack was a workaround for a misunderstanding.
+
+    def __str__(self):
+        """String representation compatible with Python/SymPy parsing."""
+        if self.node_type == NodeType.CONSTANT:
+            # Format float nicely (remove trailing .0 if integer)
+            val = self.value
+            if isinstance(val, (int, float)):
+                if val == int(val):
+                    return str(int(val))
+                return f"{val:.6g}"
+            return str(val)
+            
+        elif self.node_type == NodeType.VARIABLE:
+            return str(self.value)
+            
+        elif self.node_type == NodeType.UNARY_OP:
+            val_str = str(self.value)
+            if val_str == "neg":
+                return f"-({self.children[0]})"
+            elif val_str == "inv":
+                return f"1/({self.children[0]})"
+            return f"{self.value}({self.children[0]})"
+            
+        else:  # BINARY_OP
+            op_map = {
+                "add": "+", "sub": "-", "mul": "*", "div": "/", "pow": "^",
+                "mod": "%", "bitwise_xor": "^", "bitwise_and": "&", "bitwise_or": "|",
+                "lshift": "<<", "rshift": ">>"
+            }
+            op_sym = op_map.get(self.value)
+            
+            if op_sym:
+                return f"({self.children[0]} {op_sym} {self.children[1]})"
+            
+            # Function-style binary ops (max, min, atan2)
+            return f"{self.value}({self.children[0]}, {self.children[1]})"
 
     def __eq__(self, other):
         """Value-based equality check (structural)."""
@@ -680,8 +816,12 @@ class ExpressionNode:
                 self.children == other.children)
 
     def __hash__(self):
-        """Hash based on structure (assuming immutability for caching)."""
-        return hash((self.node_type, self.value, tuple(self.children)))
+        """Identity-based hash (stable across mutations).
+        
+        AUDIT FIX: Previously used value-based hash which corrupted sets/dicts
+        when nodes were mutated. Now uses object identity (id) which is stable.
+        """
+        return id(self)
 
     def __post_init__(self):
         """Set parent references for children."""
@@ -738,7 +878,7 @@ class ExpressionNode:
                 elif not np.isfinite(result):
                     result = 0.0
                 return result
-            except Exception:
+            except (ZeroDivisionError, OverflowError, FloatingPointError, ValueError, TypeError):
                 return 0.0
 
         else:  # BINARY_OP
@@ -755,7 +895,7 @@ class ExpressionNode:
                 elif not np.isfinite(result):
                     result = 0.0
                 return result
-            except Exception:
+            except (ZeroDivisionError, OverflowError, FloatingPointError, ValueError, TypeError):
                 return 0.0
 
     def evaluate_iterative(self, variables: dict[str, float | np.ndarray]) -> float | np.ndarray:
@@ -810,7 +950,7 @@ class ExpressionNode:
                             elif not np.isfinite(result):
                                 result = 0.0
                             results.append(result)
-                        except Exception:
+                        except (ZeroDivisionError, OverflowError, FloatingPointError, ValueError, TypeError):
                             results.append(0.0)
                             
             else:  # BINARY_OP
@@ -834,7 +974,7 @@ class ExpressionNode:
                             elif not np.isfinite(result):
                                 result = 0.0
                             results.append(result)
-                        except Exception:
+                        except (ZeroDivisionError, OverflowError, FloatingPointError, ValueError, TypeError):
                             results.append(0.0)
         
         return results[0] if results else 0.0
@@ -851,16 +991,12 @@ class ExpressionNode:
         import sympy as sp
         
         if self.node_type == NodeType.CONSTANT:
-            # Skip rationalization for very large or very small numbers
-            if abs(self.value) > 1e6 or (abs(self.value) < 1e-6 and self.value != 0):
-                return sp.Float(self.value)
-            # Try to rationalize the constant for small values
-            try:
-                rational = sp.nsimplify(self.value, tolerance=1e-6, rational=True)
-                if abs(float(rational) - self.value) < 1e-6:
-                    return rational
-            except Exception:
-                pass
+            # Skip rationalization for complex numbers
+            if isinstance(self.value, complex) or np.iscomplexobj(self.value):
+                 return sp.Float(self.value.real) + sp.I * sp.Float(self.value.imag)
+            
+            # Use strict Float for everything to prevent nsimplify hangs
+            # Rationalization is now handled purely by symbolify_constants string post-processing
             return sp.Float(self.value)
 
         elif self.node_type == NodeType.VARIABLE:
@@ -893,16 +1029,19 @@ class ExpressionNode:
             return sp.Float(self.value)
         elif self.node_type == NodeType.VARIABLE:
             return symbols.get(self.value, sp.Symbol(self.value))
-        elif self.node_type == NodeType.UNARY_OP:
+            
+        unary_ops, binary_ops = _get_sympy_ops()
+        
+        if self.node_type == NodeType.UNARY_OP:
             child_expr = self.children[0].to_sympy_fast(symbols)
-            op_func = SYMPY_UNARY.get(self.value)
+            op_func = unary_ops.get(self.value)
             if op_func is None:
                 raise ValueError(f"No SymPy equivalent for: {self.value}")
             return op_func(child_expr)
         else:  # BINARY_OP
             left_expr = self.children[0].to_sympy_fast(symbols)
             right_expr = self.children[1].to_sympy_fast(symbols)
-            op_func = SYMPY_BINARY.get(self.value)
+            op_func = binary_ops.get(self.value)
             if op_func is None:
                 raise ValueError(f"No SymPy equivalent for: {self.value}")
             return op_func(left_expr, right_expr)
@@ -914,6 +1053,7 @@ class ExpressionNode:
             value=self.value,
             children=[child.copy_subtree() for child in self.children],
             parent=None,
+            locked=self.locked,
         )
         return new_node
 
@@ -966,28 +1106,7 @@ class ExpressionNode:
             tokens.append(('BINARY', self.value))
         return tokens
 
-    def __str__(self) -> str:
-        """String representation of this subtree."""
-        if self.node_type == NodeType.CONSTANT:
-            return f"{self.value:.6g}"
-        elif self.node_type == NodeType.VARIABLE:
-            return str(self.value)
-        elif self.node_type == NodeType.UNARY_OP:
-            return f"{self.value}({self.children[0]})"
-        else:  # BINARY_OP
-            op_symbol = {
-                "add": "+",
-                "sub": "-",
-                "mul": "*",
-                "div": "/",
-                "pow": "^",
-                "max": "max",
-                "min": "min",
-            }.get(self.value, self.value)
-            if self.value in ("add", "sub", "mul", "div", "pow"):
-                return f"({self.children[0]} {op_symbol} {self.children[1]})"
-            else:
-                return f"{op_symbol}({self.children[0]}, {self.children[1]})"
+
 
 
 @dataclass
@@ -1027,7 +1146,15 @@ class ExpressionTree:
         for type_code, val in raw_tokens:
             if type_code == 'CONST':
                 # OpCode 0: Constant
-                optimized_stack.append((0, float(val)))
+                # Support complex constants (e.g. folded sqrt(-1))
+                if isinstance(val, (complex, np.complex64, np.complex128)):
+                    optimized_stack.append((0, val))
+                else:
+                    try:
+                        optimized_stack.append((0, float(val)))
+                    except (ValueError, TypeError):
+                        # Fallback for weird types -> keep as is (Python stack will handle it)
+                        optimized_stack.append((0, val))
             elif type_code == 'VAR':
                 # OpCode 1: Variable Index
                 idx = var_map.get(val, 0) # Fallback to 0 if unknown
@@ -1090,7 +1217,7 @@ class ExpressionTree:
         try:
             with np.errstate(all="ignore"):
                 # Try Numba-accelerated path first
-                ne = _get_numba_evaluator()
+                ne = None # DISABLED: Force fallback. Numba causes deadlocks on complex recursions. _get_numba_evaluator()
                 if ne is not None:
                     # Compile to Numba format if not cached
                     if self._numba_opcodes is None:
@@ -1106,8 +1233,14 @@ class ExpressionTree:
             # Ensure result is array of correct shape
             if isinstance(result, (int, float, complex, np.number)):
                 result = np.full(X.shape[0], result)
+            
+            # Agent Handoff Rule 2: Soften Fitness
+            # Replace NaNs/Infs with a penalty value instead of crashing or returning None
+            # Do not use copy=False to avoid modifying cached numba arrays if any
+            result = np.nan_to_num(result, nan=1e9, posinf=1e9, neginf=1e9)
+                
             return result
-        except Exception:
+        except (ZeroDivisionError, OverflowError, FloatingPointError, ValueError, TypeError):
             # Fallback (rare)
             return np.zeros(X.shape[0])
 
@@ -1121,20 +1254,23 @@ class ExpressionTree:
         """Get string representation of the expression."""
         return str(self.root)
 
-    def to_pretty_string(self) -> str:
+    def to_pretty_string(self, expr: "sp.Expr" = None) -> str:
         """Get a cleaned-up string representation."""
         try:
             # Skip simplification for complex trees to avoid hangs
             if self.complexity() > 20:
                 return self.to_string()
-            symbols = {var: sp.Symbol(var) for var in self.variables}
-            expr = self.root.to_sympy(symbols)
+            
+            if expr is None:
+                symbols = {var: sp.Symbol(var) for var in self.variables}
+                expr = self.root.to_sympy(symbols)
+            
             # Fix SymPy capitalization for Python compatibility
             s = str(expr)
             s = s.replace("Max", "max").replace("Min", "min")
             s = s.replace("Mod", "mod").replace("Heaviside", "heaviside")
             return s
-        except Exception:
+        except (ZeroDivisionError, OverflowError, FloatingPointError, ValueError, TypeError):
             return self.to_string()
 
 
@@ -1254,7 +1390,7 @@ class ExpressionTree:
                 val = node.evaluate({})
                 # Return new constant node
                 return ExpressionNode(NodeType.CONSTANT, val)
-            except Exception:
+            except (ZeroDivisionError, OverflowError, FloatingPointError, ValueError, TypeError):
                 # If eval fails (e.g. div by zero), keep original structure
                 return node
         
@@ -1268,14 +1404,100 @@ class ExpressionTree:
                 if child.node_type == NodeType.CONSTANT:
                     try:
                         try:
-                            # Snap to nearest integer
-                            object.__setattr__(child, 'value', float(round(child.value)))
+                            # Snap to nearest integer via truncation (matches runtime behavior)
+                            # safe_rshift/lshift/etc use int(np.real(val)), which truncates.
+                            object.__setattr__(child, 'value', float(int(child.value)))
                         except (TypeError, ValueError):
                             pass
-                    except:
+                    except (ZeroDivisionError, OverflowError, FloatingPointError, ValueError, TypeError):
                         pass
-
         return node
+
+
+    def polish_discrete_constants(self, X: np.ndarray, y: np.ndarray) -> 'ExpressionTree':
+        """Post-processing: Snap constants in discrete functions if it doesn't hurt MSE.
+        
+        Fixes "Funny Constants" like rshift(x, 1.648) -> rshift(x, 1).
+        """
+        # Baseline
+        try:
+            current_pred = self.evaluate_fast(X)
+            y_flat = np.asarray(y).flatten()
+            pred_flat = np.asarray(current_pred).flatten()
+            # Handle NaNs/Inf simply
+            if not np.all(np.isfinite(pred_flat)): return self
+            best_mse = np.mean((y_flat - pred_flat)**2)
+        except:
+            return self
+
+        # Collect candidate nodes first to avoid concurrent modification loops
+        candidates = []
+        def collect(node):
+            if not node.is_terminal:
+                for child in node.children:
+                    collect(child)
+            
+            # Check condition: Parent is discrete operator
+            if node.parent and node.parent.node_type == NodeType.BINARY_OP:
+                if node.parent.value in {"bitwise_xor", "bitwise_and", "bitwise_or", "lshift", "rshift"}:
+                    if node.node_type == NodeType.CONSTANT:
+                        candidates.append(node)
+        
+        collect(self.root)
+        
+        for node in candidates:
+            original_val = node.value
+            try:
+                # Try both floor and ceil (since round(1.6) -> 2, but rshift(x,1.6) -> x>>1)
+                c_floor = float(np.floor(original_val))
+                c_ceil = float(np.ceil(original_val))
+                
+                # Sort by proximity to original value
+                val_candidates = sorted(list({c_floor, c_ceil}), key=lambda x: abs(x - original_val))
+
+                found_good = False
+                for snapped_val in val_candidates:
+                    # Optimization: skip if already close
+                    if abs(original_val - snapped_val) < 1e-9: continue
+                    
+                    # Apply change
+                    object.__setattr__(node, 'value', snapped_val)
+                    
+                    # CRITICAL: Clear cache so evaluate_fast recompiles RPN with new constant
+                    self._rpn_stack = None
+                    self._compiled_func = None
+                    self._cached_mse = float("inf") # Also invalidate MSE cache
+
+                    # Check MSE
+                    new_pred = self.evaluate_fast(X)
+                    pred_new = np.asarray(new_pred).flatten()
+                    
+                    if not np.all(np.isfinite(pred_new)):
+                        continue # Try next candidate
+
+                    new_mse = np.mean((y_flat - pred_new)**2)
+                    
+
+                    # Allow minor float noise, strictly no significant worsening
+                    # If error is same (e.g. 0 vs 0), keep the cleaner integer!
+                    if new_mse <= best_mse + 1e-9:
+                        best_mse = new_mse # Update best_mse? Actually unnecessary if we just accept.
+                        found_good = True
+                        break # Found a valid integer snap, keep it and stop trying others
+                
+                if not found_good:
+                    # Revert if no integer worked
+                    object.__setattr__(node, 'value', original_val)
+                    self._rpn_stack = None
+                    self._compiled_func = None
+                    
+            except Exception:
+                object.__setattr__(node, 'value', original_val)
+                self._rpn_stack = None
+                self._compiled_func = None
+                
+        return self
+
 
     @staticmethod
     def random_tree(
@@ -1296,7 +1518,7 @@ class ExpressionTree:
             New random ExpressionTree
         """
         if operators is None:
-            operators = ["add", "sub", "mul", "div", "sin", "cos", "exp", "square"]
+            operators = ["add", "sub", "mul", "div", "sin", "cos", "exp", "square", "trunc", "ith_prime"]
 
         unary_ops = [op for op in operators if op in UNARY_OPERATORS]
         binary_ops = [op for op in operators if op in BINARY_OPERATORS]
@@ -1377,7 +1599,7 @@ class ExpressionTree:
                 try:
                     val = float(node)
                     return ExpressionNode(NodeType.CONSTANT, val)
-                except Exception:
+                except (ZeroDivisionError, OverflowError, FloatingPointError, ValueError, TypeError):
                     # e.g. infinity?
                     return ExpressionNode(NodeType.CONSTANT, 0.0)
 
@@ -1390,6 +1612,13 @@ class ExpressionTree:
                     # Treat unknown symbol as variable anyway? Or error?
                     # For seeding, better be lenient or assume parameter
                     return ExpressionNode(NodeType.VARIABLE, name)
+
+            # 2.5 Singularity Locking (Agent Handoff)
+            if hasattr(node, "func") and getattr(node.func, "name", "") == "locked":
+                if len(node.args) == 1:
+                    child_node = _convert_node(node.args[0])
+                    child_node.locked = True
+                    return child_node
 
             # 3. Operations
 
@@ -1411,13 +1640,34 @@ class ExpressionTree:
 
             elif node.is_Mul:
                 operands = node.args
-                current = _convert_node(operands[0])
-                for i in range(1, len(operands)):
+                current_idx = 0
+                
+                # Check for -1 multiplier (common in subtractions)
+                is_negated = False
+                if operands[0] == -1:
+                    is_negated = True
+                    current_idx = 1
+                    # If -1 was the only operand? (Shouldn't happen in Mul)
+                    if len(operands) == 1:
+                        return ExpressionNode(NodeType.CONSTANT, -1.0)
+                
+                # Process first valid operand
+                current = _convert_node(operands[current_idx])
+                
+                # Chain rest
+                for i in range(current_idx + 1, len(operands)):
                     rhs = _convert_node(operands[i])
                     parent = ExpressionNode(NodeType.BINARY_OP, "mul", [current, rhs])
                     current.parent = parent
                     rhs.parent = parent
                     current = parent
+                    
+                # Wrap in neg if needed
+                if is_negated:
+                    neg_node = ExpressionNode(NodeType.UNARY_OP, "neg", [current])
+                    current.parent = neg_node
+                    return neg_node
+                    
                 return current
 
             elif node.is_Pow:

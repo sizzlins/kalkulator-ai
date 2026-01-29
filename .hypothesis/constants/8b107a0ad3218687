@@ -1,0 +1,4 @@
+# file: C:\Users\LOQ\PycharmProjects\kalkulator-ai\kalkulator_pkg\__init__.py
+# hypothesis_version: 6.150.2
+
+['.api', '1.4.1', 'api', 'cli', 'config', 'det', 'diff', 'evaluate', 'integrate_expr', 'logging_config', 'parser', 'plot', 'solve_equation', 'solve_inequality', 'solve_system', 'solver', 'types', 'validate_expression', 'worker']

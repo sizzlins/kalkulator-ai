@@ -44,6 +44,9 @@ class REPL:
 
     def __init__(self, context: Optional[ReplContext] = None, output_callback=None):
         self.ctx = context if context else ReplContext()
+        # Set global context for worker access
+        from .context import set_current_context
+        set_current_context(self.ctx)
         self.running = True
         self.chained_context: dict[str, str] = {}
         self.variables: dict[str, str] = {}  # Global variable cache for substitution
@@ -109,6 +112,10 @@ class REPL:
             except EOFError:
                 self.running = False
                 return
+            except UnicodeDecodeError:
+                # Handle Windows console encoding issues (e.g. 0xff byte)
+                self.print("\n[Input decoding error - Please check your terminal encoding]")
+                return
             # The following block is removed as per instruction:
             # except UnicodeDecodeError:
             #     # Handle Windows console encoding issues on interrupt
@@ -122,6 +129,17 @@ class REPL:
                 raw = preprocess_expression(raw)
 
             self.process_input(raw)
+            
+            # Auto-save cache after every command to prevent data loss on crash
+            try:
+                from ..cache_manager import save_cache_to_disk
+                save_cache_to_disk()
+            except ImportError:
+                pass
+            except Exception as e:
+                # Log but don't crash
+                # logger.warning(f"Failed to auto-save cache: {e}")
+                pass
         except KeyboardInterrupt:
             self.handle_interrupt()
         except Exception as e:
@@ -161,6 +179,15 @@ class REPL:
 
         
         # SANITIZATION: Strip common copy-paste artifacts for more forgiving parsing
+        
+        # 0. Filter "Dirty" Input (Error logs, Tracebacks, etc.)
+        # Prevent engine from trying to parse error messages pasted back into REPL
+        if "Error:" in text or "Traceback" in text or "RuntimeWarning" in text:
+            return  # Silently ignore error lines
+            
+        if text.strip() in ['nan', 'inf', '-inf']:
+            return # Ignore bare status values
+
         # Remove backticks (from markdown code blocks)
         text = text.strip('`')
         # Replace smart quotes with regular quotes
@@ -562,7 +589,7 @@ class REPL:
 
                 from .repl_commands import _handle_evolve
 
-                _handle_evolve(evolve_cmd, self.variables)
+                _handle_evolve(evolve_cmd, self.ctx, self.variables)
                 return
 
 
@@ -670,8 +697,7 @@ class REPL:
         allowed = self._get_allowed_functions(raw_part)
         res = evaluate_safely(
             rhs_subbed, 
-            allowed_functions=allowed,
-            user_functions=self.ctx.function_registry
+            allowed_functions=allowed
         )
         if res.get("ok"):
             val_str = res.get("result")
@@ -715,8 +741,7 @@ class REPL:
             allowed = self._get_allowed_functions(raw_part)
             res = evaluate_safely(
                 subbed_part, 
-                allowed_functions=allowed,
-                user_functions=self.ctx.function_registry
+                allowed_functions=allowed
             )
             if res.get("ok"):
                 val = format_solution(res.get("result", ""))  # result is string
@@ -786,7 +811,7 @@ class REPL:
                 # Substitute RHS
                 rhs_subbed = self._substitute_variables(rhs)
                 from ..worker import evaluate_safely
-                res = evaluate_safely(rhs_subbed, user_functions=self.ctx.function_registry)
+                res = evaluate_safely(rhs_subbed)
                 if res.get("ok"):
                     val_str = str(res.get("result"))
                     try:
@@ -834,8 +859,7 @@ class REPL:
             from ..worker import evaluate_safely
             res = evaluate_safely(
                 text_subbed, 
-                allowed_functions=allowed,
-                user_functions=self.ctx.function_registry
+                allowed_functions=allowed
             )
             dt = time.perf_counter() - t0
 
@@ -847,6 +871,31 @@ class REPL:
                     # Inject timing validly even if worker didn't
                     res["time_taken"] = dt
                     self.print(f"Execution time: {dt:.6f}s")
+                
+                if getattr(self.ctx, "show_cache_hits", False):
+                    # Check for cache_hits in result
+                    # It might be in the root dict (from worker) OR in the result json string parsing logic?
+                    # Worker.py returns JSON string usually, but evaluate_safely parses it back to dict.
+                    # evaluate_safely calls _worker_eval_cached which returns JSON string.
+                    # evaluate_safely then... wait.
+                    # In repl_core.py, res is the DICT returned by evaluate_safely.
+                    # In evaluate_safely, it says: "stdout_text = _worker_eval_cached...".
+                    # But wait, evaluate_safely returns DICT.
+                    # Let's verify evaluate_safely returns a dict with "cache_hits".
+                    
+                    hits = res.get("cache_hits")
+                    if hits:
+                         # Deduplicate and format
+                         unique_hits = sorted(list(set(h[0] for h in hits if isinstance(h, (list, tuple)) and len(h) > 0)))
+                         if unique_hits:
+                             # Show specific hits (truncate list if too long)
+                             display_hits = unique_hits[:3]
+                             formatted_hits = ", ".join(f"'{h}'" for h in display_hits)
+                             
+                             if len(unique_hits) > 3:
+                                 self.print(f"Cache hit! Used: {formatted_hits} ... ({len(unique_hits)-3} more)")
+                             else:
+                                 self.print(f"Cache hit! Used: {formatted_hits}")
                 print_result_pretty(
                     {
                         "ok": True,

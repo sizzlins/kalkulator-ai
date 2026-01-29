@@ -416,3 +416,59 @@ def eval_to_float(val) -> float:
         return float(val)
     except Exception:
         raise ValueError(f"Could not convert {val!r} to float")
+
+
+def snap_expression_constants(expr_str: str, tolerance: float = 1e-7) -> str:
+    """Snap floating point constants in an expression string to nearest simple rationals/integers.
+    
+    e.g., "4.89999999*x**1.9999999" -> "4.9*x**2"
+    
+    Args:
+        expr_str: The expression string (e.g. from SymPy).
+        tolerance: Max distance to consider for snapping.
+        
+    Returns:
+        Beautified string.
+    """
+    import sympy as sp
+    from kalkulator_pkg.parser import parse_preprocessed
+    
+    try:
+        # Parse into SymPy expression
+        expr = parse_preprocessed(expr_str)
+        
+        # Define a walker to replace Floats
+        def snap_floats(node):
+            if isinstance(node, sp.Float):
+                # Check for integer closeness
+                val = float(node)
+                if abs(val - round(val)) < tolerance:
+                    return sp.Integer(round(val))
+                
+                # Check for simple rational closeness (limit denominator to 100 for now)
+                # e.g. 0.3333333 -> 1/3, 4.9 -> 49/10
+                # We use Python's Fraction.limit_denominator
+                from fractions import Fraction
+                frac = Fraction(val).limit_denominator(1000)
+                if abs(float(frac) - val) < tolerance:
+                    return sp.Rational(frac.numerator, frac.denominator)
+                
+                # Check if it's 4.9 (special case for 1/10ths which are common)
+                # Actually limit_denominator(1000) covers 49/10 perfectly.
+                
+                return node
+            
+            # Recurse
+            if hasattr(node, "args"):
+                new_args = [snap_floats(arg) for arg in node.args]
+                if new_args != list(node.args):
+                    return node.func(*new_args)
+            return node
+            
+        cleaned_expr = snap_floats(expr)
+        return str(cleaned_expr).replace("**", "^") # Return to user-friendly format
+        
+    except Exception:
+        # If anything fails (parsing, etc.), return original
+        return expr_str
+

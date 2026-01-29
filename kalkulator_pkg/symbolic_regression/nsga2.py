@@ -183,8 +183,8 @@ def calculate_crowding_distance(population: list[RankedIndividual], front: list[
         obj_max = get_objective(population[sorted_front[-1]])
         obj_range = obj_max - obj_min
         
-        if obj_range < 1e-10:
-            continue  # All same value
+        if obj_range < 1e-10 or not np.isfinite(obj_range):
+            continue  # All same value or infinite range
         
         # Interior points
         for k in range(1, n - 1):

@@ -195,6 +195,42 @@ def solve_regression_stage(
             # Accept if EXACT fit (MSE < 1e-18) OR high R² (> 0.95) with simple coefficients
             is_good_linear_fit = mse < 1e-18 or (r_squared > 0.95 and mse < 1.0)
             
+            # FIX: Before accepting approximate linear, check for piecewise patterns
+            # that can masquerade as linear (e.g., floor(x) + frac(x)^2)
+            if is_good_linear_fit and mse > 1e-18:
+                try:
+                    from .symbolic_regression.forensic_analysis import _detect_scalloped_staircase
+                    X_check_piecewise = np.array(X_data).reshape(-1, 1) if np.array(X_data).ndim == 1 else np.array(X_data)
+                    scalloped_result = _detect_scalloped_staircase(
+                        X_check_piecewise, y_data, variable_names=param_names, verbose=False
+                    )
+                    if scalloped_result:
+                        # Found a piecewise pattern - check if it's a better fit
+                        if isinstance(scalloped_result, tuple):
+                            # Exact match tuple: (seeds, best_match)
+                            return True, scalloped_result[1], "scalloped_staircase [exact]", 0.0
+                        elif scalloped_result:
+                            # Seeds list - evaluate the first one
+                            from .sympy_defs import SYMPY_FUNCTIONS
+                            import sympy as sp_local
+                            try:
+                                expr_str = scalloped_result[0]
+                                var_sym = sp_local.Symbol(param_names[0])
+                                local_dict = {param_names[0]: var_sym, **SYMPY_FUNCTIONS}
+                                scallop_expr = sp_local.sympify(expr_str, locals=local_dict)
+                                # Compute MSE for scalloped pattern
+                                scallop_mse = 0.0
+                                for xi, yi in zip(X_data if np.array(X_data).ndim == 1 else X_data[:, 0], y_data):
+                                    pred = float(scallop_expr.subs(var_sym, float(xi)))
+                                    scallop_mse += (pred - yi) ** 2
+                                scallop_mse /= len(y_data)
+                                if scallop_mse < mse:
+                                    return True, expr_str, "scalloped_staircase", scallop_mse
+                            except Exception:
+                                pass  # Fall through to linear
+                except Exception:
+                    pass  # Fall through to linear if detection fails
+            
             if is_good_linear_fit:
                 # Try to snap coefficients to integers or simple rationals
                 snapped_coeffs = []
