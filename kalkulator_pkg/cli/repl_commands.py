@@ -1527,6 +1527,47 @@ def _handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None)
                                     define_function(ctx, func_name, input_vars, beautified)
                                 except Exception:
                                     pass
+                                
+                                # v4.8 Gene Bank: Save heuristic wins to long-term memory
+                                try:
+                                    from ..symbolic_regression.gene_bank import get_gene_bank
+                                    from ..symbolic_regression.expression_tree import ExpressionTree
+                                    import sympy as sp
+                                    
+                                    # Parse to SymPy to check if trivial
+                                    local_dict = {v: sp.Symbol(v) for v in input_vars}
+                                    expr = sp.sympify(beautified, locals=local_dict)
+                                    
+                                    # Trivial Filter: Don't save constants or single variables
+                                    is_constant = expr.is_number or expr.is_Number
+                                    is_single_var = expr in local_dict.values()
+                                    is_linear = len(expr.free_symbols) == 1 and expr.is_polynomial() and sp.degree(expr) <= 1
+                                    
+                                    if not is_constant and not is_single_var and not is_linear:
+                                        # Create a mock tree for the Gene Bank
+                                        # Use ExpressionTree.from_sympy if available, else create minimal
+                                        bank = get_gene_bank()
+                                        
+                                        # Create a lightweight wrapper for the bank
+                                        class HeuristicResult:
+                                            def __init__(self, sympy_expr, complexity):
+                                                self._expr = sympy_expr
+                                                self._complexity = complexity
+                                            def to_sympy(self):
+                                                return self._expr
+                                            def complexity(self):
+                                                return self._complexity
+                                            def to_pretty_string(self):
+                                                return str(self._expr)
+                                        
+                                        mock_tree = HeuristicResult(expr, len(str(expr)) // 3)
+                                        r2 = 1.0 - mse_val if mse_val < 1 else 0.99
+                                        saved = bank.add(mock_tree, mse_val, r2)
+                                        if saved:
+                                            print(f"[GeneBank] Saved: {beautified}")
+                                except Exception:
+                                    pass  # Gene Bank is optional
+                                
                                 return
                         else:
                             display = func_str[:50] + "..." if len(func_str) > 50 else func_str
