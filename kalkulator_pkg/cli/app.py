@@ -274,6 +274,9 @@ DATA
   savecache      Save cache
   loadcache      Load cache
   export <f> <file> Export function to Python file
+  genes          View learned expressions (Meta-Learning)
+  genes delete N Delete gene at index N
+  genes clear    Clear all learned genes
 
 SETTINGS
   debug [on|off]    Debug mode

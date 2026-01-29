@@ -13,7 +13,7 @@ license: mit
 # Kalkulator-ai CLI
 
 ![Status](https://img.shields.io/badge/Status-Gold%20Standard-brightgreen.svg)
-![Version](https://img.shields.io/badge/Version-1.4.1-blue.svg)
+![Version](https://img.shields.io/badge/Version-1.4.2-blue.svg)
 ![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)
 ![License](https://img.shields.io/badge/License-MIT-purple.svg)
 
@@ -32,6 +32,7 @@ license: mit
 - **Secure Sandboxing**: **New in v1.4.1** - Windows Job Object isolation prevents memory leaks and CPU overuse.
 - **Agentic Discovery**: Intelligent feature selection logic.
 - **Equivalent Forms**: Visualizes multiple mathematical representations (Trig vs Rational) for the same function.
+- **Gene Bank (Meta-Learning)**: **New in v1.4.2** - The engine learns from successful discoveries and reuses them as seeds in future runs. Type `genes` to see what the AI has learned.
 
 ## 🏆 Trophy Case: Solved Functions
 
@@ -126,6 +127,9 @@ https://github.com/sizzlins/kalkulator-ai/blob/main/kalkulator.exe
 - `diff(...)`: Differentiate.
 - `integrate(...)`: Integrate.
 - `save/load`: Persist state.
+- `genes`: View learned expressions (Meta-Learning memory).
+- `genes delete N`: Delete gene at index N.
+- `genes clear`: Clear all learned genes.
 
 ### Examples
 
