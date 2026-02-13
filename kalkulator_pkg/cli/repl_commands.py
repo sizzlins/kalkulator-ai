@@ -33,6 +33,7 @@ from ..utils.formatting import print_result_pretty
 from ..worker import clear_caches
 from ..worker import evaluate_safely
 from ..symbolic_regression.forensic_analysis import generate_pattern_seeds
+from ..heuristics import detect_smoothness
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +114,8 @@ COMMAND_REGISTRY = {
     "callr",
     "callrm",
     "genes",
+    "ban",
+    "unban",
 }
 
 
@@ -166,6 +169,15 @@ def handle_command(text: str, ctx: Any, variables: Dict[str, str]) -> bool:
 
     if raw_lower.startswith("cachehits"):
         _handle_cachehits_command(text, ctx)
+        _handle_cachehits_command(text, ctx)
+        return True
+
+    if raw_lower.startswith("ban "):
+        _handle_ban_command(text, ctx)
+        return True
+
+    if raw_lower.startswith("unban ") or raw_lower == "unban":
+        _handle_unban_command(text, ctx)
         return True
 
     # === Research Commands (Evolve, SINDy, Causal, Dimensionless) ===
@@ -426,10 +438,16 @@ def handle_command(text: str, ctx: Any, variables: Dict[str, str]) -> bool:
     return False
 
 
-def _substitute_vars(text: str, variables: Dict[str, str]) -> str:
+def _substitute_vars(text: str, variables: Dict[str, str], exclude: set[str] | None = None) -> str:
     # Helper to substitute vars before command execution
+    # exclude: Set of variable names to skip (protect from shadowing)
+    if exclude is None:
+        exclude = set()
+        
     sorted_vars = sorted(variables.keys(), key=len, reverse=True)
     for var in sorted_vars:
+        if var in exclude:
+            continue
         if var in text:
             pattern = r"\b" + re.escape(var) + r"\b"
             text = re.sub(pattern, f"({variables[var]})", text)
@@ -437,6 +455,7 @@ def _substitute_vars(text: str, variables: Dict[str, str]) -> str:
 
 
 def _handle_show_functions(ctx: Any):
+    # ... (Keep existing implementation, jumping to _handle_solve_command) ...
     """Display user-defined functions and categorized built-in functions."""
     funcs = list_functions(ctx)
     
@@ -511,44 +530,68 @@ def _handle_show_functions(ctx: Any):
 
 
 def _handle_solve_command(text: str, variables: Dict[str, str]):
-    # Format: solve x^2 - 1 = 0
-    # Logic: If variable in equation is in 'variables', we have shadowing.
-    # The user probably means "solve for symbol x".
-    # So we do NOT substitute variables for 'solve' command generally,
-    # OR we substitute only known constants?
-    # Current behavior: Shadowing causes implicit substitution -> Contradiction.
-    # Fix: Do NOT call _substitute_vars on the whole string.
-    # Just parse raw equation.
-
-    eq_str = text[6:].strip()
+    # Format: solve x^2 - 1 = 0 [, var]
+    # v4.3 Fix: Variable Shadowing
+    # Explicitly protect likely target variables from substitution.
+    
+    # 1. Parse command
+    base_text = text[6:].strip() # remove 'solve '
+    
+    # Check for explicit variable: "eq, x"
+    target_var = None
+    if "," in base_text:
+        # Split by last comma
+        start, end = base_text.rsplit(",", 1)
+        # Verify 'end' looks like a variable
+        candidate = end.strip()
+        if candidate.isidentifier() or (len(candidate) == 1 and candidate.isalpha()):
+            eq_str = start.strip()
+            target_var = candidate
+        else:
+            eq_str = base_text
+    else:
+        eq_str = base_text
+        
     print(f"Solving equation: {eq_str}")
+    
+    # 2. Determine Exclusion Set (Variables to NOT substitute)
+    exclude = set()
+    if target_var:
+        exclude.add(target_var)
+    else:
+        # Auto-detect protection
+        # If common variables appear in equation, protect them
+        # Limit to single-letter vars or known math vars to avoid protecting parameters
+        common_vars = ["x", "y", "z", "t", "n", "a", "b", "c"]
+        
+        # Simple tokenization by word boundary to find usage
+        # This prevents "exp" matching "x"
+        tokens = set(re.findall(r"\b[a-zA-Z_]\w*\b", eq_str))
+        
+        for v in common_vars:
+            if v in tokens:
+                exclude.add(v)
+                
+    # 3. Substitute (with exclusion)
+    eq_str_subbed = _substitute_vars(eq_str, variables, exclude=exclude)
+    
+    if eq_str != eq_str_subbed:
+        # Inform user if substitutions happened
+        # Filter out excluded to only show what WAS substituted
+        actually_subbed = []
+        for v in variables:
+            if v not in exclude and v in eq_str:
+                actually_subbed.append(v)
+        if actually_subbed:
+           print(f"Note: Substituted variables: {', '.join(actually_subbed)}")
 
-    # We pass None (no substitutions) or handle specific substitution logic?
-    # Ideally, we let the solver handle it.
-    # But if 'a=5' and equation is 'x+a=10', we DO want substitution of 'a'.
-    # But if 'x=10' and equation is 'x+a=10' (solve for a), we substitute x=10 -> '10+a=10' -> a=0. Correct.
-    # But if 'x=10' and equation is 'x^2=9' (solve for x), we substitute x=10 -> '100=9' -> Contradiction.
-    # AMBIGUITY: Does user mean solve for *current variable x* (impossible if x is constant 10) or *symbol x*?
-    # Standard REPL behavior: If x is defined, x IS that value. You cannot solve for a literal number.
-    # User must 'clear x' to solve for x as a symbol.
-    # However, to be friendly, we could check if the resulting equation is a contradiction AND contains no variables,
-    # then suggest "Did you mean to solve for symbol 'x'? Value 'x=10' is currently defined."
+    # 4. Solve
+    res = solve_single_equation(eq_str_subbed, target_var)
 
-    # Standard logic for now (KISS): substitution is correct behavior for defined vars.
-    # BUT, we need to respect the input text raw.
-    eq_str_subbed = _substitute_vars(eq_str, variables)
-
-    res = solve_single_equation(eq_str_subbed, None)
-
-    # Check for "Contradiction" if variables were substituted
-    if res.get("type") == "identity_or_contradiction" and "Contradiction" in str(
-        res.get("result", "")
-    ):
-        # Check if we substituted anything
+    # Check for "Contradiction" - Fallback hint
+    if res.get("type") == "identity_or_contradiction" and "Contradiction" in str(res.get("result", "")):
         if eq_str != eq_str_subbed:
-            print(
-                "Note: Variables were substituted from memory. If you meant to solve for a variable that is currently defined, try 'clear <var>' first."
-            )
+             print("Note: If you meant to solve for a variable that was substituted, try clearing it or specifying it explicitly (e.g. 'solve eq, x').")
 
     print_result_pretty(res)
 
@@ -594,9 +637,111 @@ def _handle_benchmark(text: str):
 # Forensic Analysis functions have been moved to 'kalkulator_pkg/symbolic_regression/forensic_analysis.py'
 
 
+def _matches_ban(func_lower: str, ban_token: str) -> bool:
+    """Check if a function string violates a ban token.
+    
+    Handles:
+    - Stripping parens from ban tokens: 'sqrt()' → checks for 'sqrt'
+    - Semantic equivalences: sqrt ↔ x**0.5, pow ↔ ** ↔ ^
+    - Unicode symbols: √ → sqrt
+    """
+    ban = ban_token.lower().strip()
+    
+    # Strip trailing parens: "sqrt()" → "sqrt"
+    if ban.endswith("()"):
+        ban = ban[:-2]
+    # Strip wrapping parens with content: "√(x)" → "√"
+    import re as _re
+    ban = _re.sub(r'\(.*?\)', '', ban).strip()
+    # Unicode normalization: √ → sqrt
+    ban = ban.replace('√', 'sqrt')
+    
+    # Direct substring check
+    if ban and ban in func_lower:
+        return True
+    
+    # Semantic equivalences
+    SQRT_FORMS = {'sqrt', '**0.5', '**(0.5)', '**(1/2)', '**0.50'}
+    POW_FORMS = {'pow', '**', '^'}
+    
+    if ban in {'sqrt', 'x**0.5'}:
+        return any(form in func_lower for form in SQRT_FORMS)
+    if ban in POW_FORMS:
+        return any(form in func_lower for form in POW_FORMS)
+    
+    return False
 
 
 # [Orphaned definitions deleted]
+def _handle_ban_command(text: str, ctx: Any):
+    """
+    Handle 'ban' command to persistently exclude operators from evolution.
+    Syntax: ban <func1>, <func2>, ...
+    """
+    if not ctx:
+        print("Error: Context not available for persistent banning.")
+        return
+
+    # Extract arguments (remove 'ban ' prefix)
+    args = text[3:].strip()
+    if not args:
+        # If no args, just list currently banned
+        if ctx.banned_operators:
+             print(f"Currently banned operators: {sorted(list(ctx.banned_operators))}")
+        else:
+             print("No operators are currently banned.")
+        return
+
+    # Parse comma-separated list
+    new_bans = [op.strip().lower() for op in args.split(",") if op.strip()]
+    
+    # helper validation against known operators? 
+    # For now, just add them (engine filters unknown ones anyway)
+    ctx.banned_operators.update(new_bans)
+    print(f"Banned: {sorted(list(ctx.banned_operators))}")
+
+
+def _handle_unban_command(text: str, ctx: Any):
+    """
+    Handle 'unban' command to remove exclusions.
+    Syntax: unban <func> | unban all
+    """
+    if not ctx:
+        print("Error: Context not available.")
+        return
+
+    args = text[5:].strip()
+    if not args:
+        print("Usage: unban <function_name> | unban all")
+        return
+
+    if args.lower() == "all":
+        ctx.banned_operators.clear()
+        print("All bans cleared.")
+        return
+
+    to_remove = [op.strip().lower() for op in args.split(",") if op.strip()]
+    missing = []
+    removed = []
+    
+    for op in to_remove:
+        if op in ctx.banned_operators:
+            ctx.banned_operators.remove(op)
+            removed.append(op)
+        else:
+            missing.append(op)
+            
+    if removed:
+        print(f"Unbanned: {removed}")
+    if missing:
+        print(f"Not found in ban list: {missing}")
+    
+    if ctx.banned_operators:
+        print(f"Remaining bans: {sorted(list(ctx.banned_operators))}")
+    else:
+        print("No operators are currently banned.")
+
+
 def _handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None):
     """Handle the 'evolve' command for genetic symbolic regression."""
     # Local import to resolve circular/scoping issues with IDE
@@ -606,47 +751,38 @@ def _handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None)
         # SHORTCUT COMMANDS: Expand to full evolve syntax
         text_lower = text.lower().strip()
         
-        # altv: SUPER-VERBOSE mode (like alt but with detailed analysis logging)
-        # Shows EXACTLY what the engine is thinking for tech-savvy users
-        # altvd: DEBUG mode (hybrid + verbose + super-verbose + debug + boost 3 + transform)
-        if text_lower.startswith('altvd '):
-            text = 'evolve --hybrid --verbose --super-verbose --debug --boost 3 --transform ' + text[6:]
-        # altv: FORENSIC mode (hybrid + verbose + boost 3 + transform) - Analysis logs only, no super-verbose
-        elif text_lower.startswith('altv '):
-            text = 'evolve --hybrid --verbose --boost 3 --transform ' + text[5:]
-        # alt: ULTIMATE power mode (hybrid + boost 3 + transform) - Now Verbose by default to show progress
-        elif text_lower.startswith('alt '):
-            text = 'evolve --hybrid --verbose --boost 3 --transform ' + text[4:]
+        # Mapping of shortcut -> flags
+        # ORDER MATTERS: Longer prefixes must be checked first if iterating keywords,
+        # but we split by space to be exact.
+        shortcuts = {
+            # 4-Series (Boost 4)
+            'altvd4': '--super-verbose --transform --debug --boost 4',
+            'altv4':  '--super-verbose --transform --boost 4',
+            'alld4':  '--verbose --transform --boost 4',
+            'alt4':   '--verbose --transform --boost 4',
+            'all4':   '--verbose --boost 4',
             
-        # --- 4-Series shortcuts (Boost 4) ---
-        # altvd4: evolve --super-verbose --transform --debug --boost 4
-        elif text_lower.startswith('altvd4 '):
-            text = 'evolve --super-verbose --transform --debug --boost 4 ' + text[7:]
-        # altv4: evolve --super-verbose --transform --boost 4
-        elif text_lower.startswith('altv4 '):
-            text = 'evolve --super-verbose --transform --boost 4 ' + text[6:]
-        # alt4: evolve --verbose --transform --boost 4 (User def: "equal to evolve --verbose --transform boost 4")
-        elif text_lower.startswith('alt4 '):
-            text = 'evolve --verbose --transform --boost 4 ' + text[5:]
-        # alld4: evolve --verbose --transform --boost 4
-        elif text_lower.startswith('alld4 '):
-            text = 'evolve --verbose --transform --boost 4 ' + text[6:]
-        # all4: evolve --verbose --boost 4
-        elif text_lower.startswith('all4 '):
-            text = 'evolve --verbose --boost 4 ' + text[5:]
+            # Standard Series (Boost 3 / Default)
+            'altvd': '--hybrid --verbose --super-verbose --debug --boost 3 --transform', # DEBUG
+            'altv':  '--hybrid --verbose --boost 3 --transform', # FORENSIC
+            'altd':  '--hybrid --verbose --debug --boost 3 --transform', # DEBUG (Inferred)
+            'alt':   '--hybrid --verbose --boost 3 --transform', # ULTIMATE
             
-        # all: Full power mode (verbose + boost 3 + hybrid) - User definition: "evolve --hybrid --verbose --boost 3"
-        elif text_lower.startswith('all '):
-            text = 'evolve --hybrid --verbose --boost 3 ' + text[4:]
-        # b: Fast mode (verbose + boost 3, no hybrid)
-        elif text_lower.startswith('b '):
-            text = 'evolve --verbose --boost 3 ' + text[2:]
-        # h: Smart mode (hybrid + verbose)
-        elif text_lower.startswith('h '):
-            text = 'evolve --hybrid --verbose ' + text[2:]
-        # v: Verbose mode
-        elif text_lower.startswith('v '):
-            text = 'evolve --verbose ' + text[2:]
+            'all':   '--verbose --boost 3', # Full Power
+            
+            # Modes
+            'b':     '--verbose --boost 3', # Fast
+            'h':     '--hybrid --verbose',  # Smart
+            'v':     '--verbose',           # Verbose
+            'ode':   '--discover-ode',      # ODE
+        }
+        
+        parts = text.split(' ', 1)
+        cmd = parts[0].lower()
+        if cmd in shortcuts:
+            rest = parts[1] if len(parts) > 1 else ""
+            text = f"evolve {shortcuts[cmd]} {rest}"
+
 
         # Strategy 1: Seeding
         # Parse "--seed 'expr'" or "--seed "expr""
@@ -655,6 +791,177 @@ def _handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None)
         if matches:
             seeds.extend(matches)
             text = SEED_PATTERN.sub("", text)
+            
+        # Strategy 2: Callr (Random Call) Data Generation
+        # Parse "callr <func> <N>" to auto-generate N data points
+        # e.g. "evolve ... callr f 100" -> "evolve ... from f(x)=..."
+        if ' callr ' in text:
+            match = re.search(r' callr\s+([a-zA-Z_]\w*)\s+(\d+)', text)
+            if match:
+                f_name = match.group(1)
+                count = int(match.group(2))
+                
+                # Check if function exists
+                val = None
+                
+                # 1. Check Function Registry (User-defined functions)
+                if ctx.function_registry and f_name in ctx.function_registry:
+                    # Registry stores: (params, body_expr)
+                    params, body_expr = ctx.function_registry[f_name]
+                    # We need string representation for val logic below
+                    # "f(x,y)=x+y"
+                    # Reconstruct valid definition string for arity detection
+                    val = f"{f_name}({','.join(params)})={body_expr}"
+                    
+                # 2. Check Variables (Lambda/String definitions stored as vars)
+                elif variables and f_name in variables:
+                     val = variables[f_name]
+                
+                if val:
+                     # Get function definition to know arity
+                     # Try to determine arity (simple heuristic: default x)
+                     # Real parsing would be better but simple fallback ok
+                     
+                     # Generate random points
+                     import random
+                     points = []
+                     
+                     # Detect arity from function definition if possible
+                     arity = 1
+                     if "(" in val and ")" in val and "=" in val:
+                         lhs = val.split("=")[0]
+                         params = lhs[lhs.find("(")+1:lhs.find(")")].split(",")
+                         arity = len([p for p in params if p.strip()])
+                     
+                     print(f"   [AltCall] Randomized generation from '{f_name}' on set 'default' ({count} points)...")
+                     
+                     generated_data = []
+                     
+                     # Helper to call function from context
+                     def _call_func(args):
+                         arg_str = ", ".join(map(str, args))
+                         # Use evaluate_safely via simple eval for speed/simplicity in data gen
+                         # But user functions are strings, so we need to substitute.
+                         # Actually, let's just use the `evaluate_safely` worker.
+                         from ..worker import evaluate_safely
+                         stmt = f"{f_name}({arg_str})"
+                         res = evaluate_safely(stmt, allowed_functions=variables.keys())
+                         return res.get('result')
+
+                     success_count = 0
+                     
+                     # CROSS-HAIR SAMPLING: Add axis points for Slicer heuristic
+                     # Generate 20% of points on axes (x=0 or y=0) for separability detection
+                     axis_count = max(20, count // 5)  # At least 20 axis points, 20% of total
+                     if arity >= 2:
+                         for i in range(axis_count):
+                             args = []
+                             # Pick one variable to be 0, others random
+                             zero_idx = i % arity
+                             for j in range(arity):
+                                 if j == zero_idx:
+                                     args.append(0)
+                                 else:
+                                     args.append(round(random.uniform(0.5, 5), 4))  # Positive for sqrt
+                             
+                             res = _call_func(args)
+                             if res:
+                                 arg_str = ", ".join(map(str, args))
+                                 data_point = f"{f_name}({arg_str})={res}"
+                                 generated_data.append(data_point)
+                                 success_count += 1
+                         
+                         # POWER LAW REFERENCE POINTS: Add y=1, y=4, y=9 points
+                         # These are critical for detecting x^(sqrt(y)/2) patterns
+                         ref_count = 0
+                         for ref_y in [1, 4, 9]:
+                             for _ in range(4):  # 4 points per reference value
+                                 args = [round(random.uniform(1, 5), 4), ref_y]
+                                 res = _call_func(args)
+                                 if res:
+                                     arg_str = ", ".join(map(str, args))
+                                     data_point = f"{f_name}({arg_str})={res}"
+                                     generated_data.append(data_point)
+                                     ref_count += 1
+                         
+                         if generated_data:
+                             print(f"   [CrossHair] Generated {axis_count} axis + {ref_count} reference points")
+                     
+                     # Random sampling for the rest
+                     remaining = count - success_count
+                     for _ in range(remaining):
+                         # Generate random args between -10 and 10 usually good
+                         # Some INTs, some Floats
+                         args = []
+                         for _ in range(arity):
+                             if random.random() < 0.2:
+                                 args.append(random.randint(-10, 10))
+                             else:
+                                 args.append(round(random.uniform(-5, 5), 4))
+                                 
+                         res = _call_func(args)
+                         if res:
+                             # Format: f(1,2)=3
+                             arg_str = ", ".join(map(str, args))
+                             data_point = f"{f_name}({arg_str})={res}"
+                             generated_data.append(data_point)
+                             success_count += 1
+                     
+                     # Print all generated points on a single line
+                     if generated_data:
+                         print(f"      {', '.join(generated_data)}")
+                     
+                     if success_count > 0:
+                         # Run forensic analysis to generate smart seeds (e.g. integer sequences, symmetry, tower functions)
+                         forensic_seeds = []
+                         if not use_polynomial and not use_discover_ode:
+                             # NOTE: generate_pattern_seeds is imported at module level (L35).
+                             # Do NOT re-import here — it shadows the top-level import and
+                             # causes UnboundLocalError at L1558 when this branch isn't taken.
+                             pass
+                         # Construct FROM clause
+                         # Replace "callr ...' with "from ..."
+                         from_clause = ", ".join(generated_data)
+                         # We append it to end or replace?
+                         # Evolve syntax: evolve func() from ...
+                         # If user typed "evolve callr f 100", they missed "f(x)" part usually?
+                         # Or "alt callr f 100" -> "evolve --flags callr f 100"
+                         
+                         # We need to construct valid syntax.
+                         # If "f(x)" is NOT in text, we might need to add it.
+                         if not re.search(rf"{f_name}\s*\(", text):
+                             # Add explicit evolve target: evolve f(x) ...
+                             # Infer var names x, y, z
+                             vnames = ['x','y','z','t'][:arity]
+                             target = f"{f_name}({','.join(vnames)})"
+                             # Insert target before flags if possible, or just rebuild
+                             # "evolve --flags callr f 100" -> "evolve --flags f(x) from ..."
+                             # Actually handled by EVOLVE_PATTERN if we format right.
+                             pass
+
+                         # Replace 'callr ...' with 'from ...'
+                         text = text.replace(match.group(0), f" from {from_clause}")
+                         
+                         # If text didn't have f(x) part, add it now?
+                         # Regex EVOLVE_PATTERN expects: evolve FUNC(VARS) from ...
+                         # "evolve --flags from ..." -> FAILURE.
+                         # CHECK: Does text have "func(" ?
+                         if f_name not in text.split("evolve")[1].split("from")[0]:
+                              # Hack: Insert func(vars) after 'evolve '
+                              # We know func name and arity
+                              vnames = ['x','y','z','t','u','v'][:arity]
+                              if not vnames: vnames = ['x']
+                              target = f"{f_name}({','.join(vnames)})"
+                              # Insert after "evolve " + flags
+                              # Easiest: Prepend to text if stripped? No.
+                              # Find end of "evolve"
+                              text = text.replace("evolve ", f"evolve {target} ", 1)
+
+                     else:
+                         print("   [AltCall] Failed to generate valid data points.")
+                else:
+                    print(f"   [AltCall] Function '{f_name}' not defined.")
+
 
         # Strategy 7: Boosting
         # Parse "--boost <N>", "--boost=N", or just "--boost" (default 5)
@@ -1230,8 +1537,22 @@ def _handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None)
             y_round_check = np.round(y_real_check)
             mse_int_check = np.mean((y_real_check - y_round_check)**2)
             
+            # NEW: Check dynamic range (Gemini's fix for polynomial data)
+            # High-degree polynomials have valid "outliers" - don't filter them
+            y_abs = np.abs(y_real_check[np.isfinite(y_real_check)])
+            skip_iqr_dynamic = False
+            if len(y_abs) >= 5:
+                y_99 = np.percentile(y_abs, 99)
+                y_1 = np.percentile(y_abs, 1) + 1e-9
+                dynamic_range = y_99 / y_1
+                if dynamic_range > 1e5:  # 100,000x range = polynomial
+                    print(f"Note: High dynamic range ({dynamic_range:.1e}) detected - skipping outlier filter.")
+                    skip_iqr_dynamic = True
+            
             if mse_int_check < 0.01:
                 print("Note: Discrete values detected. Outlier filtering disabled to preserve step/jump data.")
+            elif skip_iqr_dynamic:
+                pass  # Already printed message above
             elif len(y) >= 10 and not np.iscomplexobj(y):
                 y_real = np.real(y) if np.iscomplexobj(y) else y.astype(float)
                 q1 = np.percentile(y_real, 25)
@@ -1406,6 +1727,18 @@ def _handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None)
                 else:
                     if count_complex_skipped > 0:
                         print(f"Hybrid mode: filtering {count_complex_skipped} complex points, running find() on {len(find_data_points_real)} real points...")
+                        # FIX: Update X and y to match the filtered dataset so Genetic Engine sees the same data
+                        # This prevents "Split-Brain" where engine trains on filtered but evals on full complex data
+                        if find_data_points_real:
+                            X = np.array([p[0] for p in find_data_points_real])
+                            # If X was 1D originally, flatten it back if needed, but safe to keep as is for now
+                            # X constructor above makes it 2D (N, n_vars). 
+                            # If original X was 1D array of scalars, [p[0]] might be list of tuples?
+                            # p[0] is tuple. np.array(list of tuples) -> 2D array.
+                            if len(input_vars) == 1:
+                                X = X.flatten()
+                            
+                            y = np.array([p[1] for p in find_data_points_real])
                     else:
                         print("Hybrid mode: running find() for initial approximation...")
                     
@@ -1505,70 +1838,86 @@ def _handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None)
                                 f"Hybrid seeding: using find() result '{display}' (R²={r_squared:.4f}, MSE={mse_val:.6f})"
                             )
                             
-                            # EARLY RETURN: If find() result is GOOD (MSE < 0.05), skip evolution
-                            # This handles cases where SVD/regression finds good solutions that
-                            # the Genetic Engine often can't parse or improve anyway
-                            if mse_val < 0.05:
-                                print(f"\n🎯 find() discovered a good solution (MSE={mse_val:.6f})")
-                                print(f"   Skipping evolution and returning directly.")
+                            # EARLY RETURN: If find() result is PERFECT (MSE < 1e-7), skip evolution
+                            # Adjusted from 0.05: We want to allow evolution to find BETTER symbolic forms
+                            # (e.g. sqrt(x)+7) rather than accepting a messy rational approximation (MSE~0.008).
+                            if mse_val < 1e-7:
+                                # BAN CHECK: Don't shortcut if the result contains banned operators
+                                _effective_banned = set(banned_operators) if 'banned_operators' in dir() else set()
+                                if ctx and hasattr(ctx, 'banned_operators'):
+                                    _effective_banned.update(ctx.banned_operators)
                                 
-                                # Format and return the result
-                                from ..symbolic_regression.expression_tree import symbolify_constants
-                                from ..utils.formatting import format_solution
+                                _find_is_banned = False
+                                if _effective_banned:
+                                    func_lower = func_str.lower()
+                                    _find_is_banned = any(_matches_ban(func_lower, b) for b in _effective_banned)
+                                
+                                if _find_is_banned:
+                                    print(f"\n⛔ find() found '{func_str}' but it contains a banned operator.")
+                                    print(f"   Proceeding to evolution with constrained operator set...")
+                                    # Don't use as seed either — it would re-introduce the banned form
+                                    use_seed = False
+                                else:
+                                    print(f"\n🎯 find() discovered a good solution (MSE={mse_val:.6f})")
+                                    print(f"   Skipping evolution and returning directly.")
+                                    
+                                    # Format and return the result
+                                    from ..symbolic_regression.expression_tree import symbolify_constants
+                                    from ..utils.formatting import format_solution
 
-                                beautified = symbolify_constants(func_str)
+                                    beautified = symbolify_constants(func_str)
 
-                                print(f"\nResult: {format_solution(beautified)}")
-                                print(f"MSE: {mse_val:.6g}, Complexity: ~{len(func_str)//5}")
-                                
-                                # Persist the function
-                                try:
-                                    from ..function_manager import define_function
-                                    define_function(ctx, func_name, input_vars, beautified)
-                                except Exception:
-                                    pass
-                                
-                                # v4.8 Gene Bank: Save heuristic wins to long-term memory
-                                try:
-                                    from ..symbolic_regression.gene_bank import get_gene_bank
-                                    from ..symbolic_regression.expression_tree import ExpressionTree
-                                    import sympy as sp
+                                    print(f"\nResult: {format_solution(beautified)}")
+                                    print(f"MSE: {mse_val:.6g}, Complexity: ~{len(func_str)//5}")
                                     
-                                    # Parse to SymPy to check if trivial
-                                    local_dict = {v: sp.Symbol(v) for v in input_vars}
-                                    expr = sp.sympify(beautified, locals=local_dict)
+                                    # Persist the function
+                                    try:
+                                        from ..function_manager import define_function
+                                        define_function(ctx, func_name, input_vars, beautified)
+                                    except Exception:
+                                        pass
                                     
-                                    # Trivial Filter: Don't save constants or single variables
-                                    is_constant = expr.is_number or expr.is_Number
-                                    is_single_var = expr in local_dict.values()
-                                    is_linear = len(expr.free_symbols) == 1 and expr.is_polynomial() and sp.degree(expr) <= 1
-                                    
-                                    if not is_constant and not is_single_var and not is_linear:
-                                        # Create a mock tree for the Gene Bank
-                                        # Use ExpressionTree.from_sympy if available, else create minimal
-                                        bank = get_gene_bank()
+                                    # v4.8 Gene Bank: Save heuristic wins to long-term memory
+                                    try:
+                                        from ..symbolic_regression.gene_bank import get_gene_bank
+                                        from ..symbolic_regression.expression_tree import ExpressionTree
+                                        import sympy as sp
                                         
-                                        # Create a lightweight wrapper for the bank
-                                        class HeuristicResult:
-                                            def __init__(self, sympy_expr, complexity):
-                                                self._expr = sympy_expr
-                                                self._complexity = complexity
-                                            def to_sympy(self):
-                                                return self._expr
-                                            def complexity(self):
-                                                return self._complexity
-                                            def to_pretty_string(self):
-                                                return str(self._expr)
+                                        # Parse to SymPy to check if trivial
+                                        local_dict = {v: sp.Symbol(v) for v in input_vars}
+                                        expr = sp.sympify(beautified, locals=local_dict)
                                         
-                                        mock_tree = HeuristicResult(expr, len(str(expr)) // 3)
-                                        r2 = 1.0 - mse_val if mse_val < 1 else 0.99
-                                        saved = bank.add(mock_tree, mse_val, r2)
-                                        if saved:
-                                            print(f"[GeneBank] Saved: {beautified}")
-                                except Exception:
-                                    pass  # Gene Bank is optional
-                                
-                                return
+                                        # Trivial Filter: Don't save constants or single variables
+                                        is_constant = expr.is_number or expr.is_Number
+                                        is_single_var = expr in local_dict.values()
+                                        is_linear = len(expr.free_symbols) == 1 and expr.is_polynomial() and sp.degree(expr) <= 1
+                                        
+                                        if not is_constant and not is_single_var and not is_linear:
+                                            # Create a mock tree for the Gene Bank
+                                            # Use ExpressionTree.from_sympy if available, else create minimal
+                                            bank = get_gene_bank()
+                                            
+                                            # Create a lightweight wrapper for the bank
+                                            class HeuristicResult:
+                                                def __init__(self, sympy_expr, complexity):
+                                                    self._expr = sympy_expr
+                                                    self._complexity = complexity
+                                                def to_sympy(self):
+                                                    return self._expr
+                                                def complexity(self):
+                                                    return self._complexity
+                                                def to_pretty_string(self):
+                                                    return str(self._expr)
+                                            
+                                            mock_tree = HeuristicResult(expr, len(str(expr)) // 3)
+                                            r2 = 1.0 - mse_val if mse_val < 1 else 0.99
+                                            saved = bank.add(mock_tree, mse_val, r2)
+                                            if saved:
+                                                print(f"[GeneBank] Saved: {beautified}")
+                                    except Exception:
+                                        pass  # Gene Bank is optional
+                                    
+                                    return
                         else:
                             display = func_str[:50] + "..." if len(func_str) > 50 else func_str
                             print(
@@ -1680,6 +2029,16 @@ def _handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None)
                 f"Boost mode: {boosting_rounds}x resources (pop={base_population*boosting_rounds}, gen={base_generations*boosting_rounds}, timeout={base_timeout*boosting_rounds}s)"
             )
 
+        # v1.5 Bitwise Analysis: Check if we should allow bitwise operators
+        # We run this BEFORE creating config so we can set allow_bitwise default
+        is_smooth = detect_smoothness(X.tolist(), y.tolist(), verbose=verbose_mode)
+        allow_bitwise_ops = not is_smooth
+        if verbose_mode:
+            if is_smooth:
+                print("[Safety] Data appears SMOOTH/CONTINUOUS. Disabling bitwise operators.")
+            else:
+                print("[Safety] Data appears DISCRETE/STEPPED. Allowing bitwise operators.")
+
         config = GeneticConfig(
             population_size=base_population * boosting_rounds,
             n_islands=2,
@@ -1690,27 +2049,33 @@ def _handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None)
             boosting_rounds=1,  # Already applied via parameter scaling
             high_precision=high_precision_mode,  # Use arbitrary-precision arithmetic
             operators=["add", "sub", "mul", "div", "sin", "cos", "exp", "log", "pow", "sqrt", "lambertw", "lshift", "rshift", "bitwise_and", "bitwise_or", "bitwise_xor", "factorial"], # Enable power laws, Lambert W, bitwise, factorial
+            allow_bitwise=allow_bitwise_ops,
         )
         
-        # Apply operator bans if specified
-        if banned_operators:
+        # Apply operator bans if specified (Merge persistent and temporary bans)
+        effective_banned = set(banned_operators)
+        if ctx and hasattr(ctx, 'banned_operators'):
+             effective_banned.update(ctx.banned_operators)
+        
+        if effective_banned:
             original_ops = config.operators.copy()
-            config.operators = [op for op in config.operators if op.lower() not in banned_operators]
+            config.operators = [op for op in config.operators if op.lower() not in effective_banned]
             removed = set(original_ops) - set(config.operators)
             if removed:
-                print(f"   [Constraint] Remaining arsenal: {config.operators}")
+                print(f"   [Constraint] Banned from arsenal: {removed}")
             
             # Also filter seeds that contain banned operators
             original_seed_count = len(config.seeds)
             filtered_seeds = []
             for seed in config.seeds:
                 seed_lower = seed.lower()
-                contains_banned = any(ban in seed_lower for ban in banned_operators)
+                contains_banned = any(ban in seed_lower for ban in effective_banned)
                 if not contains_banned:
                     filtered_seeds.append(seed)
             config.seeds = filtered_seeds
             if len(filtered_seeds) < original_seed_count:
                 print(f"   [Constraint] Filtered {original_seed_count - len(filtered_seeds)} seeds containing banned operators")
+
         
         # === ODE DISCOVERY MODE ===
         # If --discover-ode flag is set, use ODE discovery instead of standard regression
@@ -2278,10 +2643,47 @@ def _handle_genes_command(text: str, ctx: Any):
         if not genes:
             print("Gene Bank is empty. Run successful function discoveries to populate it.")
             return
-        print(f"Gene Bank ({len(genes)} genes):")
-        print("-" * 60)
+        
+        print(f"\nGENE BANK ({len(genes)} cached functions)")
+        print("─" * 76)
+        print(f" {'ID':<4} {'Expression':<32} {'Vars':<6} {'Compl.':<8} {'MSE':<10} {'Status':<10}")
+        print("─" * 76)
+        
         for g in genes:
-            print(f"  [{g['id']}] {g['expression']} (vars={g['n_vars']}, complexity={g['complexity']}, MSE={g['fitness']:.2e})")
+            expr_str = g['expression']
+            mse = g['fitness']
+            
+            # Prettify expression
+            pretty_expr = _prettify_gene_expression(expr_str)
+            
+            # Truncate if too long
+            if len(pretty_expr) > 30:
+                pretty_expr = pretty_expr[:27] + "..."
+                
+            # Determine status
+            if mse < 1e-30:
+                status = "⭐ Exact"
+            elif mse < 1e-6:
+                status = "🎯 Precise"
+            else:
+                status = "〰️ Approx" # Wave for approximation
+                
+            # Vars count
+            n_vars = g.get('n_vars', 1)
+            meas_vars = str(n_vars)
+            
+            # Complexity
+            complexity = g.get('complexity', 0.0)
+            
+            # MSE string
+            if mse < 1e-99:
+                mse_str = "0.00e+00"
+            else:
+                mse_str = f"{mse:.2e}"
+            
+            print(f" [{g['id']}]  {pretty_expr:<32} {meas_vars:<6} {complexity:<8} {mse_str:<10} {status}")
+            
+        print("─" * 76)
         return
     
     # genes delete N
@@ -2306,6 +2708,54 @@ def _handle_genes_command(text: str, ctx: Any):
         return
     
     print("Usage: genes | genes delete <index> | genes clear")
+
+
+def _prettify_gene_expression(expr_str: str) -> str:
+    """Prettify a gene expression for display.
+    
+    1. Mapping: v0->x, v1->y, v2->z
+    2. Snap Fractions: 50018.../100... -> 0.50 (only if ugly)
+    3. Formatting: Spacing around operators
+    """
+    import re
+    
+    # 1. Variable Mapping
+    # Simple replacement is safe because v0, v1 do not appear inside other words usually
+    expr_str = expr_str.replace("v0", "x")
+    expr_str = expr_str.replace("v1", "y")
+    expr_str = expr_str.replace("v2", "z")
+    
+    # 2. Smart Fraction Snapping
+    # Detect patterns like digits/digits where length > 3
+    def replace_fraction(match):
+        numer = match.group(1)
+        denom = match.group(2)
+        
+        # Only snap if it looks "ugly" (long numerator or denominator)
+        if len(numer) > 3 or len(denom) > 3:
+            try:
+                val = float(numer) / float(denom)
+                # If close to simple float, format nicely
+                return f"{val:.2f}"
+            except:
+                return match.group(0)
+        return match.group(0)
+        
+    expr_str = re.sub(r'(\d+)/(\d+)', replace_fraction, expr_str)
+    
+    # 3. Clean up power operator
+    expr_str = expr_str.replace("**", "^")
+    
+    # 4. Spacing (optional, but looks nicer)
+    # Don't add spaces inside function calls, just around top-level ops mostly
+    # Simple heuristic: space around + - * / if not already spaced
+    # But SymPy output usually is tight.
+    # Let's just fix the big fraction mess primarily.
+    
+    # Also fix "0.50" to "0.5" if it ends in 0
+    # expr_str = re.sub(r'(\.\d*?)0+\b', r'\1', expr_str) # Strip trailing zeros? maybe later
+    
+    return expr_str
 
 
 def _toggle_setting(text: str, ctx: Any, attr: str, name: str):

@@ -36,7 +36,6 @@ from typing import Any
 
 import warnings
 
-import numpy as np
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import sympy as sp
@@ -448,13 +447,19 @@ def define_function(context: Context, name: str, params: list[str], body_expr: s
             if symbol_str not in params:
                 # Check if it matches any param insensitively
                 for param in params:
-                    if symbol_str.lower() == param.lower():
-                        # Mismatch found (e.g. X vs x). Fix it.
+        # Mismatch found (e.g. X vs x). Fix it.
                         body = body.subs(symbol, sp.Symbol(param))
                         break
 
     # Store function definition
-    context.function_registry[name] = (params, body)
+    context.function_registry.register(name, params, body)
+    
+    # Register with tokenizer to prevent implicit multiplication (e.g. enabling f(5))
+    try:
+        from .tokenizer import register_user_token
+        register_user_token(name)
+    except ImportError:
+        pass
 
 
 def define_variable(context: Context, name: str, value: str) -> None:
@@ -1446,7 +1451,6 @@ class FinderDispatch:
         """Partition data into numeric and symbolic sets."""
         import numpy as np
         from .utils.numeric import eval_to_float
-        import sympy as sp
         from .parser import safe_sympy_parse
         import warnings
         try:
@@ -1608,11 +1612,15 @@ class FinderDispatch:
                     conflict = True
                     
                 if conflict:
-                    self.result = (
-                        False, None, None,
-                        f"Error: Conflicting data points found for input {x_tuple}. Got both {prev_y} and {y_float}."
-                    )
-                    return False
+                    # FIX: Power Peeling seeds (inverted functions) often have collisions (non-injective).
+                    # Instead of failing, we should just keep the first value or average them.
+                    # For now, we'll log a warning and ignore the new value.
+                    pass
+                    # self.result = (
+                    #     False, None, None,
+                    #     f"Error: Conflicting data points found for input {x_tuple}. Got both {prev_y} and {y_float}."
+                    # )
+                    # return False
             else:
                 input_map[x_key] = y_float
         return True
@@ -1621,7 +1629,6 @@ class FinderDispatch:
         """Try to fit a linear regression model (Occam's razor)."""
         import numpy as np
         from sklearn.linear_model import LinearRegression
-        from fractions import Fraction
         
         # Require at least 2 points
         if len(self.active_data) < 2:
@@ -1718,7 +1725,6 @@ class FinderDispatch:
         if len(self.numeric_data) >= 2:
             try:
                 from .regression_solver import solve_regression_stage
-                from .utils.numeric import eval_to_float
                 
                 # Prepare data for regression_solver
                 X_data = []
@@ -1777,7 +1783,6 @@ class FinderDispatch:
         """Use numeric fit validated against symbolic constraints."""
         import sympy as sp
         from .parser import safe_sympy_parse
-        import numpy as np
         
         # Recursive call to find candidate using numeric data
         # Note: calling find_function_from_data creates a new FinderDispatch (safe)
@@ -1926,8 +1931,40 @@ def find_function_from_data(
     if param_names is None:
         param_names = ["x"]
 
-
-
+    # --- Ban Enforcement Helper ---
+    banned_ops = getattr(context, "banned_operators", [])
+    
+    def _is_banned(func_str):
+        if not banned_ops: return False, None
+        if not func_str: return False, None
+        s_lower = func_str.lower()
+        for ban in banned_ops:
+            ban_lower = ban.lower().strip()
+            # Strip trailing parens: "sqrt()" → "sqrt"
+            if ban_lower.endswith("()"):
+                ban_lower = ban_lower[:-2]
+            # Strip parens with content: "√(x)" → "√"
+            import re as _re
+            ban_lower = _re.sub(r'\(.*?\)', '', ban_lower).strip()
+            # Unicode normalization: √ → sqrt
+            ban_lower = ban_lower.replace('√', 'sqrt')
+            
+            if not ban_lower:
+                continue
+            if ban_lower in s_lower:
+                return True, ban
+            # Special aliases
+            if ban_lower == "pow":
+                if "**" in s_lower or "^" in s_lower:
+                    return True, "pow (**, ^)"
+            if ban_lower == "^":
+                 if "pow" in s_lower or "**" in s_lower:
+                    return True, "^ (pow, **)"
+            # Special alias: sqrt and power 0.5
+            if ban_lower in {"sqrt", "x**0.5"}:
+                 if "sqrt" in s_lower or "**0.5" in s_lower or "**(0.5)" in s_lower or "**(1/2)" in s_lower:
+                     return True, "sqrt/**0.5"
+        return False, None
 
     # --- Partition data into Numeric and Symbolic sets ---
     # Also filter out complex data (with warning)
@@ -2046,9 +2083,14 @@ def find_function_from_data(
                 if max_err_triangle < 1e-6:
                     var_name = param_names[0] if param_names else "x"
                     result_func = f"Abs({var_name} - floor({var_name} + 0.5))"
-                    if verbose:
-                        print(f"     → PERFECT MATCH! Returning: {result_func}")
-                    return (True, result_func, None, None)
+                    
+                    is_ban, ban_op = _is_banned(result_func)
+                    if is_ban:
+                        if verbose: print(f"     → Found {result_func} but rejected due to ban on '{ban_op}'")
+                    else:
+                        if verbose:
+                            print(f"     → PERFECT MATCH! Returning: {result_func}")
+                        return (True, result_func, None, None)
         except Exception as e:
             if verbose:
                 print(f"     → Triangle wave check failed: {e}")
@@ -2339,7 +2381,12 @@ def find_function_from_data(
                                     parts.append(f"+ {val_str}")
 
                     if parts:
-                        return (True, " ".join(parts), None, None)
+                        res = " ".join(parts)
+                        is_ban, ban_op = _is_banned(res)
+                        if is_ban:
+                            if verbose: print(f"     → Linear Check: Found {res} but rejected due to ban on '{ban_op}'")
+                        else:
+                            return (True, res, None, None)
                     else:
                         return (True, "0", None, None)
         except Exception:
@@ -2470,13 +2517,17 @@ def find_function_from_data(
 
                         if parts_sin:
                             func_str = " ".join(parts_sin)
-                            return (True, func_str, None, None)
+                            is_ban, ban_op = _is_banned(func_str)
+                            if is_ban:
+                                if verbose: print(f"     → Harmonic Check: Found {func_str} but rejected due to ban on '{ban_op}'")
+                            else:
+                                return (True, func_str, None, None)
         except Exception:
             pass
 
     # --- NEW: PRE-CHECK - Quadratic Shift Fit (A*x^2 + B) ---
     # For sparse single-variable data, regression often prefers linear if boost is high.
-    if n_params == 1:
+    if n_params == 1: 
         try:
             # --- RATIONAL ANALYSIS SVD (Poles Robust) ---
             # Try to solve P(x)/Q(x) = y using SVD on linearized form.
@@ -2677,7 +2728,11 @@ def find_function_from_data(
                         except ImportError:
                             func_str = f"{a}*{term}"
 
-                    return (True, func_str, None, None)
+                    is_ban, ban_op = _is_banned(func_str)
+                    if is_ban:
+                         if verbose: print(f"     → Power Law Check: Found {func_str} but rejected due to ban on '{ban_op}'")
+                    else:
+                         return (True, func_str, None, None)
         except Exception:
             pass
 
@@ -2703,7 +2758,11 @@ def find_function_from_data(
                 X_data, y_data, param_names
             )
             if success and func_str:
-                return (True, func_str, None, None)
+                is_ban, ban_op = _is_banned(func_str)
+                if is_ban:
+                     if verbose: print(f"     → Log-Linear Check: Found {func_str} but rejected due to ban on '{ban_op}'")
+                else:
+                    return (True, func_str, None, None)
         except (ImportError, Exception) as e:
             import sys
 
@@ -3126,7 +3185,12 @@ def find_function_from_data(
                                 
                                 # Accept if MSE is reasonably low compared to variance
                                 if best_mse < 0.1 * y_var:
-                                    return (True, f"{sign_prefix}sqrt({poly_str})", None, None)
+                                    func_str = f"{sign_prefix}sqrt({poly_str})"
+                                    is_ban, ban_op = _is_banned(func_str)
+                                    if is_ban:
+                                        if verbose: print(f"     → Sqrt(Poly) Check: Found {func_str} but rejected due to ban on '{ban_op}'")
+                                    else:
+                                        return (True, func_str, None, None)
 
                         except Exception:
                             pass

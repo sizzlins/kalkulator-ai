@@ -138,7 +138,7 @@ def run_single_benchmark(
     n_samples: int = 100,
     noise_std: float = 0.0,
     timeout: float = 60.0,
-    timeout: float = 60.0,
+
     verbose: bool = False,
     seed: int | None = 42,
 ) -> BenchmarkResult:

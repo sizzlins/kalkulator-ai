@@ -3,7 +3,7 @@ import csv
 import os
 import logging
 import numpy as np
-from typing import Dict, Any, Optional
+from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 

@@ -1,7 +1,5 @@
 """Genetic Programming Symbolic Regression Engine."""
 
-import gc
-import random
 import time
 import numpy as np
 
@@ -17,7 +15,6 @@ except ImportError:
         pass
     SKLEARN_AVAILABLE = False
 
-from .expression_tree import ExpressionTree
 from .pareto_front import ParetoFront, ParetoSolution
 from .genetic_config import GeneticConfig
 from .strategies import BoostingStrategy, EvolutionStrategy
@@ -63,6 +60,13 @@ class EvolutionTrainer:
         self.pareto_front = pareto_front
         self.memory_manager = memory_manager or NoOpMemoryManager()
         
+        # v1.5 Bitwise Safety Shield
+        if not self.config.allow_bitwise:
+            bitwise_ops = {"bitwise_xor", "bitwise_and", "bitwise_or", "lshift", "rshift"}
+            self.config.operators = [op for op in self.config.operators if op not in bitwise_ops]
+            if self.config.verbose:
+                print("[Safety] Bitwise operators DISABLED (Smoothness Detected).")
+        
     def train(
         self,
         islands: list,
@@ -90,9 +94,7 @@ class EvolutionTrainer:
             start_time_global: Global start time for timeout
             update_pareto_callback: Callback to update pareto front with (islands, X, y)
         """
-        from contextlib import ExitStack
         import time
-        import gc
         
         if start_time_global is None:
             start_time_global = time.time()
@@ -151,7 +153,7 @@ class EvolutionTrainer:
                 # Evolve Islands
                 if use_parallel and executor:
                     from .parallel import evolve_island_worker
-                    from concurrent.futures import wait, ALL_COMPLETED, TimeoutError as FuturesTimeoutError
+                    from concurrent.futures import wait, ALL_COMPLETED
                     
                     futures = []
                     for i in range(len(islands)):
@@ -205,17 +207,21 @@ class EvolutionTrainer:
                         new_pop = self.strategy.evolve(
                             islands[i], X_step, y_step, gen, w_step
                         )
-                        # CRITICAL FIX: Capture evaluated parents' fitness before replacing with children
-                        # The parents were evaluated inside evolve(), so they now have scores.
-                        self._update_pareto_front([islands[i]])
+                        # Opt 2: Removed duplicate _update_pareto_front call
+                        # (was running expensive SymPy on parents every gen)
                         islands[i] = new_pop
                 
                 # Migration
                 if gen > 0 and gen % self.config.migration_interval == 0:
                     self.strategy.migrate(islands)
                     
-                # Update Pareto Front
-                self._update_pareto_front(islands)
+                # Opt 2: Lazy Pareto — full SymPy update every 5th gen or final gen
+                is_final_gen = (gen == self.config.generations - 1)
+                if gen % 5 == 0 or is_final_gen:
+                    self._update_pareto_front(islands)
+                else:
+                    # Cheap: just track best fitness for logging + stopping criteria
+                    self._update_best_fitness_only(islands)
                 
                 # Smart Logging: Only print if improved or heartbeat
                 # v4.5: More frequent logging (check every gen) to prevent "hang" perception
@@ -265,43 +271,94 @@ class EvolutionTrainer:
             self.memory_manager.cleanup()
 
     def _update_pareto_front(self, islands):
-        """Update Pareto Front with current population."""
-        import sympy as sp
-        # if getattr(self.config, 'verbose', False): print(f"DEBUG: Updating Pareto Front...")
+        """Update Pareto Front with current population.
+        
+        Performance Fix: Only processes elite trees (top N) instead of entire
+        population, and adds a time guard for SymPy conversion to prevent hangs
+        on pathological expressions.
+        """
+        import time
         count = 0
         for island in islands:
-            for tree in island:
+            # Fix 2: Only process top trees to avoid N×G SymPy conversions
+            # Use max(elitism, 10) to ensure Pareto front diversity
+            limit = max(getattr(self.config, 'elitism', 5), 10)
+            sorted_island = sorted(
+                island,
+                key=lambda t: t.fitness if t.fitness is not None else float('inf')
+            )
+            
+            for tree in sorted_island[:limit]:
                 if tree.fitness is None or not np.isfinite(tree.fitness):
                     continue
                 
                 try:
-                    # if getattr(self.config, 'verbose', False): print(f"DEBUG: Processing tree complexity={tree.complexity()}")
-                    if tree.complexity() > 50:
+                    complexity = tree.complexity()
+                    # Fix 1 + Fix 4: Tightened complexity guard (was 50)
+                    if complexity > 30:
                          # Skip expensive SymPy conversion for complex trees
                          sympy_expr = None
                          pretty_str = tree.to_string()
                     else:
-                         # if getattr(self.config, 'verbose', False): print(f"DEBUG: Converting to SymPy...")
-                         # Debug print to catch hang
-                         # if getattr(self.config, 'verbose', False): print(f"DEBUG: Converting tree (depth={tree.depth()})...")
+                         t0 = time.perf_counter()
                          sympy_expr = tree.to_sympy()
-                         # if getattr(self.config, 'verbose', False): print(f"DEBUG: Converting to string...")
-                         pretty_str = tree.to_pretty_string(sympy_expr)
+                         elapsed = time.perf_counter() - t0
+                         
+                         # Fix 1: Time guard — if to_sympy was slow,
+                         # skip str() conversion to prevent further hang
+                         if elapsed > 2.0:
+                             pretty_str = tree.to_string()
+                             sympy_expr = None  # Don't store slow expr
+                         else:
+                             pretty_str = tree.to_pretty_string(sympy_expr)
                     
                     sol = ParetoSolution(
                         expression=pretty_str,
                         sympy_expr=sympy_expr,
                         mse=tree.fitness,
-                        complexity=tree.complexity(),
+                        complexity=complexity,
                         tree=tree
                     )
                     self.pareto_front.add(sol)
                     count += 1
-                except Exception as e:
-                    # if getattr(self.config, 'verbose', False): print(f"DEBUG: Tree conversion failed: {e}")
-                    pass
+                except Exception:
                     continue
-        # if getattr(self.config, 'verbose', False): print(f"DEBUG: Pareto Front Updated ({count} trees processed).")
+
+    def _update_best_fitness_only(self, islands):
+        """Lightweight best-fitness tracker (no SymPy conversion).
+        
+        Used on non-Pareto generations to keep stopping criteria working
+        without the cost of SymPy string conversion.
+        """
+        current_best = self.pareto_front.get_best()
+        current_best_mse = current_best.mse if current_best else float('inf')
+        
+        for island in islands:
+            for tree in island:
+                if (tree.fitness is not None 
+                    and np.isfinite(tree.fitness) 
+                    and tree.fitness < current_best_mse):
+                    # Found a new best — do a single-tree Pareto update
+                    try:
+                        complexity = tree.complexity()
+                        if complexity > 30:
+                            pretty_str = tree.to_string()
+                            sympy_expr = None
+                        else:
+                            sympy_expr = tree.to_sympy()
+                            pretty_str = tree.to_pretty_string(sympy_expr)
+                        
+                        sol = ParetoSolution(
+                            expression=pretty_str,
+                            sympy_expr=sympy_expr,
+                            mse=tree.fitness,
+                            complexity=complexity,
+                            tree=tree
+                        )
+                        self.pareto_front.add(sol)
+                        current_best_mse = tree.fitness
+                    except Exception:
+                        pass
 
     def train_full_model(
         self,
@@ -315,8 +372,6 @@ class EvolutionTrainer:
     ):
         """Train the full boosting model."""
         import numpy as np
-        from .genetic_config import GeneticConfig
-        from .strategies import BoostingStrategy
         
         # boosting loop logic moved from GeneticSymbolicRegressor
         boosted_models = []
@@ -362,11 +417,15 @@ class EvolutionTrainer:
         # Multiprocessing on Windows (spawn) is prone to deadlocks/hangs in this architecture.
         # User reported repeated hangs. Safest to disable.
         import sys
-        if sys.platform == 'win32' and use_parallel:
-            if self.config.verbose:
-                print(f"   [Parallel] Windows detected. Forcing SERIAL mode for stability.")
-            use_parallel = False
-            n_jobs = 1
+        if sys.platform == 'win32':
+             if self.config.verbose:
+                 print(f"   [Parallel] Windows detected. Forcing SERIAL mode for stability.")
+             use_parallel = False
+             n_jobs = 1
+        
+        # Explicitly set joblib context to avoid any auto-threading if we want serial
+        # Or just rely on n_jobs=1 in train()
+
         
         for round_idx in range(rounds):
             if self.config.verbose and rounds > 1:
@@ -436,7 +495,8 @@ class EvolutionTrainer:
                 # R_new = y - F_new = R_old - lr * T
                 physical_residual = physical_residual - (learning_rate * tree_pred)
                 
-                resid_mse = np.mean(physical_residual**2)
+                # v1.5 Complex Fix: Use squared magnitude for proper complex error scoring
+                resid_mse = np.mean(np.abs(physical_residual)**2)
                 if self.config.verbose:
                     print(f"Round {round_idx+1} Post-Update: Physical MSE = {resid_mse:.4e}")
 
@@ -452,6 +512,8 @@ class EvolutionTrainer:
             # Clear Pareto Front for next round ONLY if this isn't the last round
             if round_idx < rounds - 1:
                 self.pareto_front = ParetoFront() # Reset
+                # Opt 1: Clear fitness cache when target changes (residuals shift)
+                self.strategy.reset_cache()
             
         return best_tree_final, boosted_models
 
@@ -522,7 +584,8 @@ class EvolutionTrainer:
                  y_new_residual = y_residual - learning_rate * predictions
                  
             if self.config.verbose:
-                residual_mse = np.mean(y_new_residual ** 2)
+                # v1.5 Complex Fix
+                residual_mse = np.mean(np.abs(y_new_residual) ** 2)
                 print(f"Round {round_idx + 1}: Residual MSE = {residual_mse:.4e}")
             return True, y_new_residual
         except Exception as e:
@@ -591,7 +654,9 @@ class GeneticSymbolicRegressor(BaseEstimator, RegressorMixin):
             from .gene_bank import get_gene_bank
             bank = get_gene_bank()
             pop_size = getattr(self.config, 'population_size', 100)
-            bank_seeds = bank.get_seeds(variable_names, pop_size)
+            # v5 Implement Shield: Filter seeds by currently allowed operators
+            allowed_ops = getattr(self.config, 'operators', None)
+            bank_seeds = bank.get_seeds(variable_names, pop_size, allowed_operators=allowed_ops)
             if bank_seeds:
                 if seeds is None:
                     seeds = []
@@ -665,6 +730,8 @@ class GeneticSymbolicRegressor(BaseEstimator, RegressorMixin):
                         print(f"[GeneBank] Saved: {self.best_tree.to_pretty_string()}")
             except Exception:
                 pass  # Gene Bank is optional, never crash the main flow
+                
+        return self.pareto_front
             
     def fit_with_transformations(self, X: np.ndarray, y: np.ndarray, variable_names: list[str], seeds: list[str] = None) -> tuple[str, float, str]:
         """Fit model in multiple spaces (direct, log, inverse) and pick best.
@@ -718,7 +785,8 @@ class GeneticSymbolicRegressor(BaseEstimator, RegressorMixin):
             res = run_space(y, "direct")
             if res:
                 tree, pred, expr = res
-                mse = np.mean((y - pred)**2)
+                # fix: complex safe MSE
+                mse = np.mean(np.abs(y - pred)**2)
                 if self.config.verbose:
                     print(f"   [Multiplex] Direct Space result: {expr} (MSE={mse:.4g})")
                 candidates.append((expr, mse, "direct", tree))
@@ -753,7 +821,8 @@ class GeneticSymbolicRegressor(BaseEstimator, RegressorMixin):
                     # Transform back: exp(pred_log)
                     pred = np.exp(pred_log)
                     if expr_log and str(expr_log).strip():
-                        mse = np.mean((y - pred)**2)
+                        # fix: complex safe MSE
+                        mse = np.mean(np.abs(y - pred)**2)
                         full_expr = f"exp({expr_log})"
                         if self.config.verbose:
                             print(f"   [Multiplex] Log Space result: {full_expr} (MSE={mse:.4g})")
@@ -776,7 +845,8 @@ class GeneticSymbolicRegressor(BaseEstimator, RegressorMixin):
                     # Handle divergance?
                     mask = np.isfinite(pred)
                     if np.any(mask):
-                        mse = np.mean((y[mask] - pred[mask])**2)
+                        # fix: complex safe MSE
+                        mse = np.mean(np.abs(y[mask] - pred[mask])**2)
                         full_expr = f"1/({expr_inv})"
                         if self.config.verbose:
                             print(f"   [Multiplex] Inverse Space result: {full_expr} (MSE={mse:.4g})")
@@ -802,7 +872,8 @@ class GeneticSymbolicRegressor(BaseEstimator, RegressorMixin):
                         pred = np.sqrt(np.maximum(0, pred_sq))
                     
                     if np.any(np.isfinite(pred)):
-                        mse = np.mean((y - pred)**2)
+                        # fix: complex safe MSE
+                        mse = np.mean(np.abs(y - pred)**2)
                         full_expr = f"sqrt({expr_sq})"
                         if self.config.verbose:
                             print(f"   [Multiplex] Square Space result: {full_expr} (MSE={mse:.4g})")

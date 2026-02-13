@@ -14,7 +14,7 @@ By injecting a MemoryManager, the evolution algorithm becomes:
 """
 from __future__ import annotations
 
-from typing import Protocol, Any, runtime_checkable
+from typing import Protocol, runtime_checkable
 import numpy as np
 from concurrent.futures import Executor
 

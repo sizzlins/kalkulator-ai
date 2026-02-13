@@ -5,8 +5,6 @@ through the application pipeline, satisfying the "Remove Global State" audit req
 """
 from __future__ import annotations
 
-import threading
-from typing import Any, Optional
 from dataclasses import dataclass, field
 
 from .registry import FunctionRegistry

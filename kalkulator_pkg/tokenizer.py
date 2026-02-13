@@ -2,7 +2,6 @@
 import tokenize
 import io
 import token as token_module
-from typing import Generator
 from collections import namedtuple
 
 # Use namedtuple for immutable token representation
@@ -16,8 +15,60 @@ FORBIDDEN_NAMES = {
 KNOWN_FUNCTIONS = {
     "sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh",
     "exp", "log", "sqrt", "abs", "floor", "ceil", "sign", "max", "min", 
-    "mod", "Mod", "heaviside", "erf", "gamma"
+    "mod", "Mod", "heaviside", "erf", "gamma", "integrate", "diff",
+    "factorial", "frac", "numer", "denom", "simplify", "expand", "factor",
+    "Sum", "Product", "limit", "series", "solve", "subs",
 }
+
+
+USER_FUNCTIONS = set()
+
+def register_user_token(name: str):
+    """Register a user-defined function name to prevent implicit multiplication."""
+    USER_FUNCTIONS.add(name)
+
+def _is_function_name(name: str) -> bool:
+    """Check if a name is a known function or a user-defined function.
+    
+    Priority:
+    1. Check KNOWN_FUNCTIONS (built-ins like sin, cos, sqrt)
+    2. Check USER_FUNCTIONS (dynamically registered)
+    3. Check _function_registry (for workers)
+    4. Fallback heuristics
+    """
+    if name in KNOWN_FUNCTIONS:
+        return True
+        
+    if name in USER_FUNCTIONS:
+        return True
+    
+    # Check user-defined functions in the registry
+    try:
+        from .function_manager import _function_registry
+        if name in _function_registry:
+            return True
+    except ImportError:
+        pass
+    
+    # Also check context.function_registry if available via global ref
+    try:
+        from .core import _current_context
+        if _current_context and hasattr(_current_context, 'function_registry'):
+            if name in _current_context.function_registry:
+                return True
+    except (ImportError, AttributeError):
+        pass
+    
+    # Fallback heuristic for single letters: assume variables
+    # (except for the absolute most common function names)
+    if len(name) == 1:
+        # f, g, h are extremely common function names in math
+        if name in {'f', 'g', 'h', 'F', 'G', 'H'}:
+            return True
+        return False  # Other single letters = likely variables
+    
+    # Multi-letter names: be conservative, assume function
+    return True
 
 def transform_input(text: str) -> str:
     """Safely transform input string using tokenization.
@@ -98,7 +149,10 @@ def transform_input(text: str) -> str:
                 elif tok_str == "(": should_mult = True
             elif last_type == token_module.NAME:
                 if tok_type == token_module.NAME: should_mult = True
-                # Don't mul if 'sin('
+                # Handle x(x+1) -> x*(x+1) for variables (not functions)
+                # Check both built-in and user-defined functions
+                elif tok_str == "(" and not _is_function_name(last_str):
+                    should_mult = True
             
             if should_mult:
                 result_tokens.append((token_module.OP, "*"))

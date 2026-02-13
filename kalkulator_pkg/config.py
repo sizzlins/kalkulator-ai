@@ -17,8 +17,7 @@ import os
 import re
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    import sympy as sp
-    from .sympy_defs import lshift, rshift, bitwise_xor, bitwise_and, bitwise_or
+    pass
 
 # SymPy imports removed for lazy loading. See sympy_defs.py.
 
@@ -99,7 +98,12 @@ RELATIVE_TOLERANCE = float(
 )  # Relative tolerance for approximate fits
 RESIDUAL_THRESHOLD = float(
     os.getenv("KALKULATOR_RESIDUAL_THRESHOLD", "1e-6")
-)  # Threshold for residual checking
+)
+
+# Output formatting thresholds
+SNAPPING_THRESHOLD = float(
+    os.getenv("KALKULATOR_SNAPPING_THRESHOLD", "1e-15")
+)  # Threshold for snapping float to integer (allows 1e-14 to be seen, filters 1e-16 noise)  # Threshold for residual checking
 CONSTANT_DETECTION_TOLERANCE = float(
     os.getenv("KALKULATOR_CONSTANT_DETECTION_TOLERANCE", "1e-6")
 )  # Tolerance for detecting symbolic constants (π, e, etc.)

@@ -306,12 +306,14 @@ def _format_evaluation_result(expr: sp.Basic) -> str | int | float | complex:
             if hasattr(num_val, "is_number") and num_val.is_number:
                 # Check complex
                 try:
+                    from .config import NUMERIC_TOLERANCE, SNAPPING_THRESHOLD
                     c_val = complex(num_val)
-                    if abs(c_val.imag) < 1e-9:
+                    # Check if imaginary part is negligible (using standard tolerance)
+                    if abs(c_val.imag) < NUMERIC_TOLERANCE:
                         # Real
                         r_val = float(c_val.real)
-                        # Check integer
-                        if abs(r_val - round(r_val)) < 1e-9:
+                        # Check integer (using strict snapping threshold to preserve small numbers like 1e-14)
+                        if abs(r_val - round(r_val)) < SNAPPING_THRESHOLD:
                             return int(round(r_val))
                         return r_val
                     else:

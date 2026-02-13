@@ -41,4 +41,5 @@ class ReplContext(Context):
     debug_mode: bool = False
     current_req_id: Optional[str] = None
     cache_hits_tracking: List[Tuple[str, str]] = field(default_factory=list)
+    banned_operators: set[str] = field(default_factory=set)
 

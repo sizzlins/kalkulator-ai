@@ -58,18 +58,30 @@ class Population(list):
 
         # 2. Random Trees (Ramped Half-and-Half)
         # Fill the rest of the population
+        # Enforce 70% of population has at least one variable (prevents "Lazy Constant" problem)
         depths = range(2, self.config.max_depth + 1)
         methods = ["grow", "full"]
+        
+        # Track how many variable-containing trees we need
+        target_with_variables = int((self.size - len(self)) * 0.7)
+        trees_with_variables = 0
         
         while len(self) < self.size:
             depth = depths[len(self) % len(depths)]
             method = methods[len(self) % len(methods)]
             
+            # Force variables for first 70% of random trees
+            force_var = trees_with_variables < target_with_variables
+            
             tree = ExpressionTree.random_tree(
                 variables=self.variable_names,
                 max_depth=depth,
                 operators=self.config.operators if hasattr(self.config, 'operators') else None,
-                method=method
+                method=method,
+                force_variable=force_var
             )
             tree.age = 0
             self.append(tree)
+            
+            if tree.contains_variables():
+                trees_with_variables += 1

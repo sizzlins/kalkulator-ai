@@ -5,8 +5,9 @@ and integer sequence detection.
 """
 import numpy as np
 import time
-import math
 import fractions
+import warnings
+from ..heuristics import check_power_peeling
 
 def _detect_outer_functions(y):
     """Phase 2: Range Analysis - suggest outer functions like sin, cos."""
@@ -50,7 +51,7 @@ def _compose_seeds(pole_seeds, outer_functions):
                 composed.append(f'{func}(x * {pole})')
     return composed
 
-def _detect_integer_patterns(X, y):
+def _detect_integer_patterns(X, y, variable_names=None):
     """Phase 3 - Integer Pattern Recognition (Robust LLL)."""
     # Allow (N,1) shaped arrays
     if X.ndim > 1 and X.shape[1] > 1: return []
@@ -58,7 +59,8 @@ def _detect_integer_patterns(X, y):
     except: return []
 
     seeds = []
-    var_name = "x"
+    seeds = []
+    var_name = variable_names[0] if variable_names else "x"
     
     
     # Vectorized Candidate Search
@@ -353,9 +355,212 @@ def _detect_scalloped_staircase(X, y, variable_names=None, verbose=False):
 # PATTERN DETECTORS - Regenerated after refactoring
 # ============================================================================
 
-def _detect_step_patterns(X, y): 
-    """Detect simple Heaviside step patterns: f(x) = Heaviside(x - c)."""
-    return []  # Handled by pulse detector which is more general
+
+
+
+
+def _detect_scaled_staircase(X, y, variable_names=None, verbose=False):
+    """Detect scaled/shifted staircase patterns: floor((x-c)/s) * h + k.
+    
+    Algorithm:
+    1. Sort data by x.
+    2. Identify plateaus (runs of constant y).
+    3. Calculate step width (dx between plateau centers/edges) and step height (dy).
+    4. Estimate parameters: s ~ width, h ~ height.
+    5. Propose candidate functions including ceil/floor variants.
+    """
+    if X.ndim > 1 and X.shape[1] > 1: return []
+    try:
+        x_flat = X.flatten()
+        y_flat = y.flatten()
+    except: return []
+
+
+    
+    # Sort
+    idx = np.argsort(x_flat)
+    x_sorted = x_flat[idx]
+    y_sorted = y_flat[idx]
+    
+    # Filter finite
+    mask = np.isfinite(x_sorted) & np.isfinite(y_sorted)
+    x_clean = x_sorted[mask]
+    y_clean = y_sorted[mask]
+    
+    if len(x_clean) < 10: 
+         return []
+    
+    var = variable_names[0] if variable_names else "x"
+    
+    # 2. Identify Plateaus
+    # Calculate differences
+    dy = np.diff(y_clean)
+    dx = np.diff(x_clean)
+    
+    # Define "constant y" as small change relative to range (or absolute epsilon)
+    y_range = np.max(y_clean) - np.min(y_clean)
+    abs_tol = 1e-5 if y_range < 1 else y_range * 1e-4
+    
+    is_flat = np.abs(dy) < abs_tol
+    
+    # Group into plateaus
+    # We want transitions where is_flat is False
+    jumps = np.where(~is_flat)[0]
+    
+    if len(jumps) < 2: 
+        return [] 
+    
+    # Calculate Step Heights (dy at jumps)
+    step_heights = dy[jumps]
+    median_height = np.median(step_heights)
+    
+    if abs(median_height) < 1e-9: 
+        return []
+    
+    # Calculate Step Widths
+    # Distance between jump points in x
+    # Note: jumps index i corresponds to transition between i and i+1
+    # x at jump is (x[i] + x[i+1])/2
+    x_jump_locs = (x_clean[jumps] + x_clean[jumps+1]) / 2.0
+    step_widths = np.diff(x_jump_locs)
+    
+    if len(step_widths) < 1: 
+        return []
+    
+    median_width = np.median(step_widths)
+    if median_width < 1e-9: 
+        return []
+
+    # v4.2 Fix: "Riemann Sum" Hallucination Prevention
+    # If the detected "steps" are just the sampling interval (i.e. every point is a step),
+    # this is not a staircase function, it's just a discrete approximation of a curve.
+    avg_sampling = np.median(dx)
+    if avg_sampling > 1e-9 and median_width < 1.5 * avg_sampling:
+        if verbose:
+             print(f"   [Scaled Staircase] Rejected: Steps are indistinguishable from sampling (width={median_width:.4f} ~ dx={avg_sampling:.4f})")
+        return []
+    
+    # Check consistency (low variance in width/height)
+    width_std = np.std(step_widths)
+    height_std = np.std(step_heights)
+    
+
+    
+    # Heuristic: Coefficient of variation < 0.1 (10% variance allowed)
+    if width_std / median_width > 0.1 or height_std / abs(median_height) > 0.1:
+        if verbose:
+            print(f"   [Scaled Staircase] Rejected: High variance in steps (w_std={width_std:.4f}, h_std={height_std:.4f})")
+        return []
+        
+    # v4.2 Fix: "Staircase Hallucination" Prevention
+    # Check identifying feature: Steps should be FLAT (zero slope).
+    # Smooth polynomials might look like steps if sampled coarsely or if threshold is high.
+    # We check the slope of the "flat" regions.
+    flat_indices = np.where(is_flat)[0]
+    if len(flat_indices) > 0:
+        # Calculate slope in flat regions
+        flat_dy = dy[flat_indices]
+        flat_dx = dx[flat_indices]
+        flat_slopes = flat_dy / flat_dx
+        avg_flat_slope = np.mean(np.abs(flat_slopes))
+        
+        # Calculate global slope (start to end)
+        global_slope = (y_clean[-1] - y_clean[0]) / (x_clean[-1] - x_clean[0])
+        
+        # Criterion: If local segments have significant slope relative to global trend, 
+        # it's likely a smooth curve, not a step function.
+        if abs(global_slope) > 1e-9:
+            slope_ratio = avg_flat_slope / abs(global_slope)
+            if slope_ratio > 0.05: # 5% threshold as per user request
+                if verbose:
+                    print(f"   [Scaled Staircase] Rejected: Non-zero slope in steps (ratio={slope_ratio:.4f})")
+                return []
+
+        
+    s = median_width
+    h = median_height
+    
+    if verbose:
+        print(f"   [Scaled Staircase] s={s}, h={h}")
+
+    seeds = []
+    
+    # Round s, h to nice numbers if close
+    s_rounded = round(s)
+    if abs(s - s_rounded) < 0.05 * s: s = s_rounded
+    elif abs(s - 0.5) < 0.05: s = 0.5
+    
+    h_rounded = round(h)
+    if abs(h - h_rounded) < 0.05 * abs(h): h = h_rounded
+    
+    # Generate Candidates
+    # 1. floor(x/s) * h
+    # 2. ceil(x/s) * h
+    # 3. round(x/s) * h
+    
+    # Construct term strings
+    # x_term = x/s
+    if abs(s - 1.0) < 1e-5:
+        x_term = var
+    elif abs(s - 0.5) < 1e-5:
+        x_term = f"2*{var}"
+    elif isinstance(s, int) or (isinstance(s, float) and s.is_integer()):
+        x_term = f"{var}/{int(s)}"
+    else:
+        try:
+             frac = fractions.Fraction(s).limit_denominator(100)
+             if abs(frac - s) < 1e-5:
+                 if frac.numerator == 1:
+                     x_term = f"{var}/{frac.denominator}"
+                 else:
+                     x_term = f"{frac.denominator}*{var}/{frac.numerator}"
+             else:
+                 x_term = f"{var}/{s:.4g}"
+        except:
+             x_term = f"{var}/{s:.4g}"
+        
+    # h_term
+    def apply_h(expr, h_val):
+        if abs(h_val - 1.0) < 1e-5: return expr
+        if abs(h_val + 1.0) < 1e-5: return f"-{expr}"
+        if isinstance(h_val, int) or h_val.is_integer():
+            return f"{int(h_val)}*{expr}"
+        return f"{h_val:.4g}*{expr}"
+
+    seeds.append(apply_h(f"floor({x_term})", h))
+    seeds.append(apply_h(f"ceil({x_term})", h))
+    seeds.append(apply_h(f"round({x_term})", h))
+    
+    return seeds
+
+
+
+def _detect_step_patterns(X, y, variable_names=None, verbose=False):
+    """Detect step functions like floor(x), ceil(x), round(x)."""
+    seeds = []
+    
+    # 1. Scalloped Staircase (floor, ceil)
+    try:
+        scalloped = _detect_scalloped_staircase(X, y, variable_names=variable_names, verbose=verbose)
+        if scalloped:
+            if isinstance(scalloped, tuple): seeds.extend(scalloped[0])
+            elif isinstance(scalloped, list): seeds.extend(scalloped)
+    except Exception: pass
+
+    # 2. Scaled Staircase
+    try:
+        scaled = _detect_scaled_staircase(X, y, variable_names=variable_names, verbose=verbose)
+        if scaled:
+            seeds.extend(scaled)
+    except Exception: pass
+
+    try:
+        # 3. Integer Patterns
+        integer_seeds = _detect_integer_patterns(X, y, variable_names=variable_names)
+        if integer_seeds: seeds.extend(integer_seeds)
+    except Exception: pass
+        
+    return sorted(list(set(seeds)))
 
 def _detect_self_power(X, y, variable_names=None, verbose=False):
     """Detect self-power patterns: f(x) = x^x.
@@ -2098,8 +2303,29 @@ def _detect_power_peeling(ctx, X, y, variable_names=None):
              return [f"({func_str})**x"]
     except ImportError:
         pass
+    return seeds
+
+def _detect_tower_patterns(X, y, variable_names=None, verbose=False, banned_operators=None):
+    """Detect tower functions y = x^g(x) using check_power_peeling."""
+    seeds = []
+    # 1D only
+    if X.ndim > 1 and X.shape[1] > 1:
+        return []
         
-    return []
+    # Prepare data
+    X_list = X.tolist() if hasattr(X, "tolist") else list(X)
+    y_list = y.tolist() if hasattr(y, "tolist") else list(y)
+    
+    names = variable_names if variable_names else ["x"]
+    
+    success, expr, mse = check_power_peeling(X_list, y_list, names, verbose=verbose, banned_operators=banned_operators)
+    
+    if success and expr:
+         seeds.append(expr)
+         if mse < 1e-9:
+             return ([expr], expr)
+             
+    return seeds
 
 def _detect_trig_composites(y_data):
     """Detect potential deep nested trigonometric functions."""
@@ -2327,6 +2553,141 @@ def _detect_floor_wave_patterns(X, y, variable_names=None, verbose=False):
                 pass
                 
     return seeds
+    
+def _detect_general_staircase(X, y, variable_names=None, verbose=False):
+    """Detect general staircase functions: floor((x+c)/k), ceil(mx), etc.
+    
+    Algorithm:
+    1. Step Analysis: Group constant Y values.
+    2. Slope Calculation: Rate of change between steps (Steps/X).
+    3. Rounding Check: Validates floor/ceil/round against linear trend.
+    """
+    seeds = []
+    
+    # 1D only
+    if X.ndim > 1 and X.shape[1] > 1: return []
+    try: x_flat = X.flatten()
+    except: return []
+
+    # Valid data only
+    mask = np.isfinite(x_flat) & np.isfinite(y)
+    x_valid = x_flat[mask]
+    y_valid = y[mask]
+    
+    if len(x_valid) < 6: return []
+
+    # Sort
+    idx = np.argsort(x_valid)
+    x_sorted = x_valid[idx]
+    y_sorted = y_valid[idx]
+
+    # 1. Step Analysis
+    # Get unique Y values to identify "Plateaus"
+    # Round Y to handle minor noise
+    y_rounded = np.round(y_sorted, 2) 
+    unique_y, indices = np.unique(y_rounded, return_index=True)
+    
+    # If Y changes too frequently (like x), it's not a staircase
+    # Staircase has few unique Y values relative to N samples? Not necessarily.
+    # Staircase steps can be short (1 sample).
+    # Better metric: Discrete Jumps.
+    
+    # Check if Y is mostly integers (primary target for floor/ceil)
+    if np.mean(np.abs(y_sorted - np.round(y_sorted)) < 1e-3) < 0.9:
+        return [] # Not integers, probably not floor/ceil
+
+    # Calculate Slope 'm' from overall trend (Robust LinearFit)
+    try:
+        coeffs = np.polyfit(x_sorted, y_sorted, 1)
+        m, c = coeffs
+        
+        # Refine slope to likely ratios (1, 0.5, 0.33, 2, 3...)
+        # Invert slope to find 'k' in x/k
+        if abs(m) > 1e-6:
+            k = 1.0 / m
+            # If k is close to integer?
+            k_int = round(k)
+            if abs(k - k_int) < 0.1:
+                m_refined = 1.0 / k_int
+                type_str = f"x/{k_int}"
+            else:
+                m_int = round(m, 2)
+                m_refined = m_int
+                type_str = f"{m_int}*x"
+        else:
+            return []
+
+        if verbose:
+            print(f"   [Staircase] Trend m={m:.3f}, suggests {type_str}")
+
+        # Test Hypotheses
+        # y = floor(m*x + c)
+        # y = ceil(m*x + c)
+        # y = round(m*x + c)
+        
+        # Optimize 'c' for each hypothesis
+        # For floor(m*x + c) = y, we need m*x + c >= y AND m*x + c < y + 1
+        # c >= y - m*x  AND  c < y + 1 - m*x
+        # We can scan a few c values around the linear intercept
+        
+        var = variable_names[0] if variable_names else "x"
+        
+        # Simplified hypothesis testing:
+        # Construct line with refined slope
+        trend = m_refined * x_sorted
+        
+        best_match = None
+        best_acc = 0
+        
+        # Test offsets for 'c'
+        # Often c is 0, 0.5, 1, -0.5
+        for c_test in [0, 0.5, -0.5, 1, -1, 0.1, c]:
+            linear = trend + c_test
+            
+            # Floor
+            acc_fl = np.mean(np.abs(np.floor(linear) - y_sorted) < 0.1)
+            if acc_fl > best_acc:
+                best_acc = acc_fl
+                base_expr = f"{m_refined}*{var} + {c_test}" if c_test != 0 else f"{m_refined}*{var}"
+                func_name = "floor"
+                
+            # Ceil
+            acc_cl = np.mean(np.abs(np.ceil(linear) - y_sorted) < 0.1)
+            if acc_cl > best_acc:
+                best_acc = acc_cl
+                base_expr = f"{m_refined}*{var} + {c_test}" if c_test != 0 else f"{m_refined}*{var}"
+                func_name = "ceil"
+                
+            # Round
+            acc_rd = np.mean(np.abs(np.round(linear) - y_sorted) < 0.1)
+            if acc_rd > best_acc:
+                best_acc = acc_rd
+                base_expr = f"{m_refined}*{var} + {c_test}" if c_test != 0 else f"{m_refined}*{var}"
+                func_name = "round"
+
+        if best_acc > 0.9: # 90% Match
+            # Cleanup expression: 0.5*x -> x/2
+            if abs(m_refined - 0.5) < 1e-9:
+                base_expr = base_expr.replace("0.5*x", "x/2")
+                base_expr = base_expr.replace("0.5*", "/2") # General check
+            elif abs(m_refined - 1.0/3) < 1e-9:
+                # 0.3333*x -> x/3
+                pass
+
+            seed = f"{func_name}({base_expr})"
+            
+            # Special Case: Floor Div // 
+            # If floor(x/k), suggest floor(x/k) AND (x//k) if parser supported it
+            # For now, floor(x/k) is the target.
+            
+            seeds.append(seed)
+            if verbose:
+                print(f"   [Staircase] MATCH: {seed} (acc={best_acc:.2%})")
+
+    except Exception as e:
+        if verbose: print(f"   [Staircase] Error: {e}")
+
+    return seeds
 
 def _detect_rapid_growth_poly(X, y, verbose=False):
     """Detect high-degree polynomials like 1 - x^8 via log-slope analysis."""
@@ -2497,6 +2858,46 @@ def _detect_zero_patterns(X, y, variable_names=None, verbose=False):
     
     return seeds
 
+
+def _detect_complex_offset(X, y, variable_names=None, verbose=False):
+    """Detect functions like 7 + sqrt(x) via complex residue analysis.
+    
+    If inputs are real/complex mixture, and complex outputs appearing for negative inputs
+    share a constant REAL part (e.g., 7 + 3j), we can peel off the 7.
+    """
+    seeds = []
+    
+    y = np.array(y)
+    
+    # Check for complex values
+    if not np.iscomplexobj(y): 
+        return []
+        
+    complex_mask = np.abs(np.imag(y)) > 1e-9
+    
+    if np.sum(complex_mask) < 2:
+        return []
+        
+    y_complex = y[complex_mask]
+    
+    # 1. Check if Real parts are constant
+    real_parts = np.real(y_complex)
+    mean_real = np.mean(real_parts)
+    std_real = np.std(real_parts)
+    
+    # Tolerance relative to magnitude
+    if std_real < 1e-5: # Tight tolerance for constant offset
+        offset = mean_real
+        if verbose:
+             print(f"   [Forensic] Complex Offset Detected: Const Real Part = {offset:.4g}")
+             
+        # Suggest simple offset seeds
+        # We don't solve the residue yet (leave that to evolution/SVD), just hint the structure
+        seeds.append(f"sqrt(x) + {offset}")
+        seeds.append(f"{offset} + sqrt(abs(x))")
+        
+    return seeds
+
 def _detect_bitwise_patterns(X, y, variable_names=None, verbose=False):
     """Detect simple bitwise patterns like x^k for integers."""
     # Placeholder for Bitwise XOR detection (referenced in generate_pattern_seeds)
@@ -2507,17 +2908,144 @@ def _detect_fibonacci_patterns(X, y, variable_names=None, verbose=False):
     # Placeholder for Fibonacci detection (referenced in generate_pattern_seeds)
     return []
 
+def _detect_symmetry(X, y, variable_names=None):
+    """
+    Detects if f(args) is invariant under permutation and suggests max/min/median.
+    Optimized O(N log N) using Sort & Group.
+    """
+    if X.ndim < 2 or X.shape[1] < 2:
+        return []
 
-def generate_pattern_seeds(ctx, X, y, variable_names=None, verbose=False):
+    # 1. Fast Symmetry Check via Sorting
+    # Round inputs to handle float noise during sorting
+    X_sig = np.round(np.sort(X, axis=1), 6)
+    
+    # Find duplicate signatures (permutations)
+    unique_sigs, inverse_indices = np.unique(X_sig, axis=0, return_inverse=True)
+    
+    symmetry_violation = 0.0
+    valid_groups = 0
+    
+    for i in range(len(unique_sigs)):
+        # Get indices of all rows belonging to this permutation group
+        group_indices = np.where(inverse_indices == i)[0]
+        
+        if len(group_indices) > 1:
+            # Check if outputs are identical
+            y_group = y[group_indices]
+            variance = np.var(y_group)
+            symmetry_violation += variance
+            valid_groups += 1
+            
+    # If no permutations found, we can't prove symmetry (or lack thereof) from data
+    if valid_groups == 0:
+        return []
+
+    seeds = []
+    # 2. If Symmetric (Low Violation), Test Candidates
+    if symmetry_violation < 1e-5:
+        var_str = ", ".join(variable_names) if variable_names else ",".join([f"x{i}" for i in range(X.shape[1])])
+        
+        # Helper R2
+        def _quick_r2(y_true, y_pred):
+            res_ss = np.sum((y_true - y_pred)**2)
+            tot_ss = np.sum((y_true - np.mean(y_true))**2)
+            return 1 - res_ss / (tot_ss + 1e-10)
+
+        # Test MAX
+        y_max = np.max(X, axis=1)
+        if _quick_r2(y, y_max) > 0.99:
+            seeds.append(f"max({var_str})")
+            
+        # Test MIN
+        y_min = np.min(X, axis=1)
+        if _quick_r2(y, y_min) > 0.99:
+            seeds.append(f"min({var_str})")
+        
+        # Test MEDIAN
+        if X.shape[1] >= 3:
+             y_med = np.median(X, axis=1)
+             if _quick_r2(y, y_med) > 0.99:
+                 # Seed as median(vars) - hope user has it or we define it later?
+                 # Or use composition: median3(a,b,c) = sum - min - max
+                 # But sticking to atomic seed is safer if we add the op.
+                 # If op missing, it might parse error.
+                 # But let's add it. `genetic_engine` parser needs it defined.
+                 # `expression_tree.py` handles ops.
+                 # For now, let's trust the user's snippet.
+                 # But if 'median' isn't in genetic_config, it's useless complexity.
+                 # I'll add 'median' to the seed.
+                 seeds.append(f"median({var_str})")
+                 
+    return seeds
+
+
+def generate_pattern_seeds(ctx, X, y, variable_names=None, verbose=False, banned_operators=None):
     """Detect patterns in data and return seed expression strings."""
     t0 = time.perf_counter()
+    FORENSIC_TIMEOUT = 10.0  # seconds — hard cap to prevent hanging
     seeds = []
     pole_seeds = []  # Agent Handoff: Initialize early to prevent NameError at line 2440
+    
+    def _check_timeout():
+        """Return True if forensic analysis has exceeded its time budget."""
+        return time.perf_counter() - t0 > FORENSIC_TIMEOUT
     
     # Ensure X is 2D
     X = np.array(X)
     if X.ndim == 1: X = X.reshape(-1, 1)
+
+    # Helper to check if array is object-like string/mixed
+    def _is_object_like(arr):
+        return arr.dtype == object or np.issubdtype(arr.dtype, np.str_) or np.issubdtype(arr.dtype, np.unicode_)
+
+    # Safe conversion to complex/float to avoid object arrays (which trip isfinite)
+    try:
+        # Initial array conversion if list
+        if isinstance(y, list) or isinstance(y, tuple):
+            y = np.array(y)
+            
+        # Try converting to complex first (handles both real and complex)
+        if _is_object_like(y):
+             y_clean = []
+             for val in y.flatten():
+                 try:
+                     y_clean.append(complex(val))
+                 except:
+                     y_clean.append(np.nan)
+             y = np.array(y_clean)
+        else:
+             y = np.asanyarray(y, dtype=complex)
+             
+        # Same for X (already np.array but might be object)
+        if _is_object_like(X):
+             X_clean = []
+             for row in X:
+                 row_clean = []
+                 for val in row:
+                     try:
+                         row_clean.append(complex(val))
+                     except:
+                         row_clean.append(np.nan)
+                 X_clean.append(row_clean)
+             X = np.array(X_clean)
+        else:
+             X = np.asanyarray(X, dtype=complex)
+
+        # Downgrade to float if purely real (cleaner for some heuristics)
+        if np.all(np.abs(np.imag(y)) < 1e-15):
+             y = np.real(y)
+        if np.all(np.abs(np.imag(X)) < 1e-15):
+             X = np.real(X)
+             
     
+    except Exception as e:
+        if verbose: print(f"[Forensic] Input conversion warning: {e}")
+        # Fallback to original, might crash later but we tried
+        pass
+    
+    if verbose: print(f"[Forensic] Input X.dtype={X.dtype}, y.dtype={y.dtype}")
+
     n_vars = X.shape[1]
     derived_vars = variable_names if variable_names and len(variable_names) == n_vars else [f"x{k}" for k in range(n_vars)]
     var = derived_vars[0]
@@ -2534,6 +3062,41 @@ def generate_pattern_seeds(ctx, X, y, variable_names=None, verbose=False):
             return ([var], var)
     except Exception:
         pass  # Continue to other detectors
+
+    # 0.05 SYMMETRY CHECK (max, min, median)
+    # Check early to avoid linear cheats (sum/2) for symmetric functions
+    try:
+        sym_seeds = _detect_symmetry(X, y, variable_names=derived_vars)
+        if sym_seeds:
+            if verbose: print(f"  -> Symmetry Detected: {sym_seeds}")
+            # If we found it with R2 > 0.99 (implied by _detect_symmetry), 
+            # return it as a strong candidate (Exact Match behavior)
+            return (sym_seeds, sym_seeds[0])
+    except Exception as e:
+        if verbose: print(f"  -> Symmetry detection error: {e}")
+
+    # 0.1 NEW: CHECK POWER PEELING (Tower Functions)
+    # Detects x^x, x^sqrt(x), etc.
+    try:
+         t_seeds = _detect_tower_patterns(X, y, variable_names=derived_vars, verbose=verbose, banned_operators=banned_operators)
+         # Returns tuple (seeds, exact_match) or list
+         if isinstance(t_seeds, tuple) and t_seeds[1]:
+              if verbose: print(f"  -> Tower Pattern Exact Match: {t_seeds[1]}")
+              return ([t_seeds[1]], t_seeds[1])
+         elif isinstance(t_seeds, list):
+              seeds.extend(t_seeds)
+         elif isinstance(t_seeds, tuple):
+              seeds.extend(t_seeds[0])
+    except Exception:
+         pass
+
+    # 0.2 NEW: CHECK COMPLEX OFFSET (7 + sqrt(x))
+    try:
+        offset_seeds = _detect_complex_offset(X, y, variable_names=derived_vars, verbose=verbose)
+        if offset_seeds:
+            seeds.extend(offset_seeds)
+    except Exception:
+        pass
 
     # 0.5. PRODUCT INTERACTION CHECK (NEW: sin(x)*y etc.)
     # Explicitly seed separable combinations which are common but hard to evolve
@@ -2566,10 +3129,69 @@ def generate_pattern_seeds(ctx, X, y, variable_names=None, verbose=False):
             
         if verbose: print(f"  -> Added {len(seeds)} interaction seeds")
 
-    # 1. Step Function
+    # 0.5. MONOMIAL PATTERN CHECK (C * x^a * y^b)
+    # Detect f(x,y) = C * x^a * y^b using log-linear regression
+    if len(derived_vars) >= 1:
+        try:
+            from .monomial_heuristic import detect_monomial_structure
+            
+            monomial_seeds = detect_monomial_structure(
+                X, y, derived_vars, verbose=verbose
+            )
+            if monomial_seeds:
+                if verbose: print(f"[Monomial] Detected: {monomial_seeds}")
+                seeds.extend(monomial_seeds)
+        except Exception as e:
+            if verbose: print(f"[Monomial] Error: {e}")
 
-    if verbose: print("[DEBUG] Starting _detect_step_patterns...")
-    step_patterns = _detect_step_patterns(X, y)
+    # 0.6. VARIABLE SEPARABILITY CHECK (NEW: sqrt(x) + sqrt(y))
+    # Detect f(x,y) = g(x) + h(y) using zero-point and slicing techniques
+    if len(derived_vars) >= 2:
+        try:
+            from .slicer_heuristic import detect_separable_structure
+            from ..function_manager import find_function_from_data
+            
+            # Wrapper to adapt find_function_from_data to expected signature
+            def _find_wrapper(X_1d, y_1d, var_names):
+                try:
+                    result = find_function_from_data(X_1d, y_1d, var_names)
+                    if result and 'expression' in result:
+                        return {'expression': result['expression'], 'mse': result.get('mse', 0.1)}
+                except Exception:
+                    pass
+                return None
+            
+            slicer_seeds = detect_separable_structure(
+                X, y, derived_vars, _find_wrapper, verbose=verbose
+            )
+            if slicer_seeds:
+                if verbose: print(f"[Slicer] Detected separable structure: {slicer_seeds}")
+                seeds.extend(slicer_seeds)
+        except Exception as e:
+            if verbose: print(f"[Slicer] Error: {e}")
+
+    # 0.7. POWER LAW PATTERN CHECK (x^g(y))
+    # Detect f(x,y) = x^g(y) where g(y) is like sqrt(y)/2
+    if len(derived_vars) == 2:
+        try:
+            from .power_law_heuristic import detect_power_law_structure
+            
+            power_seeds = detect_power_law_structure(
+                X, y, derived_vars, verbose=verbose
+            )
+            if power_seeds:
+                if verbose: print(f"[PowerLaw] Detected: {power_seeds}")
+                seeds.extend(power_seeds)
+        except Exception as e:
+            if verbose: print(f"[PowerLaw] Error: {e}")
+
+    # 1. Step Function
+    if _check_timeout():
+        if verbose: print("[Forensic] Timeout reached after early detectors, returning collected seeds.")
+        return seeds if seeds else []
+
+    step_patterns = _detect_step_patterns(X, y, variable_names=derived_vars, verbose=verbose)
+    if verbose: print("[DEBUG] Finished _detect_step_patterns")
     if verbose: print("[DEBUG] Finished _detect_step_patterns")
     if step_patterns: return (step_patterns, step_patterns[0]) # Match return signature
     
@@ -2595,6 +3217,7 @@ def generate_pattern_seeds(ctx, X, y, variable_names=None, verbose=False):
     except Exception as e:
         if verbose: print(f"  -> Factorial detection error: {e}")
     
+    
     # 1.5. Scalloped Staircase Detection (NEW: floor(x) + frac(x)^k)
     # Check this early since it's a very specific pattern
     try:
@@ -2606,6 +3229,13 @@ def generate_pattern_seeds(ctx, X, y, variable_names=None, verbose=False):
                 return scalloped_result
             if verbose: print(f"  -> Scalloped Staircase found: {scalloped_result}")
             seeds.extend(scalloped_result)
+            
+        # 1.5.1 General Staircase (Linear -> Rounding)
+        general_staircase = _detect_general_staircase(X, y, variable_names=derived_vars, verbose=verbose)
+        if general_staircase:
+            if verbose: print(f"  -> General Staircase found: {general_staircase}")
+            seeds.extend(general_staircase)
+            
     except Exception as e:
         if verbose: print(f"  -> Scalloped Staircase detection error: {e}")
     
@@ -2639,6 +3269,9 @@ def generate_pattern_seeds(ctx, X, y, variable_names=None, verbose=False):
     
     # 1.8. General Linear Recurrence Detection (Lucas, Tribonacci, Pell, etc.)
     # Detects any sequence of the form a(n) = c1*a(n-1) + c2*a(n-2) + ...
+    if _check_timeout():
+        if verbose: print("[Forensic] Timeout reached after integer detectors, returning collected seeds.")
+        return seeds if seeds else []
     try:
         recurrence_result = _detect_linear_recurrence(X, y, variable_names=derived_vars, verbose=verbose)
         if recurrence_result:
@@ -2788,6 +3421,9 @@ def generate_pattern_seeds(ctx, X, y, variable_names=None, verbose=False):
         if verbose: print(f"  -> Reciprocal detection error: {e}")
     
     # 2. Power Law Detection (NEW: x^k)
+    if _check_timeout():
+        if verbose: print("[Forensic] Timeout reached after discrete detectors, returning collected seeds.")
+        return seeds if seeds else []
     try:
         power_law_seeds = _detect_power_law_patterns(X, y, variable_names=derived_vars, verbose=verbose)
         if power_law_seeds:
@@ -2891,6 +3527,9 @@ def generate_pattern_seeds(ctx, X, y, variable_names=None, verbose=False):
 
 
     # 1.5 Peeling Heuristic (Inverse Composition)
+    if _check_timeout():
+        if verbose: print("[Forensic] Timeout reached before peeling, returning collected seeds.")
+        return seeds if seeds else []
     # Check if peeling off an outer function reveals a simple integer pattern
     # e.g. y = sin((x-1)/(x+1)) -> z = arcsin(y) = (x-1)/(x+1)
     peeled_seeds = []
@@ -3015,6 +3654,33 @@ def generate_pattern_seeds(ctx, X, y, variable_names=None, verbose=False):
          if composed_seeds:
              if verbose: print(f"   Composition Analysis: Composing {len(pole_seeds)} poles with {outer_funcs} -> {len(composed_seeds)} seeds")
              seeds.extend(composed_seeds)
+             
+    # --- Final Filtering based on Banned Operators ---
+    if banned_operators:
+        valid_seeds = []
+        for s in seeds:
+            s_str = str(s) # handle non-string seeds if any
+            s_lower = s_str.lower()
+            
+            is_banned = False
+            for ban in banned_operators:
+                ban_lower = ban.lower()
+                if ban_lower in s_lower:
+                    is_banned = True
+                    break
+                # Special cases
+                if ban_lower == "pow":
+                    if "**" in s_lower or "^" in s_lower:
+                        is_banned = True
+                        break
+                if ban_lower == "^":
+                     if "pow" in s_lower or "**" in s_lower:
+                        is_banned = True
+                        break
+            
+            if not is_banned:
+                valid_seeds.append(s)
+        seeds = valid_seeds
              
     # Clean up
     return sorted(list(set(seeds)))

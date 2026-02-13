@@ -3,7 +3,6 @@ from __future__ import annotations
 import math
 import sympy as sp
 
-from ..config import COARSE_GRID_MIN_SIZE
 from ..config import MAX_NSOLVE_GUESSES
 from ..config import MAX_NSOLVE_STEPS
 from ..config import NUMERIC_TOLERANCE
@@ -262,8 +261,14 @@ def _numeric_roots_for_single_var(
             pass
 
     # Strategy 3: Detect sign changes and use nsolve
+    # Strategy 3: Detect sign changes and use nsolve
     interval_min, interval_max = interval_min, interval_max
-    coarse_grid_size = max(COARSE_GRID_MIN_SIZE, max_guesses // 3)
+    
+    # FIX: Increase grid density to prevent aliasing (skipping roots).
+    # Previous: max(12, 50//3) = 16 points for range 25 -> Step ~1.5 (Misses integers)
+    # New: Minimum 200 points. Step ~0.125 for range 25.
+    coarse_grid_size = max(200, max_guesses * 4)
+    
     sample_points = [
         interval_min + (interval_max - interval_min) * idx / coarse_grid_size
         for idx in range(coarse_grid_size + 1)
@@ -291,7 +296,8 @@ def _numeric_roots_for_single_var(
          except (TypeError, ValueError):
              pass
     
-    candidate_points = sorted(set(candidate_points_safe))[:COARSE_GRID_MIN_SIZE]
+    # FIX: Don't cap at COARSE_GRID_MIN_SIZE (12). Use max_guesses (50).
+    candidate_points = sorted(set(candidate_points_safe))[:max_guesses]
     for guess in candidate_points:
         try:
             root = sp.nsolve(
@@ -312,4 +318,50 @@ def _numeric_roots_for_single_var(
             continue
 
     sorted_roots = sorted(roots)
+    
+    # -------------------------------------------------------------------------
+    # Derivative Check (Ghost Root Filter)
+    # Asymptotic artifacts (e.g. sin(1/x) at large x) have tiny derivatives.
+    # We verify roots by ensuring the function actually crosses zero steeply.
+    # -------------------------------------------------------------------------
+    if sorted_roots and not has_transcendental:
+        # For purely algebraic roots, we trust standard methods.
+        pass
+    elif sorted_roots:
+        # Calculate symbolic derivative once
+        try:
+            deriv_expr = sp.diff(expr, variable)
+            verified_roots = []
+            
+            for root_val in sorted_roots:
+                # Calculate derivative at root
+                try:
+                    # Use complex calculation and take real part to handle potential domain issues
+                    d_val = complex(deriv_expr.subs({variable: root_val}).evalf())
+                    d_mag = abs(d_val)
+                    
+                    # Heuristic:
+                    # 1. If derivative is substantial (> 1e-7), it's a solid crossing. Keep it.
+                    # 2. If derivative is tiny (< 1e-7) AND root is huge (> 1e9), it's likely an asymptote. Discard.
+                    # 3. If derivative is tiny BUT root is small (e.g. x^2=0 at x=0), keep it (multiple root).
+                    
+                    if d_mag > 1e-7:
+                        verified_roots.append(root_val)
+                    elif abs(root_val) > 1e9:
+                         # Ghost root (asymptote)
+                         pass
+                    else:
+                         # Likely a multiple root or flat crossing at normal scale
+                         verified_roots.append(root_val)
+                         
+                except (ValueError, TypeError, AttributeError, Exception):
+                    # If derivative fails to evaluate, err on side of caution and keep root
+                    verified_roots.append(root_val)
+            
+            return [sp.N(r) for r in verified_roots]
+            
+        except Exception:
+            # If differentiation fails, return original roots
+            pass
+
     return [sp.N(root_val) for root_val in sorted_roots]

@@ -11,7 +11,6 @@ the race condition where workers prematurely delete shared segments.
 """
 from __future__ import annotations
 
-import time
 import numpy as np
 import logging
 import os
@@ -20,9 +19,7 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .expression_tree import ExpressionTree
-    from .strategies import EvolutionStrategy
-    from .genetic_config import GeneticConfig
+    pass
 
 logger = logging.getLogger("parallel")
 

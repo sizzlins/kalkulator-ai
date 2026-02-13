@@ -24,7 +24,6 @@ def eval_to_float(val):
         if "/" in val_str and "(" not in val_str:
             n, d = val_str.split("/")
             return float(n) / float(d)
-        import sympy
 
         # SECURITY: Use safe AST parser
         return float(safe_sympy_parse(str(val)).evalf())

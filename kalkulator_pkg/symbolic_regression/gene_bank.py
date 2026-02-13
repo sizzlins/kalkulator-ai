@@ -15,7 +15,6 @@ Key Features:
 from __future__ import annotations
 
 import json
-import os
 import time
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
@@ -128,21 +127,25 @@ class GeneBank:
         self._save()
         return True
     
-    def get_seeds(self, variable_names: list[str], pop_size: int) -> list[str]:
+    def get_seeds(self, variable_names: list[str], pop_size: int, allowed_operators: list[str] | None = None) -> list[str]:
         """Get compatible seeds for a given problem.
         
         Implements:
         - Arity filtering (gene.n_vars <= len(variable_names))
         - Diversity cap (max 25% of pop_size)
+        - Operator filtering (skips genes using disallowed ops)
         - Permutation limit (all permutations if n_vars <= 3, direct only otherwise)
         
         Args:
             variable_names: Variable names in the current problem (e.g., ['x', 'y']).
             pop_size: Total population size.
+            allowed_operators: List of allowed operator names (e.g. ['sin', 'add']). If None, all allowed.
             
         Returns:
             List of expression strings ready for seeding.
         """
+        from ..tokenizer import Tokenizer
+
         n_problem_vars = len(variable_names)
         diversity_limit = min(HARD_CAP, int(pop_size * DIVERSITY_RATIO))
         
@@ -156,6 +159,60 @@ class GeneBank:
             if gene.n_vars > n_problem_vars:
                 continue
             
+            # Operator Filter: Check if gene uses forbidden operators
+            if allowed_operators is not None:
+                # Basic tokenization to find functions/operators
+                # We can reuse the Tokenizer or just check substrings for simple safety
+                # For robustness, we'll use a simple token check provided by Tokenizer
+                try:
+                    tokens = Tokenizer.tokenize(gene.expression)
+                    # Helper tokens not in 'operators' list
+                    ignored = {'(', ')', ',', 'x', 'y', 'z', 'v0', 'v1', 'v2', 'v3', 'v4', 'v5'}
+                    
+                    is_safe = True
+                    for tok in tokens:
+                        if tok.type in ('FUNCTION', 'OPERATOR'):
+                            val = tok.value
+                            # Map symbols back to names for check
+                            # e.g. '+' -> 'add', '*' -> 'mul'
+                            # Actually, allowed_operators usually contains names like 'add', 'sin'
+                            # But expressions contain symbols '+', '*'
+                            # We need a robust check.
+                            
+                            # Fast path: if token is in allowed list, good.
+                            if val in allowed_operators:
+                                continue
+                                
+                            # Convert symbol to name if needed
+                            # This is tricky without a full map available here.
+                            # However, disallowed operators like 'bitwise_xor', 'floor' usually appear as names
+                            # or specific symbols.
+                            
+                            # Bitwise check (primary goal of this fix)
+                            if val in ['&', '|', '^', '<<', '>>', 'bitwise_and', 'bitwise_or', 'bitwise_xor', 'lshift', 'rshift']:
+                                # Check if corresponding name is allowed
+                                op_name = None
+                                if val == '&' or val == 'bitwise_and': op_name = 'bitwise_and'
+                                elif val == '|' or val == 'bitwise_or': op_name = 'bitwise_or'
+                                elif val == '^' or val == 'bitwise_xor': op_name = 'bitwise_xor'
+                                elif val == '<<' or val == 'lshift': op_name = 'lshift'
+                                elif val == '>>' or val == 'rshift': op_name = 'rshift'
+                                
+                                if op_name and op_name not in allowed_operators:
+                                    is_safe = False
+                                    break
+                                    
+                            # Discrete check
+                            if val in ['floor', 'ceil', 'round', 'sign', 'max', 'min'] and val not in allowed_operators:
+                                is_safe = False
+                                break
+                                
+                    if not is_safe:
+                        continue
+                except Exception:
+                    # If tokenization fails, skip gene to be safe
+                    continue
+
             # Map gene variables to problem variables
             mapped_exprs = self._map_variables(gene.expression, gene.n_vars, variable_names)
             

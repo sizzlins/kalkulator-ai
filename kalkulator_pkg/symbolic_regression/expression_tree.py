@@ -265,17 +265,43 @@ def safe_pow(x, y):
         if is_complex:
             # Cast to complex to allow negative base powers
             # e.g. (-2.5)^(-2.5) -> complex
-            x_complex = x_clipped.astype(np.complex128)
-            y_complex = y_clipped.astype(np.complex128)
+            # Handle both scalar and array inputs
+            if np.isscalar(x_clipped):
+                x_complex = np.complex128(x_clipped)
+                y_complex = np.complex128(y_clipped)
+            else:
+                x_complex = x_clipped.astype(np.complex128)
+                y_complex = y_clipped.astype(np.complex128)
+            
             result = np.power(x_complex, y_complex)
             
             # Clip magnitude to prevent overflow
             mag = np.abs(result)
-            mask = mag > 1e100
-            if np.any(mask):
-                 # Scale down to limit while preserving phase
-                 scale = 1e100 / (mag[mask] + 1e-300)
-                 result[mask] *= scale
+            
+            # Handle scalar vs array result
+            if np.isscalar(result) or (isinstance(result, np.ndarray) and result.ndim == 0):
+                # Scalar case
+                if mag > 1e100:
+                    result = result * (1e100 / (mag + 1e-300))
+                # Cast back to real if imaginary part is negligible
+                if abs(result.imag) < 1e-9:
+                    return result.real
+            else:
+                # Array case
+                mask = mag > 1e100
+                if np.any(mask):
+                    # Scale down to limit while preserving phase
+                    scale = 1e100 / (mag[mask] + 1e-300)
+                    result = result.copy()  # Avoid modifying original
+                    result[mask] *= scale
+                
+                # Cast back to real if imaginary part is negligible for ALL elements
+                # Or should we do it element-wise? 
+                # Element-wise mixing of complex/real in one array is usually object type or complex type.
+                # So we must check if ALL are real to cast the whole array.
+                if np.all(np.abs(result.imag) < 1e-9):
+                    return result.real
+
             return result
         else:
             # Pure real path
@@ -283,7 +309,7 @@ def safe_pow(x, y):
             return np.clip(result, -1e100, 1e100)
             
     except (ZeroDivisionError, OverflowError, FloatingPointError, ValueError, TypeError) as e:
-        # print(f"DEBUG: safe_pow crashed: {e}") 
+        print(f"DEBUG: safe_pow crashed: {e}") 
         return np.zeros_like(x) if isinstance(x, np.ndarray) else 0.0
 
 
@@ -714,8 +740,6 @@ def _get_sympy_ops():
         "acosh": sp.acosh,
         "atanh": sp.atanh,
         "bessel_j0": lambda x: sp.besselj(0, x),
-        "bessel_j1": lambda x: sp.besselj(1, x),
-        "bessel_j1": lambda x: sp.besselj(1, x),
         "gamma": _safe_gamma,
         "factorial": _safe_factorial,
         "bessel_j1": lambda x: sp.besselj(1, x),
@@ -1227,6 +1251,9 @@ class ExpressionTree:
             X = X.reshape(-1, 1)
 
         try:
+            # DEBUG: Trace inputs (disabled for performance)
+            # print(f"[DEBUG Evaluate] X shape: {X.shape}, dtype: {X.dtype}, first val: {X.flat[0]}")
+            
             with np.errstate(all="ignore"):
                 # Try Numba-accelerated path first
                 ne = None # DISABLED: Force fallback. Numba causes deadlocks on complex recursions. _get_numba_evaluator()
@@ -1241,19 +1268,40 @@ class ExpressionTree:
                 else:
                     # Fallback to pure Python RPN
                     result = self._evaluate_rpn(X)
+                    # print(f"[DEBUG Evaluate] RPN Raw Result: {result}, type: {type(result)}")
                 
             # Ensure result is array of correct shape
             if isinstance(result, (int, float, complex, np.number)):
                 result = np.full(X.shape[0], result)
             
+            # print(f"[DEBUG Evaluate] Post-Broadcast: {result}")
+
+            # Check for Potential Complex->Real Data Loss
+            if np.iscomplexobj(X) and not np.iscomplexobj(result):
+                # Only warn if input was not effectively real
+                if np.any(np.abs(np.imag(X)) > 1e-9):
+                     pass # print(f"[DEBUG WARNING] ExpressionTree: Complex input produced Real result. Check for 'psqrt', 'abs', or implicit casts.")
+
             # Agent Handoff Rule 2: Soften Fitness
             # Replace NaNs/Infs with a penalty value instead of crashing or returning None
-            # Do not use copy=False to avoid modifying cached numba arrays if any
-            result = np.nan_to_num(result, nan=1e9, posinf=1e9, neginf=1e9)
-                
+            # IMPORTANT: numpy 2.x does NOT allow complex128 scalar replacements on 2D arrays.
+            # We must use default nan_to_num (which replaces NaN with 0) and then manually cap Infs.
+            if np.iscomplexobj(result):
+                # Use default replacement (NaN -> 0, Inf -> very large float)
+                result = np.nan_to_num(result) # posinf/neginf defaults to huge float
+                # Manual Inf clipping (if any remain, though nan_to_num should handle)
+                # Note: For complex, np.isinf checks real/imag independently
+                result = np.where(np.isinf(result.real) | np.isinf(result.imag), 1e9+0j, result)
+            else:
+                result = np.nan_to_num(result, nan=1e9, posinf=1e9, neginf=1e9)
+            
+            # DEBUG: Trace output (disabled for performance)
+            # print(f"[DEBUG Evaluate] Result mean: {np.mean(result)}, dtype: {result.dtype}, is_complex: {np.iscomplexobj(result)}")
+
             return result
-        except (ZeroDivisionError, OverflowError, FloatingPointError, ValueError, TypeError):
+        except (ZeroDivisionError, OverflowError, FloatingPointError, ValueError, TypeError) as e:
             # Fallback (rare)
+            # print(f"[DEBUG] ExpressionTree.evaluate crashed: {e}")
             return np.zeros(X.shape[0])
 
     def to_sympy(self) -> "sp.Expr":
@@ -1261,6 +1309,22 @@ class ExpressionTree:
         import sympy as sp
         symbols = {var: sp.Symbol(var) for var in self.variables}
         return self.root.to_sympy(symbols)
+
+    def contains_variables(self) -> bool:
+        """Check if the expression tree contains any variable nodes.
+        
+        Returns:
+            True if at least one node in the tree is a variable, False otherwise.
+            Constant-only trees (e.g., "7", "pi", "2 + 3") return False.
+        """
+        def check_node(node: ExpressionNode) -> bool:
+            if node.node_type == NodeType.VARIABLE:
+                return True
+            if node.children:
+                return any(check_node(child) for child in node.children)
+            return False
+        
+        return check_node(self.root)
 
     def to_string(self) -> str:
         """Get string representation of the expression."""
@@ -1270,7 +1334,8 @@ class ExpressionTree:
         """Get a cleaned-up string representation."""
         try:
             # Skip simplification for complex trees to avoid hangs
-            if self.complexity() > 20:
+            # Fix 4: Tightened from 20→15 to reduce SymPy hang risk
+            if self.complexity() > 15:
                 return self.to_string()
             
             if expr is None:
@@ -1282,7 +1347,7 @@ class ExpressionTree:
             s = s.replace("Max", "max").replace("Min", "min")
             s = s.replace("Mod", "mod").replace("Heaviside", "heaviside")
             return s
-        except (ZeroDivisionError, OverflowError, FloatingPointError, ValueError, TypeError):
+        except Exception:
             return self.to_string()
 
 
@@ -1517,6 +1582,7 @@ class ExpressionTree:
         max_depth: int = 4,
         operators: list[str] | None = None,
         method: str = "grow",
+        force_variable: bool = False,
     ) -> ExpressionTree:
         """Generate a random expression tree.
 
@@ -1525,6 +1591,7 @@ class ExpressionTree:
             max_depth: Maximum tree depth
             operators: List of operator names to use (default: common set)
             method: 'grow' (variable depth) or 'full' (max depth for all branches)
+            force_variable: If True, guarantee at least one variable in tree
 
         Returns:
             New random ExpressionTree
@@ -1582,8 +1649,25 @@ class ExpressionTree:
                     right.parent = node
                     return node
 
-        root = build_node(1)
-        return ExpressionTree(root=root, variables=variables)
+        # Retry Pattern for force_variable (as suggested by Gemini)
+        # Try up to 10 times to generate a tree with a variable
+        for attempt in range(10 if force_variable else 1):
+            root = build_node(1)
+            tree = ExpressionTree(root=root, variables=variables)
+            
+            if not force_variable:
+                return tree
+            
+            if tree.contains_variables():
+                return tree
+        
+        # Fallback: If 10 tries fail (rare), force a single variable node
+        if variables:
+            root = ExpressionNode(node_type=NodeType.VARIABLE, value=random.choice(variables))
+            return ExpressionTree(root=root, variables=variables)
+        
+        # Edge case: no variables provided, return what we have
+        return tree
 
     @staticmethod
     def from_sympy(

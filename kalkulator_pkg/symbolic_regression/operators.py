@@ -252,6 +252,44 @@ def insert_mutation(
     return new_tree
 
 
+def inject_variable_mutation(tree: ExpressionTree) -> ExpressionTree:
+    """Inject a variable into a constant-only tree.
+    
+    This "Genetic Rescue" mutation prevents the population from converging
+    to pure constants in transformed spaces (log, inverse) where the target
+    variance is low and constants approximate well initially.
+    
+    Args:
+        tree: Tree to mutate
+        
+    Returns:
+        Mutated tree with at least one variable, or copy if already has variables.
+    """
+    # If tree already contains variables, no rescue needed
+    if tree.contains_variables():
+        return tree.copy()
+    
+    new_tree = tree.copy()
+    
+    # Find all constant nodes
+    nodes = new_tree.get_all_nodes()
+    constants = [n for n in nodes if n.node_type == NodeType.CONSTANT]
+    
+    if constants and tree.variables:
+        # Pick a random constant to replace with a variable
+        target = random.choice(constants)
+        variable_name = random.choice(tree.variables)
+        
+        replacement = ExpressionNode(
+            node_type=NodeType.VARIABLE,
+            value=variable_name
+        )
+        
+        new_tree.replace_subtree(target, replacement)
+    
+    return new_tree
+
+
 def constant_optimization(
 
     tree: ExpressionTree,
@@ -465,6 +503,11 @@ def optimize_constants_bfgs(
             # The tree was copied from parent, so it holds OLD fitness.
             # We must update it to the new optimized MSE.
             new_tree.fitness = float(np.real(result.fun)) if np.isfinite(result.fun) else None
+            
+            # CRITICAL FIX #2: Apply constant penalty if tree has no variables
+            # This matches the penalty in calculate_fitness() - we can't skip it!
+            if new_tree.fitness is not None and not new_tree.contains_variables():
+                new_tree.fitness += 100.0
         else:
             # print("DEBUG: Optimization failed/worsened, reverting.")
             pass

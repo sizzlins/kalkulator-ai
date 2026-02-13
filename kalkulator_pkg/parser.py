@@ -23,15 +23,10 @@ import ast
 
 from . import config  # Lazy load config attributes
 from .config import ALLOWED_SYMPY_NAMES
-from .config import AMBIG_FRACTION_REGEX
 from .config import CACHE_SIZE_PARSE
-from .config import DIGIT_LETTERS_REGEX
 from .config import MAX_EXPRESSION_DEPTH
 from .config import MAX_EXPRESSION_NODES
-from .config import MAX_INPUT_LENGTH
 from .config import OUTPUT_PRECISION
-from .config import PERCENT_REGEX
-from .config import SQRT_UNICODE_REGEX
 # TRANSFORMATIONS is now lazy loaded via config.TRANSFORMATIONS
 from .types import ValidationError
 
@@ -116,6 +111,7 @@ class SafeSymPyVisitor(ast.NodeVisitor):
         if isinstance(node.op, ast.Sub): return self.sp.Add(left, self.sp.Mul(-1, right))
         if isinstance(node.op, ast.Mult): return self.sp.Mul(left, right)
         if isinstance(node.op, ast.Div): return self.sp.Mul(left, self.sp.Pow(right, -1))
+        if isinstance(node.op, ast.FloorDiv): return self.sp.floor(self.sp.Mul(left, self.sp.Pow(right, -1)))
         if isinstance(node.op, ast.Pow): return self.sp.Pow(left, right)
         if isinstance(node.op, ast.Mod): return self.sp.Mod(left, right)
         
@@ -143,6 +139,42 @@ class SafeSymPyVisitor(ast.NodeVisitor):
         if isinstance(node.op, ast.Not): return self.sp.Not(operand)
         if isinstance(node.op, ast.Invert): return self.sp.Not(operand) # ~x
         raise ValidationError(f"Unsupported unary operator: {type(node.op).__name__}", "INVALID_OPERATOR")
+
+    def visit_Tuple(self, node):
+        """Allow tuples for functions like Piecewise((expr, cond), ...)."""
+        return tuple(self.visit(elt) for elt in node.elts)
+
+    def visit_List(self, node):
+        """Allow lists for Matrix arguments and data structures."""
+        return [self.visit(elt) for elt in node.elts]
+
+    def visit_Compare(self, node):
+        """Handle comparison operators (>, <, >=, <=, ==, !=)."""
+        # Handle chained comparisons: a < b < c -> And(a < b, b < c)
+        
+        current_left = self.visit(node.left)
+        conditions = []
+        
+        for i, (op, comparator) in enumerate(zip(node.ops, node.comparators)):
+            current_right = self.visit(comparator)
+            
+            cond = None
+            if isinstance(op, ast.Eq): cond = self.sp.Eq(current_left, current_right)
+            elif isinstance(op, ast.NotEq): cond = self.sp.Ne(current_left, current_right)
+            elif isinstance(op, ast.Lt): cond = self.sp.Lt(current_left, current_right)
+            elif isinstance(op, ast.LtE): cond = self.sp.Le(current_left, current_right)
+            elif isinstance(op, ast.Gt): cond = self.sp.Gt(current_left, current_right)
+            elif isinstance(op, ast.GtE): cond = self.sp.Ge(current_left, current_right)
+            else:
+                raise ValidationError(f"Unsupported comparison operator: {type(op).__name__}", "INVALID_OPERATOR")
+                
+            conditions.append(cond)
+            current_left = current_right # Chaining: b becomes left for next op
+            
+        if len(conditions) == 1:
+            return conditions[0]
+        
+        return self.sp.And(*conditions)
 
     def visit_Attribute(self, node):
         """Block attribute access (introspection prevention)."""
@@ -195,13 +227,65 @@ class SafeSymPyVisitor(ast.NodeVisitor):
         if id.startswith("__") and id.endswith("__"):
             raise ValidationError(f"Forbidden dunder name: {id}", "SECURITY_VIOLATION")
             
-        if id in self.local_dict: return self.local_dict[id]
-        if id in self.global_dict: return self.global_dict[id]
-        if id in config.ALLOWED_SYMPY_NAMES: return config.ALLOWED_SYMPY_NAMES[id]
+        val = None
+        if self.local_dict and id in self.local_dict:
+            val = self.local_dict[id]
+        elif self.global_dict and id in self.global_dict:
+            val = self.global_dict[id]
+        elif id in config.ALLOWED_SYMPY_NAMES: 
+            val = config.ALLOWED_SYMPY_NAMES[id]
         
-        # Check against allowed functions list
-        if self.allowed_functions and id in self.allowed_functions:
+        # Check against allowed functions list (explicit whitelist)
+        if val is None and self.allowed_functions and id in self.allowed_functions:
+             # CRITICAL FIX: 'x' leakage into allowed_functions causes sin(x) -> sin(Class) -> Crash.
+             # We force 'x' to be a Symbol here.
+             if id == 'x':
+                 return self.sp.Symbol(id)
              return self.sp.Function(id)
+
+        if val is not None:
+             # Explicitly block Expr class and Basic class (internal SymPy classes)
+             if isinstance(val, type):
+                 if val.__name__ in ('Expr', 'Basic'):
+                      return self.sp.Symbol(id)
+
+                 # Allow Function classes (sin, cos, MyFunc)
+                 if issubclass(val, self.sp.Function):
+                     return val
+                 # Allow Number classes (Integer, Float, Rational)
+                 # Symbol class is implicitly excluded by strict safe_types if you want
+                 # but generic Number check is safer.
+                 # NOTE: Symbol class causes issues if passed as constant.
+                 safe_types = (self.sp.Integer, self.sp.Float, self.sp.Rational)
+                 if issubclass(val, safe_types):
+                     return val
+                 
+                 # Allow specific safe classes that don't inherit from Function (like Max/Min)
+                 # sp.Max/sp.Min inherit from MinMaxBase -> Expr, not Function
+                 # Also allow Relational classes (Eq, Lt, etc), Matrix, Pow, and AccumBounds
+                 # Note: sp.Relational might not be directly available, so we list explicit classes
+                 safe_non_functions = (
+                     self.sp.Max, self.sp.Min, self.sp.Piecewise, self.sp.Pow, self.sp.AccumBounds,
+                     self.sp.Eq, self.sp.Ne, self.sp.Lt, self.sp.Le, self.sp.Gt, self.sp.Ge,
+                     self.sp.Matrix, self.sp.MatrixBase
+                 )
+                 
+                 # Check against explicit tuple (handles equality check, not issubclass)
+                 if val in safe_non_functions:
+                      return val
+                 
+                 # Also check issubclass for MatrixBase if available (for MutableDenseMatrix etc)
+                 if hasattr(self.sp, 'MatrixBase') and issubclass(val, self.sp.MatrixBase):
+                      return val
+                 
+                 # Check for Relational subclass if accessible, otherwise rely on explicit list
+                 if hasattr(self.sp, 'Relational') and issubclass(val, self.sp.Relational):
+                      return val
+
+                 # If it's a class but not safe (including Symbol class), fallback to Symbol instance
+                 return self.sp.Symbol(id)
+             
+             return val
 
         # Allow basic variable names
         return self.sp.Symbol(id)

@@ -12,11 +12,11 @@ This allows the engine to "rediscover trigonometry" from first principles.
 import numpy as np
 import sympy as sp
 import warnings
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from .numerical_diff import compute_derivatives, resample_to_even_spacing, check_even_spacing
-from .expression_tree import ExpressionTree, ExpressionNode, NodeType, BINARY_OPERATORS
-from .pareto_front import ParetoFront, ParetoSolution
+from .expression_tree import ExpressionTree, ExpressionNode, NodeType
+from .pareto_front import ParetoFront
 
 
 @dataclass

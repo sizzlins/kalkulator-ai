@@ -1,9 +1,8 @@
 """Strategies for Genetic Symbolic Regression."""
 import numpy as np
 import random
-import time
 from .genetic_config import GeneticConfig
-from .expression_tree import ExpressionTree, UNARY_OPERATORS, BINARY_OPERATORS
+from .expression_tree import ExpressionTree
 from .operators import (
     crossover, point_mutation, hoist_mutation, shrink_mutation, 
     optimize_constants_bfgs
@@ -71,6 +70,23 @@ class EvolutionStrategy:
     
     def __init__(self, config: GeneticConfig):
         self.config = config
+        # Opt 1: Fitness cache keyed by RPN tuple (avoids re-evaluating identical trees)
+        self._fitness_cache: dict[tuple, float] = {}
+        self._cache_hits = 0
+        self._cache_misses = 0
+        # Opt 3: Fixed random probe indices (set on first evaluate call)
+        self._probe_indices: np.ndarray | None = None
+    
+    def reset_cache(self):
+        """Clear fitness cache. Call between boosting rounds when target y changes."""
+        if self.config.verbose and self._cache_hits + self._cache_misses > 0:
+            total = self._cache_hits + self._cache_misses
+            hit_rate = self._cache_hits / total * 100 if total > 0 else 0
+            print(f"[Cache] Reset. Hit rate: {self._cache_hits}/{total} ({hit_rate:.0f}%)")
+        self._fitness_cache.clear()
+        self._cache_hits = 0
+        self._cache_misses = 0
+        self._probe_indices = None  # Reset probe for new data
 
     def evaluate_population(self, population: list[ExpressionTree], X: np.ndarray, y: np.ndarray, sample_weight=None):
         """Evaluate fitness for the entire population."""
@@ -93,7 +109,12 @@ class EvolutionStrategy:
 
 
     def calculate_fitness(self, tree: ExpressionTree, X: np.ndarray, y: np.ndarray, sample_weight=None) -> float:
-        """Evaluate tree fitness (Loss + Parsimony)."""
+        """Evaluate tree fitness (Loss + Parsimony).
+        
+        Performance optimizations:
+        - RPN tuple cache: skip evaluation for structurally identical trees
+        - Safety probe: reject garbage trees early with a 20-point subset
+        """
         # Ignore all warnings (don't crash on div by zero, etc.)
         with np.errstate(all='ignore'):
             try:
@@ -109,61 +130,83 @@ class EvolutionStrategy:
                 if expr_str.count("**") > self.config.max_nested_powers:
                     return float("inf")
 
-                # 2. Evaluation (using fast compiled path with fallback)
+                # Opt 1: Fitness Cache — RPN tuple key
+                try:
+                    cache_key = tuple(tree.root.to_rpn())
+                except Exception:
+                    cache_key = None
+                
+                if cache_key is not None and cache_key in self._fitness_cache:
+                    self._cache_hits += 1
+                    cached = self._fitness_cache[cache_key]
+                    tree._cached_mse = cached
+                    return cached
+                if cache_key is not None:
+                    self._cache_misses += 1
+
+                # Opt 3: Safety Probe — reject garbage trees early
+                if self._probe_indices is None and len(X) > 40:
+                    self._probe_indices = np.random.choice(
+                        len(X), size=min(20, len(X)), replace=False
+                    )
+                
+                if self._probe_indices is not None:
+                    probe_pred = tree.evaluate_fast(X[self._probe_indices])
+                    if not np.all(np.isfinite(probe_pred)):
+                        if cache_key is not None:
+                            self._fitness_cache[cache_key] = float('inf')
+                        return float('inf')
+
+                # 2. Full Evaluation (using fast compiled path with fallback)
                 predictions = tree.evaluate_fast(X)
                 
                 # Check for garbage (NaN, Inf)
-                # Note: Complex values ARE allowed (handled by np.abs in loss function)
                 if not np.all(np.isfinite(predictions)):
+                    if cache_key is not None:
+                        self._fitness_cache[cache_key] = float('inf')
                     return float("inf")
-                
-                # REMOVED: if np.iscomplexobj(predictions): return float("inf")
-                # We want to support complex regression (e.g. LambertW, exponents)
 
                 # 3. Loss Calculation
-                # CRITICAL FIX: Ensure predictions and y are both flattened 1D arrays
-                # to prevent accidental (N,N) matrix broadcasting if one is (N,1)
                 y_flat = np.asarray(y).flatten()
                 pred_flat = np.asarray(predictions).flatten()
                 
                 raw_loss = self.huber_loss(y_flat, pred_flat)
                 
                 if sample_weight is not None:
-                    # Ensure shapes match for weighted average
                     loss = np.average(raw_loss, weights=np.asarray(sample_weight).flatten())
                 else:
                     loss = np.mean(raw_loss)
 
-                # Cache raw MSE for Pareto updates (avoids recalculation)
-                tree._cached_mse = loss
-
-                # 4. Perfect Fit Bypass (No penalty if perfect)
                 # 4. Perfect Fit Bypass (No penalty if perfect)
                 if loss < self.config.early_stop_mse:
+                    tree._cached_mse = loss
+                    if cache_key is not None:
+                        self._fitness_cache[cache_key] = loss
                     return loss
 
                 # 5. Integer Penalty (The "Race Problem" Fix)
-                # If target is purely integer but prediction is floaty, penalize heavily.
-                # This prevents 0.49*x from beating x >> 1.
                 try:
                     target_is_int = np.all(np.equal(np.mod(y_flat, 1), 0))
                     if target_is_int:
-                        # Check if prediction is "dirty" (not close to integers)
-                        # Tolerance 1e-6 allows for float math 5.000001
                         pred_is_dirty = not np.all(np.abs(pred_flat - np.round(pred_flat)) < 1e-6)
-                        
                         if pred_is_dirty:
-                            # Massive penalty to discourage float approximations for integer problems
                             loss += 10.0
                 except Exception:
-                    # Robustness: if checking fails (e.g. types), skip penalty
                     pass
+                # 6. Constant Penalty (The "Lazy Constant" Fix)
+                if not tree.contains_variables():
+                    loss += 100.0
 
-                return loss + (self.config.parsimony_coefficient * complexity)
+                final_fitness = loss + (self.config.parsimony_coefficient * complexity)
+                
+                # Cache PENALIZED fitness for Pareto updates
+                tree._cached_mse = final_fitness
+                if cache_key is not None:
+                    self._fitness_cache[cache_key] = final_fitness
+                
+                return final_fitness
 
             except Exception:
-                # Catch-All for any runtime error (ZeroDivision, Overflow, etc.)
-                # This prevents worker process termination ("Poison Pill").
                 return float("inf")
 
     def initialize_population(self, variables: list[str], n_individuals: int, seeds: list[str] = None, X=None, y=None) -> list[ExpressionTree]:
@@ -191,7 +234,7 @@ class EvolutionStrategy:
             
             local_dict = {v: sp.Symbol(v) for v in variables}
             # Add safe globals for parsing
-            local_dict.update({'exp': sp.exp, 'log': sp.log, 'sin': sp.sin, 'cos': sp.cos})
+            local_dict.update({'exp': sp.exp, 'log': sp.log, 'sin': sp.sin, 'cos': sp.cos, 'max': sp.Max, 'min': sp.Min, 'median': lambda *args: sp.Max(*args)}) # Hack for median until supported
             # Merge with allowed names for comprehensive coverage
             full_local_dict = {**ALLOWED_SYMPY_NAMES, **local_dict}
             
@@ -202,7 +245,8 @@ class EvolutionStrategy:
                     tree = ExpressionTree.from_sympy(expr, variables)
                     tree.age = 0
                     population.append(tree)
-                except (ValueError, TypeError, SyntaxError, AttributeError):
+                except (ValueError, TypeError, SyntaxError, AttributeError) as e:
+                    if self.config.verbose: print(f"DEBUG: Seed injection failed for '{seed_str}': {e}")
                     pass
 
         # 3. Fill remaining with Random Trees (Ramped Half-and-Half)
@@ -237,6 +281,17 @@ class EvolutionStrategy:
         # 2. Elitism
         population.sort(key=lambda t: t.fitness)
         new_pop = [t.copy() for t in population[:self.config.elitism]]
+        
+        # ELITE RESCUE: Prevent "Lazy Constant" Problem in Transformed Spaces
+        # If ALL elites are constants, inject a variable into one of them.
+        # This ensures the gene pool retains variable-containing expressions
+        # even when low-variance targets favor constants.
+        all_elites_constant = all(not e.contains_variables() for e in new_pop)
+        if all_elites_constant and new_pop and new_pop[0].variables:
+            from .operators import inject_variable_mutation
+            # Mutate the best elite to have a variable
+            new_pop[0] = inject_variable_mutation(new_pop[0])
+            new_pop[0].fitness = None  # Force re-evaluation
         # if self.config.verbose: print(f"DEBUG: [Gen {generation}] Elitism done.")
         
         # 3. Assign NSGA-II Ranks (for selection)
@@ -253,8 +308,19 @@ class EvolutionStrategy:
                 off1.age = 0; off2.age = 0
                 # CRITICAL: Reset fitness to prevent zombies
                 off1.fitness = None; off2.fitness = None
+                
+                # Crossover Rescue: Inject variable if offspring are constant-only
+                if not off1.contains_variables() and off1.variables:
+                    from .operators import inject_variable_mutation
+                    off1 = inject_variable_mutation(off1)
+                    off1.fitness = None
+                    
                 new_pop.append(off1)
                 if len(new_pop) < self.config.population_size:
+                    if not off2.contains_variables() and off2.variables:
+                        from .operators import inject_variable_mutation
+                        off2 = inject_variable_mutation(off2)
+                        off2.fitness = None
                     new_pop.append(off2)
             else:
                 # Mutation
@@ -273,6 +339,14 @@ class EvolutionStrategy:
                 child.age = 0
                 # CRITICAL: Reset fitness to prevent zombies
                 child.fitness = None
+                
+                # Genetic Rescue: If mutation produced a constant-only tree,
+                # inject a variable to prevent population collapse to constants
+                if not child.contains_variables():
+                    from .operators import inject_variable_mutation
+                    child = inject_variable_mutation(child)
+                    child.fitness = None  # Reset fitness after modification
+                    
                 new_pop.append(child)
         # if self.config.verbose: print(f"DEBUG: [Gen {generation}] Breeding done.")
 

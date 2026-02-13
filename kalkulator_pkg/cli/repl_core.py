@@ -8,6 +8,7 @@ from ..function_manager import define_function
 from ..function_manager import define_variable
 from ..function_manager import parse_function_definition
 from ..parser import split_top_level_commas
+from ..types import ValidationError
 # Lazy loaded imports
 # from ..solver import solve_system
 from .. import config
@@ -123,10 +124,16 @@ class REPL:
             #     return
 
             # Optimization: only preprocess if needed (contains ^ or other tokens)
-            if "^" in raw or "√" in raw:
-                from ..parser import preprocess_expression
-                # Do not swallow errors here; we want to know if import fails!
-                raw = preprocess_expression(raw)
+            # IMPORTANT: Skip preprocessing for function definitions to preserve a(x)=... syntax
+            # Otherwise a(x)=x^2 becomes a*(x)=x**2 and is parsed as an equation
+            needs_preprocess = "^" in raw or "√" in raw
+            if needs_preprocess:
+                # Check if it looks like a function definition: name(params)=body
+                import re
+                is_func_def = bool(re.match(r'^[a-zA-Z][a-zA-Z0-9]*\s*\([^)]*\)\s*=', raw))
+                if not is_func_def:
+                    from ..parser import preprocess_expression
+                    raw = preprocess_expression(raw)
 
             self.process_input(raw)
             
@@ -142,6 +149,9 @@ class REPL:
                 pass
         except KeyboardInterrupt:
             self.handle_interrupt()
+        except ValidationError as e:
+            # Gracefully handle malformed input (mismatched parens, etc.)
+            self.print(f"Error: {e}")
         except Exception as e:
             import traceback
             logger.exception("Unexpected error in REPL loop")
@@ -206,7 +216,11 @@ class REPL:
 
         # Reserved Keyword Check: Prevent commands from being parsed as math
         # e.g., 'all' -> a*l^2 or 'b' -> b (if undefined)
-        reserved_keywords = {'all', 'alt', 'altv', 'evolve', 'find', 'b', 'h', 'v'}
+        reserved_keywords = {
+            'all', 'alt', 'altv', 'altvd', 'altd', 'ode', 'evolve', 'find', 
+            'b', 'h', 'v',
+            'all4', 'alld4', 'alt4', 'altv4', 'altvd4'
+        }
         if text_lower in reserved_keywords:
             # Exception: Allow single-letter shortcuts (b, h, v) if they are defined variables
             # This allows users to inspect variable 'b' if they defined it
@@ -216,7 +230,7 @@ class REPL:
                 self.print(f"Command '{text}' requires arguments (e.g., '{text} f(x)=...').")
                 return
 
-        if text_lower.startswith(('all ', 'b ', 'h ', 'v ', 'alt ', 'altv ')):
+        if text_lower.startswith(('all ', 'b ', 'h ', 'v ', 'alt ', 'altv ', 'altvd ', 'altd ', 'ode ', 'all4 ', 'alt4 ', 'altv4 ', 'altvd4 ', 'alld4 ')):
              # SAFETY CHECK: Ignore if it looks like assignment or math (e.g. "b = 10", "b - 5")
              # Split by space. If first part is shortcut, check subsequent char.
              parts = text.split(maxsplit=1)

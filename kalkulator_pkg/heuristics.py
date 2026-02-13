@@ -87,13 +87,27 @@ def detect_symbolic_constant(
             return sym_cand
 
     # Direct comparison with known constants
+    # TIER 2: Direct Match (Fundamental Constants) - Occam's Constant Rule
+    # Check ALL fundamental constants for direct match FIRST
     for _const_name, const_symbol in KNOWN_CONSTANTS.items():
         try:
             const_val = float(sp.N(const_symbol))
-            # 1. Check if value is close to constant directly
+            # 1. Check if value is close to constant directly (or negative constant)
+            # Check +C
             if abs(float_val - const_val) / (abs(const_val) + 1e-10) < tolerance:
                 return const_symbol
+            # Check -C
+            if abs(float_val + const_val) / (abs(const_val) + 1e-10) < tolerance:
+                return -const_symbol
+        except (ValueError, TypeError):
+            continue
 
+    # TIER 4: Complex Multiples (Rational Fractions of Constants)
+    # Only check this AFTER we are sure it's not a fundamental constant itself.
+    for _const_name, const_symbol in KNOWN_CONSTANTS.items():
+        try:
+            const_val = float(sp.N(const_symbol))
+            
             # 2. Check if value is a rational multiple (e.g. 4/3 * pi)
             # Avoid division by zero
             if abs(const_val) > 1e-9:
@@ -2147,6 +2161,7 @@ def solve_rational_function_svd(
     param_names: list[str],
     max_numerator_degree: int = 2,
     max_denominator_degree: int = 2,
+    include_roots: bool = False,
     verbose: bool = False,
 ) -> tuple[bool, str, float]:
     """
@@ -2158,7 +2173,7 @@ def solve_rational_function_svd(
     try:
         import numpy as np
 
-        if not X_data or not y_data:
+        if X_data is None or len(X_data) == 0 or y_data is None or len(y_data) == 0:
             return False, "", 1e9
 
         X_arr = np.array(X_data, dtype=float)
@@ -2169,6 +2184,21 @@ def solve_rational_function_svd(
             X_arr = X_arr.reshape(-1, 1)
 
         n_samples, n_features = X_arr.shape
+        
+        # --- Z-Score Normalization for Target Variable y ---
+        # This handles large offsets (e.g. y = 1e9 + x^2) which otherwise break SVD scaling.
+        mean_y = np.mean(y_arr)
+        std_y = np.std(y_arr)
+        
+        if std_y < 1e-9:
+             scale_y = 1.0 # Constant function case, handle gracefully
+        else:
+             scale_y = std_y
+             
+        y_norm = (y_arr - mean_y) / scale_y
+        
+        # Use normalized y for solving
+        y_solve = y_norm
         
     except ImportError:
         return False, "", 1e9
@@ -2181,17 +2211,48 @@ def solve_rational_function_svd(
     
     # Generate list of (p, q) pairs sorted by complexity
     combinations = []
-    for p in range(max_numerator_degree + 1):
-        for q in range(1, max_denominator_degree + 1): # q must be at least 1 (denominator) assuming q_deg >= 1 enables rational behavior
+    # If using roots, allow degree 0 for minimal baseline
+    max_p = max_numerator_degree + 1
+    max_q = max_denominator_degree + 1
+    
+
+    for p in range(max_p):
+        for q in range(0, max_q): # q=0 means pure polynomial P(x)/1
+             if p == 0 and q == 0 and not include_roots: continue # Skip constant if not using roots (or allow it?)
+             # Skip trivial constant 0/0 or 1/1 if redundant
              combinations.append((p, q))
              
     # Sort by total degree, then by q (prefer simpler denominator), then p
     combinations.sort(key=lambda x: (x[0]+x[1], x[1], x[0]))
     
     for p_deg, q_deg in combinations:
+        if verbose:
+             print(f"[SV] Checking Model Degree: P={p_deg}, Q={q_deg}")
         # Check if we have enough samples
-        n_coeffs = (p_deg + 1) + (q_deg + 1)
-        if n_samples < n_coeffs + 1: # Require at least 1 extra point for validation/over-determination
+        # Count coeffs: (p+1) + (q+1) + (2 if roots) + (2 if roots)
+        # Rough estimate, we check rank later anyway
+        n_coeffs_poly = (p_deg + 1) + (q_deg + 1)
+        n_coeffs = n_coeffs_poly
+        if include_roots:
+            # P gets sqrt(x), x*sqrt(x) (+2)
+            # Q gets sqrt(x) (+1)
+            n_coeffs += 3
+            
+        # Relaxed thresholds for low-complexity models (Tiered Approach)
+        min_required = n_coeffs + 1  # Default: Require 1 extra point for validation
+        
+        if not include_roots:
+            # Quadratic (2,0): 4 coeffs (A,B,C, D=1). 3 DOFs. 3 points sufficient.
+            if p_deg == 2 and q_deg == 0:
+                min_required = 3
+            # Simple Rational (1,1): 4 coeffs (A,B, C,D). 3 DOFs. 4 points meaningful.
+            elif p_deg == 1 and q_deg == 1:
+                min_required = 4
+            # Linear (1,0): 3 coeffs (A,B, D=1). 2 DOFs. 2 points sufficient.
+            elif p_deg == 1 and q_deg == 0:
+                min_required = 2
+                
+        if n_samples < min_required:
             continue
 
         # 1. Generate terms 
@@ -2199,6 +2260,7 @@ def solve_rational_function_svd(
         q_terms = [] 
         
         if n_features == 1:
+            # Polynomial terms
             for d in range(p_deg + 1):
                 # Use ** for exponentiation (Python/SymPy compatible), not ^ (which is bitwise XOR)
                 name = f"{param_names[0]}**{d}" if d > 1 else (param_names[0] if d == 1 else "1")
@@ -2207,6 +2269,17 @@ def solve_rational_function_svd(
             for d in range(q_deg + 1):
                 name = f"{param_names[0]}**{d}" if d > 1 else (param_names[0] if d == 1 else "1")
                 q_terms.append( (name, lambda x, d=d: x[0]**d) )
+                
+            # Root terms (if enabled)
+            if include_roots:
+                # Add sqrt(x) and x*sqrt(x) = x^1.5
+                # Only valid if x >= 0. We assume caller handles data filtering or we handle NaNs.
+                p_terms.append( (f"sqrt({param_names[0]})", lambda x: np.sqrt(x[0]) if x[0] >= 0 else 0.0) )
+                p_terms.append( (f"{param_names[0]}*sqrt({param_names[0]})", lambda x: x[0]*np.sqrt(x[0]) if x[0] >= 0 else 0.0) )
+                
+                # Add to denominator too? Maybe too complex?
+                # Let's add sqrt to denominator to allow x/sqrt(x)
+                q_terms.append( (f"sqrt({param_names[0]})", lambda x: np.sqrt(x[0]) if x[0] >= 0 else 0.0) )
         else:
             return False, "", 1e9
 
@@ -2218,19 +2291,35 @@ def solve_rational_function_svd(
         
         for i in range(n_samples):
             x_val = X_arr[i]
-            y_val = y_arr[i]
+            # specific fix: use normalized y
+            y_val = y_solve[i]
             
             for j in range(n_p):
                 A[i, j] = p_terms[j][1](x_val)
                 
             for j in range(n_q):
                 val = q_terms[j][1](x_val)
+                # Linearized form: P(x) - y*Q(x) = 0
                 A[i, n_p + j] = -y_val * val
                 
-        # 3. Solve SVD
+        # 3. Solve SVD with Column Normalization (Preconditioning)
+        # This handles large scale differences (e.g. constant offset 1000 vs coefficient 0.001)
         try:
-            U, S, Vt = np.linalg.svd(A)
-            c = Vt[-1]
+            # Compute column norms
+            col_norms = np.linalg.norm(A, axis=0)
+            
+            # Avoid division by zero for zero columns (unused features)
+            safe_col_norms = np.where(col_norms < 1e-12, 1.0, col_norms)
+            
+            # Normalize A
+            A_norm = A / safe_col_norms
+            
+            # SVD on normalized matrix
+            U, S, Vt = np.linalg.svd(A_norm)
+            c_norm = Vt[-1]
+            
+            # Recover original coefficients: c_i = c_norm_i / col_norm_i
+            c = c_norm / safe_col_norms
             
             # Check singular values for conditioning?
             # If smallest singular value is large, then no solution exists (residuals > 0).
@@ -2253,7 +2342,9 @@ def solve_rational_function_svd(
         
         best_c = c_norm
         best_score = 1e9
-        candidates = [val for val in c_norm if abs(val) > 0.01]
+        # v4.2 Fix: Allow small coefficients (high dynamic range)
+        # Previous 0.01 threshold prevented finding coeff 0.00001 (e.g. 1 vs 100,000)
+        candidates = [val for val in c_norm if abs(val) > 1e-9]
         if len(candidates) > 10:
              candidates.sort(key=abs, reverse=True)
              candidates = candidates[:10]
@@ -2265,10 +2356,11 @@ def solve_rational_function_svd(
                 best_score = dist
                 best_c = candidate
                 
-        if best_score < 1e-3:
-            c_final = np.round(best_c)
-        else:
-            c_final = best_c
+        # v4.2 Fix: "Silent Killer" - Bulk Snapping disabled.
+        # Previously, if sum of dists < 1e-3, we blindly rounded via np.round.
+        # This killed small valid coefficients (e.g. 1.4e-5) because they are "close to 0".
+        # We now rely solely on safe per-element snapping in 'snap_coefficient'.
+        c_final = best_c
         
         # --- AGGRESSIVE COEFFICIENT SNAPPING ---
         # Clean up noisy coefficients caused by corrupted data points
@@ -2280,56 +2372,109 @@ def solve_rational_function_svd(
             print(f"     Raw coefficients (before snapping): {[f'{v:.4g}' for v in c_final]}")
         
         def snap_coefficient(val):
+            # 0. Check for Symbolic Constants (NEW - User Feature)
+            # Detects pi, e, sqrt(2) etc.
+            sym_const = detect_symbolic_constant(val, tolerance=0.02)
+            if sym_const is not None:
+                return sym_const
+
             # 1. Snap near-integer values (Strongest signal)
             # CRITICAL FIX: Tolerance set to 0.05. 
             # This ensures that 3.14 (pi) is NOT snapped to 3 (dist 0.14),
             # but 3.001 (dist 0.001) IS snapped to 3.
-            rounded = round(val)
-            if abs(val - rounded) < 0.05 and abs(rounded) >= 1:
-                return rounded
+            val_float = float(val)
+            rounded = round(val_float)
+            if abs(val_float - rounded) < 0.05 and abs(rounded) >= 1:
+                return int(rounded)
                 
             # 2. Check for integer inverses (e.g. 0.025 -> 1/40)
-            if abs(val) > 1e-9:
-                inv = 1.0 / val
+            if abs(val_float) > 1e-9:
+                inv = 1.0 / val_float
                 if abs(inv - round(inv)) < 0.05:
                     return 1.0 / round(inv)
 
             # 3. Snap to common simple fractions (0.5, 0.33, etc.)
             for frac in [0.5, 0.25, 0.75, 1.0/3, 2.0/3]:
-                if abs(abs(val) - frac) < 0.05:
-                    return frac if val > 0 else -frac
+                if abs(abs(val_float) - frac) < 0.05:
+                    return frac if val_float > 0 else -frac
                     
             # 4. Snap noise to zero (Only if it failed above checks)
-            if abs(val) < 0.05:
+            # v4.2 Fix: Relax noise threshold to support high dynamic range (e.g. 1000 + 0.01x)
+            # Was 0.05, now 1e-7 to essentially disable zero-snapping for non-noise
+            if abs(val_float) < 1e-9:
                 return 0.0
+
                 
-            return val
+            return val_float
         
-        c_final = np.array([snap_coefficient(v) for v in c_final])
+        # v4.2 Fix: DISABLE SNAPPING for SVD.
+        # User Feedback: "In Normalized Space, a coefficient of 0.001 is significant!"
+        # Aggressive snapping (even with low thresholds) risks killing small terms in high-dynamic 
+        # range functions (e.g. 1060 + 0.014x^3).
+        # We rely on downstream symbolic reconstruction to find integers/constants if they exist.
+        # c_final_snapped = [snap_coefficient(v) for v in c_final]
+        c_final_snapped = c_final
         
         # Log snapped coefficients
         if verbose:
-            print(f"     Snapped coefficients: {[f'{v:.4g}' for v in c_final]}")
+            print(f"     Snapped coefficients: {[str(v) for v in c_final_snapped]}")
             
-        p_coeffs_final = c_final[:n_p]
-        q_coeffs_final = c_final[n_p:]
+        p_coeffs_final = c_final_snapped[:n_p]
+        q_coeffs_final = c_final_snapped[n_p:]
         
         # Build String
         def build_poly(coeffs, terms):
             parts = []
             for i, coeff in enumerate(coeffs):
-                if abs(coeff) < 1e-6: continue
+                # Handle Symbolic Coeffs
+                try:
+                    if hasattr(coeff, 'evalf'):
+                        mag = float(coeff.evalf())
+                        is_sym = True
+                    else:
+                        mag = float(coeff)
+                        is_sym = False
+                except:
+                    mag = 0.0
+                    is_sym = False
+                
+                if abs(mag) < 1e-6: continue
+
                 term_name = terms[i][0]
-                if abs(coeff - 1.0) < 1e-6 and term_name != "1": s = term_name
-                elif abs(coeff + 1.0) < 1e-6 and term_name != "1": s = f"-{term_name}"
-                elif term_name == "1": s = f"{int(round(coeff)) if abs(coeff-round(coeff))<1e-6 else f'{coeff:.4g}'}"
+                
+                if is_sym:
+                    val_str = str(coeff)
                 else:
-                    val_str = f"{int(round(coeff)) if abs(coeff-round(coeff))<1e-6 else f'{coeff:.4g}'}"
-                    s = f"{val_str}*{term_name}"
+                    if isinstance(coeff, int):
+                        val_str = str(coeff)
+                    elif abs(coeff - round(coeff)) < 1e-6:
+                        val_str = str(int(round(coeff)))
+                    else:
+                        val_str = f"{coeff:.4g}"
+                
+                # Compose Term
+                if term_name == "1":
+                    s = val_str
+                else:
+                    if val_str == "1": s = term_name
+                    elif val_str == "-1": s = f"-{term_name}"
+                    else:
+                        # Wrap complex coefficients in parens if needed
+                        # e.g. "pi/2" -> "(pi/2)*x"
+                        # "-2.7" -> "-2.7*x" (no parens needed usually, but safe)
+                        if any(c in val_str for c in "*/+"): 
+                             s = f"({val_str})*{term_name}"
+                        else:
+                             s = f"{val_str}*{term_name}"
+                             
                 if parts:
-                    if s.startswith("-"): parts.append(f"- {s[1:]}")
-                    else: parts.append(f"+ {s}")
-                else: parts.append(s)
+                    if s.startswith("-"):
+                        # "x - 5"
+                        parts.append(f"- {s[1:]}")
+                    else:
+                        parts.append(f"+ {s}")
+                else:
+                    parts.append(s)
             return " ".join(parts).replace("+ -", "- ") if parts else "0"
 
         p_str = build_poly(p_coeffs_final, p_terms)
@@ -2337,9 +2482,44 @@ def solve_rational_function_svd(
         
         if q_str == "0": continue
         
-        if q_str == "1": func_str = p_str
-        elif q_str == "-1": func_str = f"-({p_str})"
-        else: func_str = f"({p_str})/({q_str})"
+        if q_str == "1": base_func_str = p_str
+        elif q_str == "-1": base_func_str = f"-({p_str})"
+        else: base_func_str = f"({p_str})/({q_str})"
+        
+        # Apply Inverse Transformation (Denormalization)
+        # We need to wrap: f = f_norm * scale + mean
+        # Optimization: If mean is 0, just scale. If scale is 1, just add mean.
+        
+        func_str = base_func_str
+        
+        if abs(scale_y - 1.0) > 1e-9 or abs(mean_y) > 1e-9:
+            # Format mean/scale
+            def fmt(v):
+                if abs(v - round(v)) < 1e-6: return str(int(round(v)))
+                return f"{v:.6g}"
+            
+            mean_str = fmt(mean_y)
+            scale_str = fmt(scale_y)
+            
+            transformed = base_func_str
+            
+            # Apply Scale
+            if abs(scale_y - 1.0) > 1e-9:
+                # Add parens if needed (if base func has + or - at top level)
+                # Simple heuristic: if it contains spaces (from our build_poly), wrap it
+                if " " in transformed:
+                    transformed = f"({transformed}) * {scale_str}"
+                else:
+                    transformed = f"{transformed} * {scale_str}"
+            
+            # Apply Mean
+            if abs(mean_y) > 1e-9:
+                if mean_str.startswith("-"):
+                    transformed = f"{transformed} - {mean_str[1:]}"
+                else:
+                    transformed = f"{transformed} + {mean_str}"
+            
+            func_str = transformed
             
         # 7. Validation (MSE)
         total_error = 0
@@ -2380,3 +2560,251 @@ def solve_rational_function_svd(
             
     return best_result
 
+
+
+def check_power_peeling(
+    X_data: list[list[float]],
+    y_data: list[float],
+    param_names: list[str],
+    verbose: bool = False,
+    banned_operators: list[str] | set[str] | None = None
+) -> tuple[bool, str | None, float]:
+    """
+    Advanced Heuristic: Discovers Tower Functions (y = x^g(x)) by analyzing log-ratio space.
+    """
+    try:
+        # Check explicit bans on power/exponentiation
+        if banned_operators:
+            bans = {op.lower() for op in banned_operators}
+            # If any form of power is banned, disable this heuristic entirely
+            # "pow", "exp" (maybe?), "sqrt" (if result is x^0.5)
+            # Users often ban "sqrt" to avoid x^0.5, so we should respect that if `0.5` is found.
+            
+            # If "pow" or "^" or "**" is banned, we can't do x^g(x) at all.
+            if "pow" in bans or "^" in bans or "**" in bans:
+                if verbose: print("[Power Peeling] Disabled by user ban on 'pow'/'^'")
+                return False, None, 1e9
+        
+        if not X_data or not y_data:
+            return False, None, 1e9
+
+        n_vars = len(param_names)
+        if n_vars != 1:
+            return False, None, 1e9 # Only support 1D tower functions for now
+
+        import numpy as np
+        
+        # Safe array creation - handle complex inputs without crashing
+        try:
+             X_arr = np.array(X_data, dtype=complex).flatten()
+             y_arr = np.array(y_data, dtype=complex).flatten()
+        except:
+             # Fallback if mixed types or ragged
+             return False, None, 1e9
+
+        # 1. Strict Domain Filtering (User Recommendation)
+        # Power Peeling relying on real headers: x > 0, y > 0, y is real.
+        # This aligns with physical law discovery where we look for valid domains.
+        
+        # Check for realness (allow tiny noise)
+        is_real_x = np.abs(np.imag(X_arr)) < 1e-9
+        is_real_y = np.abs(np.imag(y_arr)) < 1e-9
+        
+        # Take real components for value checking
+        x_real = np.real(X_arr)
+        y_real = np.real(y_arr)
+        
+        # Combined mask:
+        # 1. Real X and Y
+        # 2. X > 0 (for log(x))
+        # 3. Y > 0 (for log(y))
+        # 4. X != 1 (singularity in log(x)=0 divider)
+        valid_mask = (is_real_x) & (is_real_y) & \
+                     (x_real > 1e-6) & (y_real > 1e-9) & \
+                     (np.abs(x_real - 1.0) > 0.01)
+        
+        if np.sum(valid_mask) < 5:
+            # if verbose: print("[Power Peeling] Not enough valid real/positive data points.")
+            return False, None, 1e9
+            
+        x_clean = x_real[valid_mask]
+        y_clean = y_real[valid_mask]
+        
+        # 2. Compute Z = log(y) / log(x)
+        # Now safe to use real numpy log
+        log_x = np.log(x_clean)
+        log_y = np.log(y_clean)
+        
+        # Z = g(x)
+        z_clean = log_y / log_x
+        
+        # 3. Feed (x, z) to SVD Solver (with Root Support!)
+        # Cast to standard float list
+        features_x = x_clean.reshape(-1, 1).tolist()
+        target_z = z_clean.tolist()
+        
+        # Try finding simpler forms first
+        # Enable include_roots to find sqrt(x)
+        success, g_str, mse_z = solve_rational_function_svd(
+            features_x, target_z, param_names,
+            max_numerator_degree=2,
+            max_denominator_degree=2,
+            include_roots=True, # Critical for x^sqrt(x)
+            verbose=verbose
+        )
+        
+        if success and mse_z < 1e-4:
+            # Found a candidate g(x)!
+            
+            # Simplify g(x) (e.g. x*sqrt(x)/sqrt(x) -> x)
+            try:
+                import sympy as sp
+                local_dict = {param_names[0]: sp.Symbol(param_names[0])}
+                # Add sqrt support
+                local_dict['sqrt'] = sp.sqrt
+                
+                # Use verify's clean approach
+                g_expr = sp.sympify(g_str, locals=local_dict)
+                g_expr = sp.simplify(g_expr)
+                g_str = str(g_expr).replace("**", "^") # Keep consistency
+            except Exception:
+                pass
+
+            # Reconstruct y = x^(g(x))
+            
+            # Check if we should reject based on "sqrt" ban
+            # Common case: g(x) = 0.5 -> x^0.5 -> sqrt(x)
+            if banned_operators:
+                bans = {op.lower() for op in banned_operators}
+                if "sqrt" in bans:
+                     # Check if g(x) is numerically 0.5
+                     try:
+                         # Quick float check
+                         if abs(float(g_expr) - 0.5) < 1e-9:
+                             if verbose: print("[Power Peeling] Rejected 'x^0.5' because 'sqrt' is banned.")
+                             return False, None, 1e9
+                     except:
+                         pass
+                     
+                     # Check if "sqrt" appears in g_str (e.g. x^sqrt(x))
+                     if "sqrt" in g_str.lower():
+                          if verbose: print("[Power Peeling] Rejected because 'sqrt' is banned.")
+                          return False, None, 1e9
+
+            # g(x) might be complex string. 
+            # If g_str is "1", y=x.
+            if g_str == "1":
+                 # y = x^1 = x
+                 return True, f"{param_names[0]}", mse_z
+            
+            # If g(x) is "x", y=x^x
+            if g_str == param_names[0]:
+                final_str = f"{param_names[0]}^{param_names[0]}"
+            else:
+                 # Wrap g(x) in parens
+                 final_str = f"{param_names[0]}^({g_str})"
+            
+            if verbose:
+                print(f"[Power Peeling] Found g(x) = {g_str} (MSE_Z={mse_z:.6g})")
+                
+            return True, final_str, mse_z
+
+    except Exception as e:
+        if verbose: print(f"Power Peeling Error: {e}")
+        pass
+
+    return False, None, 1e9
+
+
+def detect_smoothness(X_data: list[list[float]], y_data: list[float], verbose: bool = False) -> bool:
+    """
+    Detects if the underlying relationship appears to be smooth and continuous.
+    
+    Returns True if data seems continuous (physical laws, math functions).
+    Returns False if data seems discrete, stepped, or highly noisy.
+    
+    Used to DISABLE bitwise operators for continuous problems to prevent overfitting.
+    """
+    try:
+        import numpy as np
+        
+        y_arr = np.array(y_data, dtype=float).flatten()
+        
+        # 0. Trivial checks
+        if len(y_arr) < 10:
+            return True # Assume smooth if not enough data
+        
+        # 1. Unique Value Ratio (User Recommendation)
+        # Discrete/Step functions reuse Y values heavily (e.g. 1, 1, 1, 5, 5, 5)
+        # Continuous physical data rarely repeats floats exactly unless quantized.
+        unique_vals = np.unique(y_arr)
+        unique_ratio = len(unique_vals) / len(y_arr)
+        
+        if unique_ratio < 0.5:
+             if verbose:
+                 print(f"   Smoothness Check: FAIL (Unique Ratio={unique_ratio:.2f} < 0.5)")
+             return False
+             
+        # 2. Derivative Continuity Check
+        # Sort data by X to ensure adjacency
+        try:
+            X_arr = np.array(X_data, dtype=float)
+            if X_arr.ndim > 1:
+                # Use first dimension for sorting
+                sort_idx = np.argsort(X_arr[:, 0])
+            else:
+                sort_idx = np.argsort(X_arr)
+            
+            y_sorted = y_arr[sort_idx]
+            
+            # Normalize Y to 0-1 for scale invariance
+            y_range = np.max(y_sorted) - np.min(y_sorted)
+            if y_range < 1e-9:
+                return True # Constant function is smooth
+
+            y_norm = (y_sorted - np.min(y_sorted)) / y_range
+            
+            # First difference
+            diffs = np.diff(y_norm)
+            
+            # Check for "Staircase" behavior (perfectly flat regions)
+            # Count zero jumps (within machine epsilon)
+            zero_jumps = np.sum(np.abs(diffs) < 1e-9)
+            if zero_jumps / len(diffs) > 0.5:
+                 if verbose:
+                     print(f"   Smoothness Check: FAIL (Staircase detected, >50% flat)")
+                 return False
+
+            # v4.9 Smart Override: If we detected Staircase/Floor patterns explicitly,
+            # we MUST consider the function "Discrete" to enable floor/ceil operators.
+            try:
+                # Quick check without full seed generation if possible, or just re-run detectors safely?
+                # Actually, duplicate detection is cheap compared to missing the solution.
+                from .symbolic_regression import forensic_analysis as fa
+                # Check General Staircase (floor(linear))
+                if fa._detect_general_staircase(np.atleast_2d(X_data), y_arr):
+                    if verbose: print(f"   Smoothness Check: FAIL (Staircase Pattern explicitly detected)")
+                    return False
+                # Check Floor Wave (floor(sin))
+                if fa._detect_floor_wave_patterns(np.atleast_2d(X_data), y_arr):
+                    if verbose: print(f"   Smoothness Check: FAIL (Floor Wave Pattern explicitly detected)")
+                    return False
+            except Exception:
+                pass
+
+                 
+            # Check for "Jaggedness" / High Frequency Noise
+            # Second difference (acceleration) should not flip sign crazily for smooth functions
+            # But high frequency functions (sin(100x)) might fail this. 
+            # So we rely mostly on Unique Ratio and Staircase check.
+
+            if verbose:
+                 print(f"   Smoothness Check: PASS (Unique Ratio={unique_ratio:.2f})")
+            return True
+            
+        except Exception as e:
+            if verbose: print(f"   Smoothness Check Error: {e}")
+            return True # Fail safe: assume smooth
+
+    except Exception:
+        return True

@@ -113,12 +113,20 @@ def solve_single_equation(
     else:
         parts = eq_str.split("=", 1)
 
+    # Allow inequalities (e.g. "1 < x < 2") to proceed as evaluations
+    is_inequality = any(op in eq_str for op in ("<", ">", "<=", ">="))
+
     if len(parts) != 2:
-        return {
-            "ok": False,
-            "error": "Invalid equation format: Expected exactly one '='. Use format like 'x+1=0' or 'x^2=4'.",
-            "error_code": "INVALID_FORMAT",
-        }
+        if is_inequality:
+            # Treat entire string as LHS (empty RHS) -> Evaluation mode
+            # This allows "1 < x < 2" to be evaluated/solved by evaluate_safely -> parser
+            parts = [eq_str, ""] 
+        else:
+            return {
+                "ok": False,
+                "error": "Invalid equation format: Expected exactly one '='. Use format like 'x+1=0' or 'x^2=4'.",
+                "error_code": "INVALID_FORMAT",
+            }
     lhs_s, rhs_s = parts[0].strip(), parts[1].strip()
 
     # Handle empty RHS: treat as evaluation of LHS

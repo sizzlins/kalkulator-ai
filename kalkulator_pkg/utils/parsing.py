@@ -1,5 +1,4 @@
 import sympy as sp
-import numpy as np
 
 def eval_to_float(val):
     """

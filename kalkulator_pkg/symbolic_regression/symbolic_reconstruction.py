@@ -26,6 +26,29 @@ def reconstruct_constant(value: float, tolerance: float = 1e-4, max_denom: int =
     
     if abs(value) < 1e-10: return "0"
     
+    # v4.2 Fix: "Numerology" Prevention
+    # If the number is a simple decimal (e.g. 1060.1), don't force it into 3*pi + 4*e.
+    # We check if the string representation is short/simple.
+    val_str = f"{value:.10f}".rstrip("0")
+    if "." in val_str:
+        decimal_part = val_str.split(".")[1]
+        if len(decimal_part) < 5:
+            # It's a simple float (e.g. 1.5, 1060.1)
+            # Return it as string so it's treated as a "found" constant (snapped)
+            # or return None to let valid float pass through?
+            # Usage in heuristics.py suggests returning a string is good if we want to "snap" to it.
+            # But usually reconstruct_constant is for symbolic stuff.
+            # If we return None, snap_coefficient will treat it as float and maybe round it if close to int,
+            # or keep it as float. 
+            # If we return the string, it becomes a "Symbolic Constant" in the eyes of the caller.
+            # actually, let's returns None so it falls back to normal float handling which is what we want.
+            # Wait, user said "Return it as is". 
+            # If I return None, heuristics.py:snap_coefficient proceeds to steps 1, 2, 3, 4.
+            # Step 4 is "Snap noise to zero... else return val_float".
+            # So returning None allows it to remain a simple float.
+            if verbose: print(f"     Simple float detected: {value} -> skipping symbolic search", file=sys.stderr)
+            return None
+    
     if verbose:
         print(f"[SV] CONSTANT RECONSTRUCTION:\n     Analyzing coeff: {value:.11f}", file=sys.stderr)
         print(f"     Checking candidates: ['int', 'rational', 'pi', 'e', 'linear_combos']", file=sys.stderr)

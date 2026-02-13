@@ -1,10 +1,26 @@
-# Empty
-from kalkulator_pkg.symbolic_regression.constant_anchors import detect_anchors, generate_hypotheses
-import numpy as np
-X = np.array([[2.0]])
-y = np.array([1.732])
-anchors = detect_anchors(X, y)
-print(f"Anchors: {anchors}")
-if anchors:
-    hyp = generate_hypotheses(anchors)
-    print(f"Hypotheses: {hyp}")
+"""
+
+empty
+
+"""
+
+
+# def HelloWorld(x):
+#     print("Hello World")
+#
+# # HelloWorld(print)
+# n=int(input())
+# total = 0
+# for i in range(n):
+#     total = i + total
+#
+# print(total)
+
+def solve(x, y):
+    return (x * (7 / 22)) + (y * (15 / 22))
+
+
+x = float(input())
+y = float(input())
+
+print(solve(x, y))

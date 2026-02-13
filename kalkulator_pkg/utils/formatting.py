@@ -686,22 +686,23 @@ def simplify_exponential_bases(expr: "sp.Expr") -> "sp.Expr":
 
                 # Check if exp(total_coeff) is close to an integer/simple rational
                 try:
+                    from .config import NUMERIC_TOLERANCE, SNAPPING_THRESHOLD
                     val = sp.exp(total_coeff)
                     # Use complex conversion to handle potential complex values safely
                     val_c = complex(val.evalf())
                     
                     # Only simplify if imaginary part is negligible
-                    if abs(val_c.imag) < 1e-9:
+                    if abs(val_c.imag) < NUMERIC_TOLERANCE:
                         val_r = val_c.real
-                        if abs(val_r - round(val_r)) < 1e-9:
+                        if abs(val_r - round(val_r)) < SNAPPING_THRESHOLD:
                             base = int(round(val_r))
                             if base > 1:
                                 return sp.Pow(base, remaining)
                         
                         # Additional check for 1/integer (e.g. 0.5^x)
-                        if abs(val_r) > 1e-9:
+                        if abs(val_r) > NUMERIC_TOLERANCE:
                             inv_val_r = 1.0 / val_r
-                            if abs(inv_val_r - round(inv_val_r)) < 1e-9:
+                            if abs(inv_val_r - round(inv_val_r)) < SNAPPING_THRESHOLD:
                                 inv_base = int(round(inv_val_r))
                                 if inv_base > 1:
                                     return sp.Pow(sp.Rational(1, inv_base), remaining)
@@ -711,11 +712,12 @@ def simplify_exponential_bases(expr: "sp.Expr") -> "sp.Expr":
         # Check for simple exp(c) -> integer pattern
         elif arg.is_number:
             try:
+                from .config import NUMERIC_TOLERANCE, SNAPPING_THRESHOLD
                 val = expr.evalf()
                 val_c = complex(val)
-                if abs(val_c.imag) < 1e-9:
+                if abs(val_c.imag) < NUMERIC_TOLERANCE:
                     val_r = val_c.real
-                    if abs(val_r - round(val_r)) < 1e-9:
+                    if abs(val_r - round(val_r)) < SNAPPING_THRESHOLD:
                         base = int(round(val_r))
                         return sp.Integer(base)
             except (ValueError, TypeError, AttributeError, ArithmeticError):

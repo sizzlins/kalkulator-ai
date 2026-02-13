@@ -61,7 +61,7 @@ class GeneticConfig:
     operator_weights: dict[str, float] = field(
         default_factory=lambda: {
             # Discontinuities (high penalty)
-            "max": 5.0, "min": 5.0, "abs": 4.0, "heaviside": 4.0,
+            "max": 2.0, "min": 2.0, "abs": 4.0, "heaviside": 4.0,
             # Steps/Rounding (Aggressively encouraged for discrete logic)
             "floor": 0.1, "ceil": 0.1, "round": 0.1, "frac": 0.1, "sign": 0.1, "trunc": 0.1,
             
@@ -113,7 +113,9 @@ class GeneticConfig:
     elitism: int = 5
     boosting_rounds: int = 1
     high_precision: bool = False
+    high_precision: bool = False
     n_jobs: int = 1  # 1=serial, >1=parallel workers, -1=all cores
+    allow_bitwise: bool = True  # If False, disables bitwise operators (Continuity Shield)
     
     # Random Seed
     random_state: int | None = None

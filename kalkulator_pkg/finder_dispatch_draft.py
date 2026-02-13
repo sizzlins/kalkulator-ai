@@ -32,10 +32,6 @@ class FinderDispatch:
 
     def prepare_data(self) -> None:
         """Partition data into numeric and symbolic sets."""
-        import numpy as np
-        from .utils.numeric import eval_to_float
-        import sympy as sp
-        from .parser import safe_sympy_parse
         
         # Logic extracted from find_function_from_data
         # ... (To be populated) ...

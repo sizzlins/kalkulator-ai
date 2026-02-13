@@ -27,6 +27,7 @@ class lshift(sp.Function):
             except (ValueError, TypeError, OverflowError):
                 # Return 0 for invalid shifts (matches safe_lshift behavior)
                 return sp.Integer(0)
+        return None
 
 class rshift(sp.Function):
     @classmethod
@@ -39,6 +40,7 @@ class rshift(sp.Function):
                 return sp.Integer(int(x) >> int(y))
             except (ValueError, TypeError, OverflowError):
                 return sp.Integer(0)
+        return None
 
 class bitwise_xor(sp.Function):
     @classmethod
@@ -51,6 +53,7 @@ class bitwise_xor(sp.Function):
                 return sp.Integer(int(x) ^ int(y))
             except (ValueError, TypeError, OverflowError):
                 return sp.Integer(0)
+        return None
 
 class bitwise_and(sp.Function):
     @classmethod
@@ -63,6 +66,7 @@ class bitwise_and(sp.Function):
                 return sp.Integer(int(x) & int(y))
             except (ValueError, TypeError, OverflowError):
                 return sp.Integer(0)
+        return None
 
 class bitwise_or(sp.Function):
     @classmethod
@@ -75,6 +79,7 @@ class bitwise_or(sp.Function):
                 return sp.Integer(int(x) | int(y))
             except (ValueError, TypeError, OverflowError):
                 return sp.Integer(0)
+        return None
 
 class SafePrime(sp.Function):
     """Safe wrapper for prime(n) that handles symbolic arguments."""
@@ -88,6 +93,7 @@ class SafePrime(sp.Function):
                     return sp.prime(int(val))
             except:
                 pass
+        return None
 
 ALLOWED_SYMPY_NAMES = {
     "pow": sp.Pow, # Explicitly allow pow(b, e) syntax
