@@ -98,6 +98,81 @@ except ImportError:
     Connection = None # type: ignore
 
 
+def _try_numeric_integration_fallback(expr: Any) -> Any:
+    """Attempt numerical integration for failed symbolic Integrals.
+    
+    Args:
+        expr: The SymPy expression containing Integral(s).
+        
+    Returns:
+        Expression with Integrals evaluated numerically if possible, else original.
+    """
+    if not isinstance(expr, sp.Basic):
+         return expr
+         
+    # Find all top-level Integral atoms (iterative replacement)
+    integrals = list(expr.atoms(sp.Integral))
+    if not integrals:
+        return expr
+        
+    replacements = {}
+    for integral in integrals:
+        # Only handle definite integrals (limits have 3 elements: (x, a, b))
+        if not all(len(lim) == 3 for lim in integral.limits):
+            continue
+            
+        try:
+            # 1. Try mpmath via evalf() first (Symbolic numeric)
+            # This handles high precision if needed
+            val = integral.evalf()
+            
+            # Check for failure (evalf returns the Integral itself if failed)
+            if isinstance(val, sp.Integral):
+                raise ValueError("evalf failed")
+                
+            replacements[integral] = val
+            
+        except (ValueError, TypeError, AttributeError, NotImplementedError):
+            # 2. Fallback to SciPy (Robust numeric)
+            # Useful for singularities where mpmath might struggle or be slow
+            try:
+                import scipy.integrate as scipy_integrate
+                
+                # We can only handle single integrals for now easily
+                if len(integral.limits) != 1:
+                    continue
+                    
+                limit = integral.limits[0]
+                var, a, b = limit
+                integrand = integral.function
+                
+                # Convert integrand to lambda
+                f_lambda = sp.lambdify([var], integrand, modules=['numpy', 'math'])
+                
+                # Convert limits to float
+                a_float = float(a)
+                b_float = float(b)
+                
+                # Heuristic: Check for singularity at 0 if range includes it
+                # Logic: If sign(a) != sign(b), 0 is in between.
+                points = []
+                if a_float < 0 < b_float:
+                     points = [0]
+                     
+                # Execute QUADPACK
+                val_float, err = scipy_integrate.quad(f_lambda, a_float, b_float, points=points)
+                
+                # Return as SymPy Float
+                replacements[integral] = sp.Float(val_float)
+                
+            except Exception:
+                # If SciPy also fails, keep original
+                pass
+                
+    if replacements:
+        return expr.subs(replacements)
+    return expr
+
 
 class WindowsJobObject:
     """Context Manager for Windows Job Objects to enforce resource limits.
@@ -614,7 +689,7 @@ def worker_evaluate(
         if e.code == "SYNTAX_ERROR" or e.code == "TOKENIZER_ERROR":
             logger.debug(f"Validation error: {e.code} - {e.message}")
         else:
-            logger.warning(f"Validation error: {e.code} - {e.message}")
+            logger.debug(f"Validation error: {e.code} - {e.message}")
         return {"ok": False, "error": str(e), "error_code": e.code}
     except (ValueError, SyntaxError) as e:
         # Only log at debug level since we're providing a user-friendly error message
@@ -656,9 +731,24 @@ def worker_evaluate(
         }
 
     try:
-        # Evaluate the expression - simplify first to get symbolic form
-        # Skip simplification for containers (lists, tuples, arrays) as they crash SymPy
-        if isinstance(expr, (list, tuple, np.ndarray)):
+
+        # 1. Evaluate Integrals (Lazy -> Eager)
+        if hasattr(expr, "has") and expr.has(sp.Integral):
+             # Attempt symbolic evaluation first
+             try:
+                 # .doit() forces evaluation of lazy objects like Integral, Sum, Limit
+                 # deep=True ensures nested objects are evaluated
+                 expr = expr.doit(deep=True)
+             except Exception:
+                 pass # Keep as Integral on failure
+
+             # If still Integral and definite, try numerical fallback
+             if expr.has(sp.Integral):
+                  expr = _try_numeric_integration_fallback(expr)
+
+        # Simplify to canonical form
+        # Skip simplification for containers (lists, tuples, arrays, dicts, bools) as they crash SymPy
+        if isinstance(expr, (list, tuple, np.ndarray, dict, bool, set)):
             res = expr
         else:
             try:
@@ -675,7 +765,7 @@ def worker_evaluate(
         approx = None
         try:
             # Skip floating point approx for containers
-            if isinstance(res, (list, tuple, np.ndarray)):
+            if isinstance(res, (list, tuple, np.ndarray, dict, bool, set)):
                 approx = None
             else:
                 approx_val = sp.N(res)

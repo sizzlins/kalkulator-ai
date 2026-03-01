@@ -28,6 +28,164 @@ except ImportError:
     logger = logging.getLogger("solver.dispatch")
 
 
+def _find_integer_factor_tuples(
+    N: int, num_vars: int, max_results: int = 50
+) -> list[tuple[int, ...]]:
+    """Find all ordered tuples of integers whose product equals N.
+
+    For num_vars=2: all (a, b) where a*b = N, excluding trivial (1, N), (-1, -N).
+    For num_vars=3: all (a, b, c) where a*b*c = N (capped at max_results).
+
+    Args:
+        N: The integer to factorize.
+        num_vars: Number of factors (2 for x*y, 3 for x*y*z).
+        max_results: Maximum number of tuples to return.
+
+    Returns:
+        List of integer tuples, sorted by first element.
+    """
+    if N == 0:
+        return []  # 0 = x*y has infinite solutions
+
+    abs_N = abs(N)
+    # Get all positive divisors of |N|
+    positive_divisors = sp.divisors(abs_N)
+
+    results: list[tuple[int, ...]] = []
+
+    if num_vars == 2:
+        for d in positive_divisors:
+            q = abs_N // d
+            # Skip trivial: (1, N) and (N, 1)
+            if d == 1 or d == abs_N:
+                continue
+            if N > 0:
+                results.append((d, q))
+            else:
+                # Negative N: one factor must be negative
+                results.append((-d, q))
+                results.append((d, -q))
+    elif num_vars >= 3:
+        # Recursive: split N = d * (N/d), then factor N/d into (num_vars-1) parts
+        for d in positive_divisors:
+            if d == 1 or d == abs_N:
+                continue
+            remainder = abs_N // d
+            if num_vars == 3:
+                # Find 2-factor splits of remainder (including trivial for inner)
+                inner_divisors = sp.divisors(remainder)
+                for d2 in inner_divisors:
+                    d3 = remainder // d2
+                    if d2 < 2 or d3 < 2:
+                        continue  # Skip inner trivial
+                    tup = tuple(sorted((d, d2, d3)))
+                    if N > 0:
+                        if tup not in results:
+                            results.append(tup)
+                    else:
+                        neg_tup = (-tup[0], tup[1], tup[2])
+                        if neg_tup not in results:
+                            results.append(neg_tup)
+            if len(results) >= max_results:
+                break
+
+    # Sort by first element
+    results.sort(key=lambda t: (abs(t[0]), t))
+    return results[:max_results]
+
+
+def _find_perfect_power_representations(
+    N: int, max_exp: int = 64
+) -> list[tuple[int, int]]:
+    """Find all (base, exponent) pairs where base^exponent = N.
+
+    Excludes trivial: (N, 1), (1, anything), (-1, even).
+
+    Args:
+        N: The integer to represent as a perfect power.
+        max_exp: Maximum exponent to check.
+
+    Returns:
+        List of (base, exponent) tuples, e.g. [(2, 3)] for N=8.
+    """
+    if abs(N) <= 1:
+        return []
+
+    results: list[tuple[int, int]] = []
+    abs_N = abs(N)
+
+    for exp in range(2, max_exp + 1):
+        # For negative N, only odd exponents work
+        if N < 0 and exp % 2 == 0:
+            continue
+
+        # Integer k-th root
+        root = sp.integer_nthroot(abs_N, exp)
+        if root[1]:  # root[1] is True if exact
+            base = int(root[0])
+            if base <= 1:
+                break  # No more roots possible for higher exponents
+            if N < 0:
+                base = -base
+            results.append((base, exp))
+
+    return results
+
+
+def _detect_product_of_symbols(equation: sp.Eq, symbols: list) -> tuple[int | None, list[sp.Symbol]]:
+    """Detect if equation is of the form N = x*y*z... (integer = product of symbols).
+
+    Returns:
+        (N, [symbols_in_product]) if detected, else (None, []).
+    """
+    lhs, rhs = equation.lhs, equation.rhs
+
+    # Check both orientations: N = x*y or x*y = N
+    for const_side, var_side in [(lhs, rhs), (rhs, lhs)]:
+        # const_side must be an integer
+        if not const_side.is_Integer:
+            continue
+        N = int(const_side)
+        if N == 0:
+            continue
+
+        # var_side must be a pure product of symbols (no coefficients, no functions)
+        if var_side.is_Symbol:
+            continue  # Single variable, not a product
+
+        if isinstance(var_side, sp.Mul):
+            factors = var_side.args
+            # All factors must be symbols (no numeric coefficients)
+            if all(f.is_Symbol for f in factors):
+                return N, list(factors)
+
+    return None, []
+
+
+def _detect_power_of_symbols(equation: sp.Eq, symbols: list) -> tuple[int | None, list[sp.Symbol]]:
+    """Detect if equation is of the form N = x^y (integer = symbol ^ symbol).
+
+    Returns:
+        (N, [base_sym, exp_sym]) if detected, else (None, []).
+    """
+    lhs, rhs = equation.lhs, equation.rhs
+
+    for const_side, var_side in [(lhs, rhs), (rhs, lhs)]:
+        if not const_side.is_Integer:
+            continue
+        N = int(const_side)
+        if abs(N) <= 1:
+            continue
+
+        # var_side must be Pow(symbol, symbol)
+        if isinstance(var_side, sp.Pow):
+            base, exp = var_side.args
+            if base.is_Symbol and exp.is_Symbol:
+                return N, [base, exp]
+
+    return None, []
+
+
 def _try_enhanced_solve(equation: sp.Eq, sym: sp.Symbol) -> list[sp.Expr] | None:
     """Attempt enhanced solving strategies for implicit trig equations."""
     try:
@@ -987,6 +1145,26 @@ def solve_single_equation(
                 "approx": approx,
                 "cache_hits": cache_hits,
             }
+        # === Integer Factorization Detection ===
+        # Before generic multi-variable solve, check for special patterns:
+        # N = x*y (product), N = x*y*z (triple product), N = x^y (power)
+        factor_tuples: list[tuple[int, ...]] | None = None
+        factor_var_names: list[str] | None = None
+        power_reps: list[tuple[int, int]] | None = None
+        power_var_names: list[str] | None = None
+
+        # Check for product pattern: N = x*y or N = x*y*z
+        prod_N, prod_syms = _detect_product_of_symbols(equation, symbols)
+        if prod_N is not None and len(prod_syms) >= 2:
+            factor_tuples = _find_integer_factor_tuples(prod_N, len(prod_syms))
+            factor_var_names = [str(s) for s in prod_syms]
+
+        # Check for power pattern: N = x^y
+        pow_N, pow_syms = _detect_power_of_symbols(equation, symbols)
+        if pow_N is not None and len(pow_syms) == 2:
+            power_reps = _find_perfect_power_representations(pow_N)
+            power_var_names = [str(s) for s in pow_syms]
+
         multi_solutions: dict[str, list[str]] = {}
         multi_approx: dict[str, list[str | None]] = {}
         for sym in symbols:
@@ -1057,9 +1235,18 @@ def solve_single_equation(
                 "error": f"Unexpected error solving for {sym}: {e}",
                 "error_code": "UNEXPECTED_ERROR",
             }
-    return {
+    result = {
         "ok": True,
         "type": "multi_isolate",
         "solutions": multi_solutions,
         "approx": multi_approx,
     }
+    # Attach integer factorization results if detected
+    if factor_tuples is not None:
+        result["factor_tuples"] = factor_tuples
+        result["factor_var_names"] = factor_var_names
+    if power_reps is not None:
+        result["power_representations"] = power_reps
+        result["power_var_names"] = power_var_names
+    return result
+

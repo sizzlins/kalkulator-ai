@@ -81,6 +81,33 @@ class bitwise_or(sp.Function):
                 return sp.Integer(0)
         return None
 
+# -----------------------------------------------------------------------------
+# Named Helper Functions (Pickle-Safe)
+# -----------------------------------------------------------------------------
+def _trunc_func(x):
+    """Truncation toward zero."""
+    return sp.sign(x) * sp.floor(sp.Abs(x))
+
+def _frac_func(x):
+    """Fractional part."""
+    return x - sp.floor(x)
+
+def _heaviside_func(x):
+    """Heaviside step function (0.5 at x=0)."""
+    return sp.Heaviside(x, sp.Rational(1, 2))
+
+def _round_func(x):
+    """Round to nearest integer."""
+    return sp.floor(x + sp.Rational(1, 2))
+
+def _neg_func(x):
+    """Negation."""
+    return -x
+
+def _inv_func(x):
+    """Inverse (1/x)."""
+    return 1/x
+
 class SafePrime(sp.Function):
     """Safe wrapper for prime(n) that handles symbolic arguments."""
     @classmethod
@@ -135,11 +162,15 @@ ALLOWED_SYMPY_NAMES = {
     "mod": sp.Mod,  # lowercase alias for convenience
     # Calculus & algebra
     "diff": sp.diff,
-    "integrate": sp.integrate,
+    "integrate": sp.Integral,  # Lazy evaluation (prevents parse timeouts)
     "limit": sp.limit,  # For evaluating limits: limit(sin(x)/x, x, 0) -> 1
     "factor": sp.factor,
     "expand": sp.expand,
     "simplify": sp.simplify,
+    # Number theory
+    "factorint": sp.factorint,
+    "divisors": sp.divisors,
+    "isprime": sp.isprime,
     # Matrices (basic)
     "Matrix": sp.Matrix,
     "matrix": sp.Matrix,  # lowercase alias for convenience
@@ -158,7 +189,7 @@ ALLOWED_SYMPY_NAMES = {
     "floor": sp.floor,
     "ceiling": sp.ceiling,
     "ceil": sp.ceiling,  # alias
-    "trunc": lambda x: sp.sign(x) * sp.floor(sp.Abs(x)),  # Truncation toward zero
+    "trunc": _trunc_func,
     # Number theory
     "gcd": sp.gcd,
     "lcm": sp.lcm,
@@ -189,19 +220,15 @@ ALLOWED_SYMPY_NAMES = {
     "bitwise_xor": bitwise_xor,
     "bitwise_and": bitwise_and,
     "bitwise_or": bitwise_or,
-    # Floor, ceiling, fractional part
-    "floor": sp.floor,
-    "ceil": sp.ceiling,
-    "ceiling": sp.ceiling,
-    "frac": lambda x: x - sp.floor(x),
+    "frac": _frac_func,
     # New operators
     "erf": sp.erf,
     "sinc": sp.sinc,
-    "heaviside": lambda x: sp.Heaviside(x, sp.Rational(1, 2)), # 0.5 at x=0
-    "Heaviside": lambda x: sp.Heaviside(x, sp.Rational(1, 2)),
-    "round": lambda x: sp.floor(x + sp.Rational(1, 2)),
-    "neg": lambda x: -x,
-    "inv": lambda x: 1/x,
+    "heaviside": _heaviside_func,
+    "Heaviside": _heaviside_func,
+    "round": _round_func,
+    "neg": _neg_func,
+    "inv": _inv_func,
     # Singularity Locking
     "locked": sp.Function("locked"),
     # Recurrence

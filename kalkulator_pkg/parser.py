@@ -267,7 +267,10 @@ class SafeSymPyVisitor(ast.NodeVisitor):
                  safe_non_functions = (
                      self.sp.Max, self.sp.Min, self.sp.Piecewise, self.sp.Pow, self.sp.AccumBounds,
                      self.sp.Eq, self.sp.Ne, self.sp.Lt, self.sp.Le, self.sp.Gt, self.sp.Ge,
-                     self.sp.Matrix, self.sp.MatrixBase
+                     self.sp.Matrix, self.sp.MatrixBase,
+                     # Calculus & Algebra classes (lazy objects)
+                     self.sp.Integral, self.sp.Derivative, self.sp.Limit,
+                     self.sp.Sum, self.sp.Product
                  )
                  
                  # Check against explicit tuple (handles equality check, not issubclass)

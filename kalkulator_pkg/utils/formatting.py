@@ -486,6 +486,30 @@ def print_result_pretty(
                 )
                 if approx_display:
                     printer(f"  Decimal: {approx_display}")
+        # Display integer factor tuples if available
+        factor_tuples = res.get("factor_tuples")
+        factor_var_names = res.get("factor_var_names")
+        if factor_tuples is not None and factor_var_names:
+            header = ", ".join(factor_var_names)
+            if factor_tuples:
+                printer(f"Integer factor solutions ({header}):")
+                for tup in factor_tuples:
+                    formatted_tup = ", ".join(str(v) for v in tup)
+                    printer(f"  ({formatted_tup})")
+            else:
+                printer(f"No non-trivial integer factor solutions for ({header}).")
+                printer("  (The number may be prime.)")
+        # Display perfect power representations if available
+        power_reps = res.get("power_representations")
+        power_var_names = res.get("power_var_names")
+        if power_reps is not None and power_var_names:
+            if power_reps:
+                base_name, exp_name = power_var_names[0], power_var_names[1]
+                printer(f"Integer power solutions ({base_name}^{exp_name}):")
+                for base, exp in power_reps:
+                    printer(f"  {base_name} = {base}, {exp_name} = {exp}  ({base}^{exp})")
+            else:
+                printer("No perfect power representations found.")
     elif typ == "inequality":
         for k, v in res.get("solutions", {}).items():
             formatted_v = format_inequality_solution(str(v))
@@ -607,9 +631,8 @@ def format_solution(val: Any) -> str:
     s = s.replace("sqrt(", "√(")
 
     # 3. Handle floats ending in .0
-    # Regex to find numbers like "123.0" not followed by other digits
-    # matches 12.0, -5.0 but not 12.05
-    s = re.sub(r"(\d+)\.0(?!\d)", r"\1", s)
+    # Regex for scientific notation (e.g. 1.23e-4) -> 1.23×10⁻⁴
+    # (Existing logic)
 
     # 4. Implicit multiplication checks (SAFE ONLY)
     # 2*x -> 2x
