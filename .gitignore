@@ -12,3 +12,14 @@ __pycache__/
 
 logs/
 output/
+
+# Test outputs and temporary files
+*.log
+verify_*.txt
+ultrakill.txt
+Overview.txt
+GEMINI_REVIEW_PACKET.txt
+Every hero can perform a melee atta.txt
+.coverage
+install_kimi.ps1
+kalkulator-1.5.0/
