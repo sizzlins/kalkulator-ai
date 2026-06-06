@@ -1,0 +1,3 @@
+f(x) = ln(abs(x) + sin(x^2))
+altvd callr f 200 --pop 1000 --gen 500
+quit

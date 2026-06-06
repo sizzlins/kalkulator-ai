@@ -318,7 +318,7 @@ def assign_nsga2_ranks(population: list[ExpressionTree]) -> None:
 
 
 def tournament_select_ranked(population: list[ExpressionTree], tournament_size: int = 2) -> ExpressionTree:
-    """Select one individual using pre-calculated NSGA-II ranks.
+    """Select one individual using pre-calculated NSGA-II ranks with age bias.
     
     Requires `assign_nsga2_ranks(population)` to be called first.
     
@@ -334,6 +334,14 @@ def tournament_select_ranked(population: list[ExpressionTree], tournament_size: 
     # Pick random candidates
     # Optimization: Use indices to avoid creating list of objects
     indices = random.sample(range(len(population)), min(tournament_size, len(population)))
+    
+    # AFPO-inspired: 15% of the time, select the youngest individual regardless of rank
+    # This prevents the MSE gravity well from instantly killing promising complex mutations!
+    if random.random() < 0.15:
+        def get_age(idx):
+            return getattr(population[idx], 'age', float('inf'))
+        youngest_idx = min(indices, key=get_age)
+        return population[youngest_idx]
     
     # helper to get attributes safely
     def get_rank_cd(idx):

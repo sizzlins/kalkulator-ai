@@ -197,6 +197,17 @@ class EvolutionStrategy:
                 if not tree.contains_variables():
                     loss += 100.0
 
+                # 7. Depth penalty (exponential beyond limit)
+                tree_depth = tree.depth()
+                if tree_depth > getattr(self.config, 'max_tree_depth', 15):
+                    excess = tree_depth - getattr(self.config, 'max_tree_depth', 15)
+                    loss += 0.1 * (2 ** excess)
+
+                # 8. Repetition penalty (anti-nesting)
+                chain_length = tree.max_operator_chain_length()
+                if chain_length > 3:
+                    loss += 0.5 * (chain_length - 3)
+
                 final_fitness = loss + (self.config.parsimony_coefficient * complexity)
                 
                 # Cache PENALIZED fitness for Pareto updates
@@ -273,9 +284,12 @@ class EvolutionStrategy:
         
         # 1. Evaluate
         for i, tree in enumerate(population):
-            if tree.fitness is None or tree.age == 0:
+            if tree.fitness is None or getattr(tree, 'age', 0) == 0:
                 tree.fitness = self.calculate_fitness(tree, X, y, sample_weight)
-            # tree.age += 1
+            if hasattr(tree, 'age'):
+                tree.age += 1
+            else:
+                tree.age = 1
         # if self.config.verbose: print(f"DEBUG: [Gen {generation}] Evaluation done.")
             
         # 2. Elitism
@@ -326,13 +340,16 @@ class EvolutionStrategy:
                 # Mutation
                 r = random.random()
                 parent = parent1.copy()
-                # 60% Point, 10% Hoist, 10% Shrink, 20% Insert (Encourage nesting for complex funcs)
-                if r < 0.6:
+                # 40% Point, 25% Insert, 15% Composition, 10% Hoist, 10% Shrink
+                if r < 0.40:
                     child = point_mutation(parent, self.config.mutation_rate, self.config.operators)
-                elif r < 0.8:  # 20% chance to insert (wrap)
+                elif r < 0.65:  # 25% chance to insert (wrap in unary)
                     from .operators import insert_mutation
                     child = insert_mutation(parent, self.config.operators)
-                elif r < 0.9:
+                elif r < 0.80:  # 15% chance to compose (wrap in binary with new branch)
+                    from .operators import composition_mutation
+                    child = composition_mutation(parent, 3, self.config.operators)
+                elif r < 0.90:
                     child = hoist_mutation(parent)
                 else:
                     child = shrink_mutation(parent)

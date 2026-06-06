@@ -252,6 +252,54 @@ def insert_mutation(
     return new_tree
 
 
+def composition_mutation(
+    tree: ExpressionTree, max_depth: int = 4, operators: list[str] | None = None
+) -> ExpressionTree:
+    """Composition mutation: Wrap a subtree in a binary operation with a new random branch.
+    
+    Transforms: f(x) -> op(f(x), g(x)) or op(g(x), f(x))
+    This is the key operator for building nested compositions like ln(abs(x) + sin(x²)).
+    """
+    if operators is None:
+        operators = ["add", "sub", "mul", "div"]
+        
+    binary_ops = [op for op in operators if op in BINARY_OPERATORS]
+    if not binary_ops:
+        return tree.copy()
+        
+    new_tree = tree.copy()
+    
+    # Pick a random node to wrap
+    target = new_tree.get_random_node()
+    
+    # Generate new random subtree
+    new_subtree = ExpressionTree.random_tree(
+        variables=tree.variables,
+        max_depth=max_depth,
+        operators=operators,
+        method="grow",
+    ).root
+    
+    # Create wrapper binary node
+    new_op = random.choice(binary_ops)
+    
+    if random.random() < 0.5:
+        children = [target.copy_subtree(), new_subtree]
+    else:
+        children = [new_subtree, target.copy_subtree()]
+        
+    wrapper = ExpressionNode(
+        node_type=NodeType.BINARY_OP,
+        value=new_op,
+        children=children
+    )
+    
+    # Replace in tree
+    new_tree.replace_subtree(target, wrapper)
+    
+    return new_tree
+
+
 def inject_variable_mutation(tree: ExpressionTree) -> ExpressionTree:
     """Inject a variable into a constant-only tree.
     
@@ -639,6 +687,10 @@ def apply_mutation(
         return point_mutation(tree, operators=operators)
     elif mutation_type == "subtree":
         return subtree_mutation(tree, operators=operators)
+    elif mutation_type == "insert":
+        return insert_mutation(tree, operators=operators)
+    elif mutation_type == "composition":
+        return composition_mutation(tree, operators=operators)
     elif mutation_type == "hoist":
         return hoist_mutation(tree)
     elif mutation_type == "shrink":

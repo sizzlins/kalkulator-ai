@@ -1120,6 +1120,22 @@ class ExpressionNode:
             return 1
         return 1 + max(child.depth() for child in self.children)
 
+    def max_operator_chain_length(self) -> int:
+        """Find the longest chain of identical consecutive unary operators.
+        Used to penalize pathological nesting like sin(sin(sin(x))).
+        """
+        max_chain = 0
+        if self.node_type == NodeType.UNARY_OP:
+            chain = 1
+            current = self.children[0]
+            while current.node_type == NodeType.UNARY_OP and current.value == self.value:
+                chain += 1
+                current = current.children[0]
+            max_chain = chain
+            
+        child_max = max((child.max_operator_chain_length() for child in self.children), default=0)
+        return max(max_chain, child_max)
+
     def to_rpn(self) -> list[tuple[str, Any]]:
         """Flatten subtree to Reverse Polish Notation (RPN) tokens.
         
@@ -1398,6 +1414,10 @@ class ExpressionTree:
     def depth(self) -> int:
         """Return the depth of this tree."""
         return self.root.depth()
+
+    def max_operator_chain_length(self) -> int:
+        """Return the longest chain of identical consecutive unary operators."""
+        return self.root.max_operator_chain_length()
 
     def get_all_nodes(self) -> list[ExpressionNode]:
         """Get a flat list of all nodes in the tree."""

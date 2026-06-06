@@ -39,6 +39,8 @@ class EvolveConfig:
     seeds: List[str] = field(default_factory=list)
     banned: List[str] = field(default_factory=list)
     file_path: Optional[str] = None
+    pop: Optional[int] = None
+    gen: Optional[int] = None
 
 
 def parse_evolve_flags(text: str) -> tuple[EvolveConfig, str]:
@@ -140,6 +142,26 @@ def parse_evolve_flags(text: str) -> tuple[EvolveConfig, str]:
                 i += 1
                 config.file_path = tokens[i]
 
+        elif token_lower == "--pop":
+            if i + 1 < len(tokens) and tokens[i + 1].isdigit():
+                i += 1
+                config.pop = int(tokens[i])
+        elif token_lower.startswith("--pop="):
+            try:
+                config.pop = int(token_lower.split("=", 1)[1])
+            except (ValueError, IndexError):
+                pass
+
+        elif token_lower == "--gen":
+            if i + 1 < len(tokens) and tokens[i + 1].isdigit():
+                i += 1
+                config.gen = int(tokens[i])
+        elif token_lower.startswith("--gen="):
+            try:
+                config.gen = int(token_lower.split("=", 1)[1])
+            except (ValueError, IndexError):
+                pass
+
         elif token_lower == "--seed":
             # Seed without matching quote pair (already handled above).
             # Try to grab next token as seed expression.
@@ -176,6 +198,8 @@ def parse_evolve_flags(text: str) -> tuple[EvolveConfig, str]:
         r"--polynomial\b",
         r"--discover-ode\b",
         r"--boost(?:\s+\d+|=\d+)?",
+        r"--pop(?:\s+\d+|=\d+)?",
+        r"--gen(?:\s+\d+|=\d+)?",
         r"--ban\s+[a-zA-Z0-9_,]+",
         r"""--file\s+['"]?[^'"\s]+['"]?""",
     ]

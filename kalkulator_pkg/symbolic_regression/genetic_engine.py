@@ -414,14 +414,7 @@ class EvolutionTrainer:
             print(f"   [Parallel] Using {n_jobs} workers (Islands={n_islands})...")
 
         # v4.6 Stability Fix: Force Serial on Windows
-        # Multiprocessing on Windows (spawn) is prone to deadlocks/hangs in this architecture.
-        # User reported repeated hangs. Safest to disable.
-        import sys
-        if sys.platform == 'win32':
-             if self.config.verbose:
-                 print(f"   [Parallel] Windows detected. Forcing SERIAL mode for stability.")
-             use_parallel = False
-             n_jobs = 1
+        # (Removed Windows restriction to enable parallelism)
         
         # Explicitly set joblib context to avoid any auto-threading if we want serial
         # Or just rely on n_jobs=1 in train()
@@ -750,24 +743,20 @@ class GeneticSymbolicRegressor(BaseEstimator, RegressorMixin):
         import numpy as np
         
         # Helper to run a fresh regression
-        def run_space(y_target, space_name):
+        def run_space(y_target, space_name, X_subset=None):
             # Create fresh instance to avoid state pollution
-            # We need to access the results.
-            # Ideally we clone self.config. 
-            # Note: We must replicate the config.
             import copy
             # Deep copy config to ensure isolation
             cfg = copy.deepcopy(self.config)
             
             reg = GeneticSymbolicRegressor(cfg)
-            reg.fit(X, y_target, variable_names, seeds=seeds)
+            reg.fit(X if X_subset is None else X_subset, y_target, variable_names, seeds=seeds)
             
             best_tree = reg.best_tree
             if best_tree is None:
                 return None
                 
-            y_pred_transformed = reg.predict(X)
-            return best_tree, y_pred_transformed, reg.get_expression()
+            return best_tree, reg.get_expression()
 
         candidates = []
         
@@ -784,7 +773,8 @@ class GeneticSymbolicRegressor(BaseEstimator, RegressorMixin):
             # and update self at the end with the winner.
             res = run_space(y, "direct")
             if res:
-                tree, pred, expr = res
+                tree, expr = res
+                pred = tree.evaluate(X)
                 # fix: complex safe MSE
                 mse = np.mean(np.abs(y - pred)**2)
                 if self.config.verbose:
@@ -809,17 +799,20 @@ class GeneticSymbolicRegressor(BaseEstimator, RegressorMixin):
             return candidates[0][0], candidates[0][1], "direct"
 
 
-        # 2. Log Space (if y > 0)
-        if np.all(y > 0):
+        # 2. Log Space (if mostly y > 0)
+        mask_log = y > 0
+        if np.sum(mask_log) >= len(y) * 0.3 and np.sum(mask_log) >= 5:
             try:
+                y_sub = y[mask_log]
+                X_sub = X[mask_log]
                 if self.config.verbose:
-                    print("   [Multiplex] 2/3: Running Log Space (z = ln(y))...")
-                y_log = np.log(y)
-                res = run_space(y_log, "log")
+                    print(f"   [Multiplex] 2/3: Running Log Space (z = ln(y)) on {len(y_sub)}/{len(y)} points...")
+                y_log = np.log(y_sub)
+                res = run_space(y_log, "log", X_subset=X_sub)
                 if res:
-                    tree, pred_log, expr_log = res
-                    # Transform back: exp(pred_log)
-                    pred = np.exp(pred_log)
+                    tree, expr_log = res
+                    # Transform back: exp(pred_log) using full X
+                    pred = np.exp(tree.evaluate(X))
                     if expr_log and str(expr_log).strip():
                         # fix: complex safe MSE
                         mse = np.mean(np.abs(y - pred)**2)
@@ -830,19 +823,23 @@ class GeneticSymbolicRegressor(BaseEstimator, RegressorMixin):
             except Exception:
                 pass
 
-        # 3. Inverse Space (if y != 0)
-        if np.all(y != 0):
+        # 3. Inverse Space (if mostly y != 0)
+        mask_inv = np.abs(y) > 1e-9
+        if np.sum(mask_inv) >= len(y) * 0.3 and np.sum(mask_inv) >= 5:
             try:
+                y_sub = y[mask_inv]
+                X_sub = X[mask_inv]
                 if self.config.verbose:
-                    print("   [Multiplex] 3/3: Running Inverse Space (z = 1/y)...")
-                y_inv = 1.0 / y
-                res = run_space(y_inv, "inverse")
+                    print(f"   [Multiplex] 3/3: Running Inverse Space (z = 1/y) on {len(y_sub)}/{len(y)} points...")
+                y_inv = 1.0 / y_sub
+                res = run_space(y_inv, "inverse", X_subset=X_sub)
                 if res:
-                    tree, pred_inv, expr_inv = res
-                    # Transform back: 1/pred_inv
+                    tree, expr_inv = res
+                    # Transform back: 1/pred_inv using full X
+                    pred_inv = tree.evaluate(X)
                     with np.errstate(divide='ignore'):
                         pred = 1.0 / pred_inv
-                    # Handle divergance?
+                    # Handle divergance
                     mask = np.isfinite(pred)
                     if np.any(mask):
                         # fix: complex safe MSE
@@ -856,18 +853,19 @@ class GeneticSymbolicRegressor(BaseEstimator, RegressorMixin):
 
         # 4. Square Space (z = y^2) - The "Radical Buster"
         # Target: y = sqrt(f(x)) -> z = f(x)
-        # Condition: y must be predominantly non-negative (to allow unique sqrt reconstruction)
-        # We allow a small tolerance for numerical noise near zero (-1e-9)
-        if np.all(y > -1e-9):
+        mask_sq = y > -1e-9
+        if np.sum(mask_sq) >= len(y) * 0.3 and np.sum(mask_sq) >= 5:
             try:
+                y_sub = y[mask_sq]
+                X_sub = X[mask_sq]
                 if self.config.verbose:
-                    print("   [Multiplex] 4/4: Running Square Space (z = y^2)...")
-                y_sq = y ** 2
-                res = run_space(y_sq, "square")
+                    print(f"   [Multiplex] 4/4: Running Square Space (z = y^2) on {len(y_sub)}/{len(y)} points...")
+                y_sq = y_sub ** 2
+                res = run_space(y_sq, "square", X_subset=X_sub)
                 if res:
-                    tree, pred_sq, expr_sq = res
-                    # Reconstruction: y = sqrt(z)
-                    # Protect against negative predictions from the polynomial model
+                    tree, expr_sq = res
+                    # Reconstruction: y = sqrt(z) on full X
+                    pred_sq = tree.evaluate(X)
                     with np.errstate(invalid='ignore'):
                         pred = np.sqrt(np.maximum(0, pred_sq))
                     

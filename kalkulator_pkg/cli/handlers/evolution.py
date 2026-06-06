@@ -621,9 +621,7 @@ def handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None) 
                 outlier_mask = (y_real >= lower_bound) & (y_real <= upper_bound)
                 num_outliers = np.sum(~outlier_mask)
                 if num_outliers > 0 and num_outliers < len(y) * 0.3:
-                    X = X[outlier_mask]
-                    y = y[outlier_mask]
-                    print(f"Note: Filtered {num_outliers} outlier point(s) using IQR method.")
+                    print(f"Warning: Detected {num_outliers} IQR outliers, but KEEPING them to avoid data loss on step functions.")
         except Exception:
             pass
 
@@ -758,12 +756,10 @@ def handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None) 
                      success = False
                 else:
                     if count_complex_skipped > 0:
-                        print(f"Hybrid mode: filtering {count_complex_skipped} complex points, running find() on {len(find_data_points_real)} real points...")
+                        print(f"Hybrid mode: filtering {count_complex_skipped} complex points just for find(). Evolutionary engine will keep ALL points.")
                         if find_data_points_real:
-                            X = np.array([p[0] for p in find_data_points_real])
-                            if len(input_vars) == 1:
-                                X = X.flatten()
-                            y = np.array([p[1] for p in find_data_points_real])
+                            # Do NOT overwrite X and y here, it amputates data for the genetic engine!
+                            pass
                     else:
                         print("Hybrid mode: running find() for initial approximation...")
                     
@@ -930,18 +926,22 @@ def handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None) 
             # ALWAYS use preprocessed seeds (fixes ^ → ** conversion)
             seeds = clean_seeds
 
-        base_population = 100
+        base_population = config.pop if config.pop is not None else 100
         if seeds:
             min_pop_for_seeds = len(seeds) * 3
             if min_pop_for_seeds > base_population:
                 base_population = min_pop_for_seeds
                 print(f"Dynamic scaling: increased population to {base_population} to accommodate {len(seeds)} seeds")
 
-        base_generations = 30
+        base_generations = config.gen if config.gen is not None else 30
         base_timeout = 15
 
+        final_population = base_population * boosting_rounds if config.pop is None else base_population
+        final_generations = base_generations * boosting_rounds if config.gen is None else base_generations
+        final_timeout = base_timeout * boosting_rounds
+
         if boosting_rounds > 1:
-            print(f"Boost mode: {boosting_rounds}x resources (pop={base_population*boosting_rounds}, gen={base_generations*boosting_rounds}, timeout={base_timeout*boosting_rounds}s)")
+            print(f"Boost mode: {boosting_rounds}x resources (pop={final_population}, gen={final_generations}, timeout={final_timeout}s)")
 
         is_smooth = detect_smoothness(X.tolist(), y.tolist(), verbose=verbose_mode)
         allow_bitwise_ops = not is_smooth
@@ -951,16 +951,16 @@ def handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None) 
             else:
                 print("[Safety] Data appears DISCRETE/STEPPED. Allowing bitwise operators.")
 
-        config = GeneticConfig(
-            population_size=base_population * boosting_rounds,
+        genetic_config = GeneticConfig(
+            population_size=final_population,
             n_islands=2,
-            generations=base_generations * boosting_rounds,
-            timeout=base_timeout * boosting_rounds,
+            generations=final_generations,
+            timeout=final_timeout,
             verbose=verbose_mode,
             seeds=seeds,
             boosting_rounds=1,
             high_precision=high_precision_mode,
-            operators=["add", "sub", "mul", "div", "sin", "cos", "exp", "log", "pow", "sqrt", "lambertw", "lshift", "rshift", "bitwise_and", "bitwise_or", "bitwise_xor", "factorial"],
+            operators=["add", "sub", "mul", "div", "sin", "cos", "exp", "log", "pow", "sqrt", "lambertw", "lshift", "rshift", "bitwise_and", "bitwise_or", "bitwise_xor", "factorial", "abs", "neg", "tanh", "max", "min", "square", "cube"],
             allow_bitwise=allow_bitwise_ops,
         )
         
@@ -969,20 +969,20 @@ def handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None) 
              effective_banned.update(ctx.banned_operators)
         
         if effective_banned:
-            original_ops = config.operators.copy()
-            config.operators = [op for op in config.operators if op.lower() not in effective_banned]
-            removed = set(original_ops) - set(config.operators)
+            original_ops = genetic_config.operators.copy()
+            genetic_config.operators = [op for op in genetic_config.operators if op.lower() not in effective_banned]
+            removed = set(original_ops) - set(genetic_config.operators)
             if removed:
                 print(f"   [Constraint] Banned from arsenal: {removed}")
             
-            original_seed_count = len(config.seeds)
+            original_seed_count = len(genetic_config.seeds)
             filtered_seeds = []
-            for seed in config.seeds:
+            for seed in genetic_config.seeds:
                 seed_lower = seed.lower()
                 contains_banned = any(ban in seed_lower for ban in effective_banned)
                 if not contains_banned:
                     filtered_seeds.append(seed)
-            config.seeds = filtered_seeds
+            genetic_config.seeds = filtered_seeds
             if len(filtered_seeds) < original_seed_count:
                 print(f"   [Constraint] Filtered {original_seed_count - len(filtered_seeds)} seeds containing banned operators")
 
@@ -1018,7 +1018,7 @@ def handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None) 
             return
         
         print("Loading genetic evolution engine...", flush=True)
-        regressor = GeneticSymbolicRegressor(config)
+        regressor = GeneticSymbolicRegressor(genetic_config)
         
         if use_transform:
             if verbose_mode:

@@ -12,12 +12,13 @@ class GeneticConfig:
     tournament_size: int = 5
     crossover_rate: float = 0.7
     mutation_rate: float = 0.1
-    parsimony_coefficient: float = 0.01
+    parsimony_coefficient: float = 0.005
     max_depth: int = 8
+    max_tree_depth: int = 15             # Hard cap on tree depth during evaluation
     
     early_stop_mse: float = 1e-10
     perfect_fit_threshold: float = 1e-9  # For "equivalent forms" check
-    complexity_limit: int = 100          # Kill trees larger than this
+    complexity_limit: int = 50           # Kill trees larger than this
     max_nested_powers: int = 5           # Prevent x**y**z**... hangs
     vertex_bonus: float = 5.0            # Weight boost for x=0
     anchor_bonus: float = 3.0            # Weight boost for integer anchors
