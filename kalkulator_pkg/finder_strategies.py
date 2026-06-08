@@ -2,8 +2,8 @@
 Function finding strategies using the Strategy Pattern.
 
 Each strategy defines a specific approach for discovering functions from data:
-- UnivariateStrategy: Single-variable functions (heuristics → regression → genetic)
-- MultivariateStrategy: Multi-variable functions (regression → genetic)
+- UnivariateStrategy: Single-variable functions (heuristics -> regression -> genetic)
+- MultivariateStrategy: Multi-variable functions (regression -> genetic)
 - HybridStrategy: Mixed numeric/symbolic data
 """
 

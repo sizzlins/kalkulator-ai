@@ -795,13 +795,13 @@ def preprocess_expression(
     processed_str = processed_str.replace(":", "/")
     
     # Convert Unicode superscript characters to **N exponentiation
-    # e.g., x² → x**2, frac(x)² → frac(x)**2
+    # e.g., x² -> x**2, frac(x)² -> frac(x)**2
     superscript_map = {
         "⁰": "**0", "¹": "**1", "²": "**2", "³": "**3", "⁴": "**4",
         "⁵": "**5", "⁶": "**6", "⁷": "**7", "⁸": "**8", "⁹": "**9",
-        "⁻": "-",  # For negative exponents like ⁻² → **-2
+        "⁻": "-",  # For negative exponents like ⁻² -> **-2
     }
-    # Handle multi-digit superscripts like ¹² → **12
+    # Handle multi-digit superscripts like ¹² -> **12
     # First, find consecutive superscript digits and handle them
     import re
     superscript_pattern = re.compile(r'([⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+)')

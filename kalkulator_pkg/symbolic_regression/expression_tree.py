@@ -481,6 +481,38 @@ def safe_ith_prime(x):
     return np.vectorize(_get_prime, otypes=[float])(x)
 
 
+def safe_moebius(x):
+    """Möbius function mu(n). Vectorized."""
+    from sympy import mobius
+    def _mobius(val):
+        if np.iscomplexobj(val) or isinstance(val, complex): return 0.0
+        if not np.isfinite(val) or val <= 0: return 0.0
+        try: return float(mobius(int(val)))
+        except: return 0.0
+    return np.vectorize(_mobius, otypes=[float])(x)
+
+def safe_omega(x):
+    """Number of distinct prime factors omega(n). Vectorized."""
+    from sympy import primefactors
+    def _omega(val):
+        if np.iscomplexobj(val) or isinstance(val, complex): return 0.0
+        if not np.isfinite(val) or val <= 0: return 0.0
+        try: return float(len(primefactors(int(val))))
+        except: return 0.0
+    return np.vectorize(_omega, otypes=[float])(x)
+
+def safe_big_omega(x):
+    """Number of prime factors with multiplicity Omega(n). Vectorized."""
+    from sympy import primeomega
+    def _big_omega(val):
+        if np.iscomplexobj(val) or isinstance(val, complex): return 0.0
+        if not np.isfinite(val) or val <= 0: return 0.0
+        try: return float(primeomega(int(val)))
+        except: return 0.0
+    return np.vectorize(_big_omega, otypes=[float])(x)
+
+
+
 def safe_fibonacci(x):
     """Fibonacci function using analytic continuation (works for all real x).
     
@@ -642,6 +674,9 @@ UNARY_OPERATORS: dict[str, Callable[[float], float]] = {
     "atan": np.arctan,           # Arctangent (bipolar coordinates)
     "asin": np.arcsin,           # Arcsine
     "acos": np.arccos,           # Arccosine
+    "moebius": safe_moebius,
+    "omega": safe_omega,
+    "big_omega": safe_big_omega,
 }
 
 BINARY_OPERATORS: dict[str, Callable[[float, float], float]] = {
@@ -747,6 +782,9 @@ def _get_sympy_ops():
         "primepi": lambda x: sp.primepi(int(x)) if x.is_real and x.is_finite else sp.Integer(0), # Alias
         "ith_prime": lambda x: sp.prime(int(x)) if x.is_real and x.is_finite and x > 0 else sp.Integer(0),
         "prime": lambda x: sp.prime(int(x)) if x.is_real and x.is_finite and x > 0 else sp.Integer(0), # Alias
+        "moebius": lambda x: sp.mobius(int(x)) if hasattr(x, 'is_real') and x.is_real and x.is_finite and x > 0 else sp.Integer(0),
+        "omega": lambda x: sp.Integer(len(sp.primefactors(int(x)))) if hasattr(x, 'is_real') and x.is_real and x.is_finite and x > 0 else sp.Integer(0),
+        "big_omega": lambda x: sp.primeomega(int(x)) if hasattr(x, 'is_real') and x.is_real and x.is_finite and x > 0 else sp.Integer(0),
         "floor": sp.floor,
         "ceil": sp.ceiling,
         "trunc": lambda x: sp.sign(x) * sp.floor(sp.Abs(x)),  # Truncate towards zero
@@ -1350,7 +1388,7 @@ class ExpressionTree:
         """Get a cleaned-up string representation."""
         try:
             # Skip simplification for complex trees to avoid hangs
-            # Fix 4: Tightened from 20→15 to reduce SymPy hang risk
+            # Fix 4: Tightened from 20->15 to reduce SymPy hang risk
             if self.complexity() > 15:
                 return self.to_string()
             
@@ -1706,7 +1744,7 @@ class ExpressionTree:
         import sympy as sp
 
         def _convert_node(node) -> ExpressionNode:
-            # Handle Imaginary Unit I → preserve as complex 1j
+            # Handle Imaginary Unit I -> preserve as complex 1j
             if node == sp.I:
                  return ExpressionNode(NodeType.CONSTANT, 1j)
 

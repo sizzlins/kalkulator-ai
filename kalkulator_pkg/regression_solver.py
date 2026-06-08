@@ -838,7 +838,7 @@ def solve_regression_stage(
                 # Quick checks for obvious missed patterns
                 # PRIORITY: Specific hints (pole+trig) before generic hints (trig terms)
 
-                # --- SMART HINT: Pole + Oscillation → Trig Composite ---
+                # --- SMART HINT: Pole + Oscillation -> Trig Composite ---
                 # When we detect a pole AND the data oscillates, suggest sin(c/(x-a))
                 try:
                     # Check for poles in ORIGINAL (unfiltered) data

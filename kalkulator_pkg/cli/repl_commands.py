@@ -588,19 +588,19 @@ def _matches_ban(func_lower: str, ban_token: str) -> bool:
     """Check if a function string violates a ban token.
     
     Handles:
-    - Stripping parens from ban tokens: 'sqrt()' → checks for 'sqrt'
+    - Stripping parens from ban tokens: 'sqrt()' -> checks for 'sqrt'
     - Semantic equivalences: sqrt ↔ x**0.5, pow ↔ ** ↔ ^
-    - Unicode symbols: √ → sqrt
+    - Unicode symbols: √ -> sqrt
     """
     ban = ban_token.lower().strip()
     
-    # Strip trailing parens: "sqrt()" → "sqrt"
+    # Strip trailing parens: "sqrt()" -> "sqrt"
     if ban.endswith("()"):
         ban = ban[:-2]
-    # Strip wrapping parens with content: "√(x)" → "√"
+    # Strip wrapping parens with content: "√(x)" -> "√"
     import re as _re
     ban = _re.sub(r'\(.*?\)', '', ban).strip()
-    # Unicode normalization: √ → sqrt
+    # Unicode normalization: √ -> sqrt
     ban = ban.replace('√', 'sqrt')
     
     # Direct substring check

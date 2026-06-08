@@ -337,7 +337,7 @@ class ODEDiscoveryEngine:
     def _format_ode(self, tree: ExpressionTree) -> str:
         """Format an ODE expression tree as a human-readable string.
         
-        Converts: y2 + y0 → y'' + y = 0
+        Converts: y2 + y0 -> y'' + y = 0
         """
         expr_str = tree.to_pretty_string()
         

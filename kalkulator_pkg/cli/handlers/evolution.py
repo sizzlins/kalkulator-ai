@@ -874,7 +874,7 @@ def handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None) 
                         else:
                             display = func_str[:50] + "..." if len(func_str) > 50 else func_str
                             print(f"Hybrid seeding: find() result '{display}' has low R²={r_squared:.2f} (MSE={mse_val:.6f}), skipping seed")
-                            print("  → Using pure evolve instead (no bad seed)")
+                            print("  -> Using pure evolve instead (no bad seed)")
                     except Exception as eval_error:
                         print(f"Hybrid seeding: could not evaluate find() result ({eval_error}), skipping")
             except Exception as e:
@@ -895,9 +895,19 @@ def handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None) 
                     def _v_prime(x): 
                         try: return float(sp.prime(int(x))) 
                         except: return 0.0
+                    def _v_mobius(x):
+                        try: return float(sp.mobius(int(x)))
+                        except: return 0.0
+                    def _v_omega(x):
+                        try: return float(len(sp.primefactors(int(x))))
+                        except: return 0.0
+                    def _v_primeomega(x):
+                        try: return float(sp.primeomega(int(x)))
+                        except: return 0.0
                     custom_modules = [{
                         "primepi": np.vectorize(_v_primepi), "prime_pi": np.vectorize(_v_primepi), 
                         "ith_prime": np.vectorize(_v_prime), "prime": np.vectorize(_v_prime), 
+                        "moebius": np.vectorize(_v_mobius), "omega": np.vectorize(_v_omega), "big_omega": np.vectorize(_v_primeomega),
                         "trunc": np.trunc, "locked": lambda x: x, "factorial": lambda x: scipy.special.gamma(x + 1),
                         "lshift": np.left_shift, "rshift": np.right_shift,
                         "bitwise_and": np.bitwise_and, "bitwise_or": np.bitwise_or, "bitwise_xor": np.bitwise_xor,
@@ -923,7 +933,7 @@ def handle_evolve(text: str, ctx: Any, variables: Dict[str, str] | None = None) 
             
             if len(clean_seeds) < len(seeds):
                  print(f"   [Sanitizer] Removed {len(seeds) - len(clean_seeds)} toxic seeds.")
-            # ALWAYS use preprocessed seeds (fixes ^ → ** conversion)
+            # ALWAYS use preprocessed seeds (fixes ^ -> ** conversion)
             seeds = clean_seeds
 
         base_population = config.pop if config.pop is not None else 100

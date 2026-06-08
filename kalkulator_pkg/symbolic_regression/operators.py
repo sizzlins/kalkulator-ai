@@ -36,7 +36,7 @@ def point_mutation(
         Mutated tree (new copy)
     """
     if operators is None:
-        operators = ["add", "sub", "mul", "div", "sin", "cos", "exp", "square"]
+        operators = ["add", "sub", "mul", "div", "sin", "cos", "exp", "square", "moebius", "omega", "big_omega"]
 
     unary_ops = [op for op in operators if op in UNARY_OPERATORS]
     binary_ops = [op for op in operators if op in BINARY_OPERATORS]
@@ -86,13 +86,13 @@ def point_mutation(
                 
                 # Strategy 1: If exponent is a constant, try reciprocal
                 if exp_node.node_type == NodeType.CONSTANT:
-                    # x^a → x^(1/a), but guard against zero
+                    # x^a -> x^(1/a), but guard against zero
                     if abs(exp_node.value) > 0.01:  # Defensive: avoid division by zero
                         exp_node.value = 1.0 / exp_node.value
                 
                 # Strategy 2: If exponent is a variable, wrap in reciprocal
                 elif exp_node.node_type == NodeType.VARIABLE:
-                    # x^y → x^(1/y): create division node
+                    # x^y -> x^(1/y): create division node
                     inv_node = ExpressionNode(
                         node_type=NodeType.BINARY_OP,
                         value="div",

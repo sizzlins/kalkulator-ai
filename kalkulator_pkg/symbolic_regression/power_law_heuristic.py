@@ -3,8 +3,8 @@
 Detects f(x,y) = x^g(y) patterns where g(y) is an unknown function.
 
 Algorithm (Gemini's method):
-1. Zero-Power Baseline: If y=0 gives output=1 for all x → pattern is x^g(y) where g(0)=0
-2. Reference Point: If y=1 gives output=sqrt(x) → g(1)=0.5
+1. Zero-Power Baseline: If y=0 gives output=1 for all x -> pattern is x^g(y) where g(0)=0
+2. Reference Point: If y=1 gives output=sqrt(x) -> g(1)=0.5
 3. Exponent Fitting: With 2+ reference points, fit g(y) from candidates
 4. Verification: Check against full dataset
 

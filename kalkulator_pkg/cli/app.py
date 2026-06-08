@@ -452,6 +452,10 @@ def main_entry(argv: list[str] | None = None) -> int:
                 "Error: Empty input. Please enter a valid expression, equation, or command."
             )
             return 1
+            
+        if expr.startswith("evolve "):
+            from .handlers.evolution import handle_evolve
+            return handle_evolve(expr, None)
         import re
         import sympy as sp
 

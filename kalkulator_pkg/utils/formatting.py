@@ -382,13 +382,13 @@ def print_result_pretty(
             try:
                 num = float(sol)
                 if num.is_integer():
-                    formatted = str(int(num))  # Format as clean integer (29.0 → 29)
+                    formatted = str(int(num))  # Format as clean integer (29.0 -> 29)
                     is_exact = True
                 else:
-                    # Try to convert to π fraction (e.g., 0.785398 → π/4)
+                    # Try to convert to π fraction (e.g., 0.785398 -> π/4)
                     pi_form = find_pi_fraction_form(num)
                     if pi_form:
-                        # Format nicely: (1/4)*pi → π/4, (-3/4)*pi → -3π/4
+                        # Format nicely: (1/4)*pi -> π/4, (-3/4)*pi -> -3π/4
                         if pi_form == "pi":
                             formatted = "π"
                         elif pi_form == "-pi":
@@ -397,7 +397,7 @@ def print_result_pretty(
                             # Handle (n/d)*pi format
                             coeff = pi_form.replace("*pi", "")
                             if coeff.startswith("(") and coeff.endswith(")"):
-                                # (n/d)*pi → nπ/d
+                                # (n/d)*pi -> nπ/d
                                 inner = coeff[1:-1]  # "n/d"
                                 if "/" in inner:
                                     num_part, den_part = inner.split("/")
@@ -410,7 +410,7 @@ def print_result_pretty(
                                 else:
                                     formatted = f"{inner}π"
                             else:
-                                # n*pi → nπ
+                                # n*pi -> nπ
                                 formatted = f"{coeff}π"
                         else:
                             formatted = pi_form.replace("pi", "π")

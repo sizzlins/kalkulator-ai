@@ -21,8 +21,8 @@ This module provides comprehensive function management capabilities:
 
 Examples:
     Define: f(x)=2*x, g(x,y)=x+y
-    Evaluate: f(2) → 4, g(1,2) → 3
-    Find: f(1)=1, f(2)=2, find f(x) → f(x) = x
+    Evaluate: f(2) -> 4, g(1,2) -> 3
+    Find: f(1)=1, f(2)=2, find f(x) -> f(x) = x
 """
 
 from __future__ import annotations
@@ -1940,13 +1940,13 @@ def find_function_from_data(
         s_lower = func_str.lower()
         for ban in banned_ops:
             ban_lower = ban.lower().strip()
-            # Strip trailing parens: "sqrt()" → "sqrt"
+            # Strip trailing parens: "sqrt()" -> "sqrt"
             if ban_lower.endswith("()"):
                 ban_lower = ban_lower[:-2]
-            # Strip parens with content: "√(x)" → "√"
+            # Strip parens with content: "√(x)" -> "√"
             import re as _re
             ban_lower = _re.sub(r'\(.*?\)', '', ban_lower).strip()
-            # Unicode normalization: √ → sqrt
+            # Unicode normalization: √ -> sqrt
             ban_lower = ban_lower.replace('√', 'sqrt')
             
             if not ban_lower:
@@ -2086,14 +2086,14 @@ def find_function_from_data(
                     
                     is_ban, ban_op = _is_banned(result_func)
                     if is_ban:
-                        if verbose: print(f"     → Found {result_func} but rejected due to ban on '{ban_op}'")
+                        if verbose: print(f"     -> Found {result_func} but rejected due to ban on '{ban_op}'")
                     else:
                         if verbose:
-                            print(f"     → PERFECT MATCH! Returning: {result_func}")
+                            print(f"     -> PERFECT MATCH! Returning: {result_func}")
                         return (True, result_func, None, None)
         except Exception as e:
             if verbose:
-                print(f"     → Triangle wave check failed: {e}")
+                print(f"     -> Triangle wave check failed: {e}")
 
     # --- Hybrid Mode: If mixed data, use numeric to find function, validate with symbolic ---
     # Note: Requires at least 3 numeric points for reliable regression
@@ -2384,7 +2384,7 @@ def find_function_from_data(
                         res = " ".join(parts)
                         is_ban, ban_op = _is_banned(res)
                         if is_ban:
-                            if verbose: print(f"     → Linear Check: Found {res} but rejected due to ban on '{ban_op}'")
+                            if verbose: print(f"     -> Linear Check: Found {res} but rejected due to ban on '{ban_op}'")
                         else:
                             return (True, res, None, None)
                     else:
@@ -2519,7 +2519,7 @@ def find_function_from_data(
                             func_str = " ".join(parts_sin)
                             is_ban, ban_op = _is_banned(func_str)
                             if is_ban:
-                                if verbose: print(f"     → Harmonic Check: Found {func_str} but rejected due to ban on '{ban_op}'")
+                                if verbose: print(f"     -> Harmonic Check: Found {func_str} but rejected due to ban on '{ban_op}'")
                             else:
                                 return (True, func_str, None, None)
         except Exception:
@@ -2567,13 +2567,13 @@ def find_function_from_data(
             
             if success_svd and mse_svd < 1e-6:  # Relaxed from 1e-9 to catch excellent rational fits
                  if verbose:
-                     print(f"     → Early return: MSE < 1e-6 (excellent rational fit)")
+                     print(f"     -> Early return: MSE < 1e-6 (excellent rational fit)")
                  return (True, func_svd, None, f"RationalSVD (MSE={mse_svd:.2e})")
             
             # Store as candidate even if not perfect - we'll compare later
             svd_candidate = (success_svd, func_svd, mse_svd) if success_svd else None
             if verbose and svd_candidate:
-                print(f"     → Stored as candidate (will compare with regression later)")
+                print(f"     -> Stored as candidate (will compare with regression later)")
 
         except Exception as e:
             if verbose:
@@ -2730,7 +2730,7 @@ def find_function_from_data(
 
                     is_ban, ban_op = _is_banned(func_str)
                     if is_ban:
-                         if verbose: print(f"     → Power Law Check: Found {func_str} but rejected due to ban on '{ban_op}'")
+                         if verbose: print(f"     -> Power Law Check: Found {func_str} but rejected due to ban on '{ban_op}'")
                     else:
                          return (True, func_str, None, None)
         except Exception:
@@ -2760,7 +2760,7 @@ def find_function_from_data(
             if success and func_str:
                 is_ban, ban_op = _is_banned(func_str)
                 if is_ban:
-                     if verbose: print(f"     → Log-Linear Check: Found {func_str} but rejected due to ban on '{ban_op}'")
+                     if verbose: print(f"     -> Log-Linear Check: Found {func_str} but rejected due to ban on '{ban_op}'")
                 else:
                     return (True, func_str, None, None)
         except (ImportError, Exception) as e:
@@ -2826,7 +2826,7 @@ def find_function_from_data(
                 
                 if max_sin_err < 1e-3:
                     if verbose:
-                        print(f"     → ACCEPTING sin({freq_label}*x) as solution")
+                        print(f"     -> ACCEPTING sin({freq_label}*x) as solution")
                     if freq_label == "1":
                         return (True, f"sin({var_name})", None, None)
                     else:
@@ -3188,7 +3188,7 @@ def find_function_from_data(
                                     func_str = f"{sign_prefix}sqrt({poly_str})"
                                     is_ban, ban_op = _is_banned(func_str)
                                     if is_ban:
-                                        if verbose: print(f"     → Sqrt(Poly) Check: Found {func_str} but rejected due to ban on '{ban_op}'")
+                                        if verbose: print(f"     -> Sqrt(Poly) Check: Found {func_str} but rejected due to ban on '{ban_op}'")
                                     else:
                                         return (True, func_str, None, None)
 

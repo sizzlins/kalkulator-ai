@@ -158,11 +158,11 @@ def parse_with_precision(
     """Parse input with appropriate precision based on format.
 
     Strategy:
-    - Integers → Fraction
-    - Fractions (a/b) → Fraction
-    - Decimals with few places → Fraction (if exact)
-    - High-precision decimals → Decimal
-    - Very high precision → mpmath (if available)
+    - Integers -> Fraction
+    - Fractions (a/b) -> Fraction
+    - Decimals with few places -> Fraction (if exact)
+    - High-precision decimals -> Decimal
+    - Very high precision -> mpmath (if available)
 
     Args:
         val: Input value in various formats
@@ -818,7 +818,7 @@ def detect_saturation(x_col: np.ndarray, y_col: np.ndarray) -> dict:
 
         # --- CURVATURE-BASED SOFTPLUS DETECTION ---
         # Softplus has: monotonic increasing, starts near 0, accelerating then decelerating growth
-        # d²y/dx² > 0 (convex) but approaches 0 as x → ∞
+        # d²y/dx² > 0 (convex) but approaches 0 as x -> ∞
         if is_monotonic_increasing and np.min(y) >= -0.5:
             # Check if growth rate decreases (concave-like in derivative)
             dy = np.diff(y)
@@ -826,7 +826,7 @@ def detect_saturation(x_col: np.ndarray, y_col: np.ndarray) -> dict:
             valid = dx > 1e-9
             if np.sum(valid) > 3:
                 growth_rate = dy[valid] / dx[valid]
-                # If growth starts low, increases, then levels off → Softplus candidate
+                # If growth starts low, increases, then levels off -> Softplus candidate
                 early_growth = np.mean(growth_rate[: len(growth_rate) // 3])
                 late_growth = np.mean(growth_rate[2 * len(growth_rate) // 3 :])
                 if late_growth > early_growth * 0.5 and late_growth < 2.0:
@@ -1709,7 +1709,7 @@ def detect_damped_sinusoid(
     """Detect damped sinusoid patterns: f(x) = e^(A*x) * sin(B*x).
     
     Algorithm (based on Gemini's approach):
-    1. Slope analysis near zero: f(x)/x ≈ B when x→0 (since sin(Bx) ≈ Bx)
+    1. Slope analysis near zero: f(x)/x ≈ B when x->0 (since sin(Bx) ≈ Bx)
     2. Envelope extraction: divide f(x) by sin(Bx) to get e^(Ax)
     3. Logarithmic regression on envelope to find A
     
