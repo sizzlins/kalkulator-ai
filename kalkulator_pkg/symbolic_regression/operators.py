@@ -36,7 +36,7 @@ def point_mutation(
         Mutated tree (new copy)
     """
     if operators is None:
-        operators = ["add", "sub", "mul", "div", "sin", "cos", "exp", "square", "moebius", "omega", "big_omega"]
+        operators = ["add", "sub", "mul", "div", "sin", "cos", "exp", "square", "moebius", "omega", "big_omega", "totient"]
 
     unary_ops = [op for op in operators if op in UNARY_OPERATORS]
     binary_ops = [op for op in operators if op in BINARY_OPERATORS]

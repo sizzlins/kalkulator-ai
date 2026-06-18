@@ -30,11 +30,13 @@ def _detect_outer_functions(y):
     
     return suggestions
 
-def _compose_seeds(pole_seeds, outer_functions):
+def _compose_seeds(pole_seeds, outer_functions, variable_names=None):
     """Phase 3: Generate composed seeds like sin(1/(x-3))."""
     composed = []
     # Only compose with basic pole seeds (not squared or multiplied)
     basic_poles = [s for s in pole_seeds if '**' not in s and ' * ' not in s]
+    
+    var_name = variable_names[0] if variable_names else "x"
     
     for pole in basic_poles:
         for func in outer_functions:
@@ -47,8 +49,8 @@ def _compose_seeds(pole_seeds, outer_functions):
             
             # 2025-01-19 Fix: Support sin(x/(x-p)) by adding x * pole
             # This covers x/(x-p) which is 1 + p/(x-p)
-            if '1/(' in pole and 'x' not in pole[:pole.find('1/(')]: # Simple 1/(x-p)
-                composed.append(f'{func}(x * {pole})')
+            if '1/(' in pole and var_name not in pole[:pole.find('1(')]: # Simple 1/(x-p)
+                composed.append(f'{func}({var_name} * {pole})')
     return composed
 
 def _detect_integer_patterns(X, y, variable_names=None):
@@ -2290,7 +2292,7 @@ def _detect_power_peeling(ctx, X, y, variable_names=None):
             mse = float(mse_match.group(1)) if mse_match else 1.0
             
             # Use ^ for compatibility with parser/symbolify
-            base_seed = f"({func_str})^x"
+            base_seed = f"({func_str})^{param_var}"
             seeds.append(base_seed)
             
             # Short-Circuit if fit is very good
@@ -2300,7 +2302,7 @@ def _detect_power_peeling(ctx, X, y, variable_names=None):
         if success:
              # Found a rational base!
              # Return (base)**x
-             return [f"({func_str})**x"]
+             return [f"({func_str})**{param_var}"]
     except ImportError:
         pass
     return seeds
@@ -3646,11 +3648,10 @@ def generate_pattern_seeds(ctx, X, y, variable_names=None, verbose=False, banned
                         pole_seeds.append(near_pole)
                         seeds.append(near_pole)
 
-    # --- Phase 4: Composition (Connecting Singularities to Trig) ---
     # This was previously missing!
     outer_funcs = _detect_outer_functions(y)
     if outer_funcs and pole_seeds:
-         composed_seeds = _compose_seeds(pole_seeds, outer_funcs)
+         composed_seeds = _compose_seeds(pole_seeds, outer_funcs, variable_names=derived_vars)
          if composed_seeds:
              if verbose: print(f"   Composition Analysis: Composing {len(pole_seeds)} poles with {outer_funcs} -> {len(composed_seeds)} seeds")
              seeds.extend(composed_seeds)
@@ -3692,7 +3693,7 @@ def generate_pattern_seeds(ctx, X, y, variable_names=None, verbose=False, banned
         
     # --- Compose Seeds ---
     if pole_seeds and outer_functions:
-        composed = _compose_seeds(pole_seeds, outer_functions)
+        composed = _compose_seeds(pole_seeds, outer_functions, variable_names=derived_vars)
         seeds.extend(composed)
         
     # 5. Deep Trig Heuristic (NEW)

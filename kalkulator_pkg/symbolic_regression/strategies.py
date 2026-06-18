@@ -170,12 +170,33 @@ class EvolutionStrategy:
                 y_flat = np.asarray(y).flatten()
                 pred_flat = np.asarray(predictions).flatten()
                 
-                raw_loss = self.huber_loss(y_flat, pred_flat)
-                
-                if sample_weight is not None:
-                    loss = np.average(raw_loss, weights=np.asarray(sample_weight).flatten())
+                if getattr(self.config, 'loss_function', 'huber') == 'pearson':
+                    # Pearson Correlation Loss
+                    # We want to maximize correlation |r|, so loss = 1.0 - |r|
+                    # Add small epsilon to avoid divide by zero if variance is zero
+                    y_std = np.std(y_flat)
+                    pred_std = np.std(pred_flat)
+                    
+                    if y_std < 1e-10 or pred_std < 1e-10:
+                        # Flat line -> terrible correlation loss
+                        loss = 1.0
+                    else:
+                        cov = np.cov(y_flat, pred_flat)[0, 1]
+                        r = cov / (y_std * pred_std)
+                        # r can be NaN if floating point issues, fallback to 1.0 loss
+                        if np.isnan(r):
+                            loss = 1.0
+                        else:
+                            # We take absolute value because a negative constant multiplier
+                            # (-1 * moebius) is structurally identical and just needs sign flip
+                            loss = 1.0 - abs(r)
                 else:
-                    loss = np.mean(raw_loss)
+                    raw_loss = self.huber_loss(y_flat, pred_flat)
+                    
+                    if sample_weight is not None:
+                        loss = np.average(raw_loss, weights=np.asarray(sample_weight).flatten())
+                    else:
+                        loss = np.mean(raw_loss)
 
                 # 4. Perfect Fit Bypass (No penalty if perfect)
                 if loss < self.config.early_stop_mse:

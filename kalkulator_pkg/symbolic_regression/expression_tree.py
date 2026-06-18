@@ -487,8 +487,10 @@ def safe_moebius(x):
     def _mobius(val):
         if np.iscomplexobj(val) or isinstance(val, complex): return 0.0
         if not np.isfinite(val) or val <= 0: return 0.0
-        try: return float(mobius(int(val)))
-        except: return 0.0
+        if abs(val - round(val)) < 1e-5:
+            try: return float(mobius(int(round(val))))
+            except: return 0.0
+        return 0.0
     return np.vectorize(_mobius, otypes=[float])(x)
 
 def safe_omega(x):
@@ -497,8 +499,10 @@ def safe_omega(x):
     def _omega(val):
         if np.iscomplexobj(val) or isinstance(val, complex): return 0.0
         if not np.isfinite(val) or val <= 0: return 0.0
-        try: return float(len(primefactors(int(val))))
-        except: return 0.0
+        if abs(val - round(val)) < 1e-5:
+            try: return float(len(primefactors(int(round(val)))))
+            except: return 0.0
+        return 0.0
     return np.vectorize(_omega, otypes=[float])(x)
 
 def safe_big_omega(x):
@@ -507,9 +511,23 @@ def safe_big_omega(x):
     def _big_omega(val):
         if np.iscomplexobj(val) or isinstance(val, complex): return 0.0
         if not np.isfinite(val) or val <= 0: return 0.0
-        try: return float(primeomega(int(val)))
-        except: return 0.0
+        if abs(val - round(val)) < 1e-5:
+            try: return float(primeomega(int(round(val))))
+            except: return 0.0
+        return 0.0
     return np.vectorize(_big_omega, otypes=[float])(x)
+
+def safe_totient(x):
+    """Euler's totient function phi(n). Vectorized."""
+    from sympy import totient
+    def _totient(val):
+        if np.iscomplexobj(val) or isinstance(val, complex): return 0.0
+        if not np.isfinite(val) or val <= 0: return 0.0
+        if abs(val - round(val)) < 1e-5:
+            try: return float(totient(int(round(val))))
+            except: return 0.0
+        return 0.0
+    return np.vectorize(_totient, otypes=[float])(x)
 
 
 
@@ -677,6 +695,7 @@ UNARY_OPERATORS: dict[str, Callable[[float], float]] = {
     "moebius": safe_moebius,
     "omega": safe_omega,
     "big_omega": safe_big_omega,
+    "totient": safe_totient,
 }
 
 BINARY_OPERATORS: dict[str, Callable[[float, float], float]] = {
@@ -778,13 +797,14 @@ def _get_sympy_ops():
         "gamma": _safe_gamma,
         "factorial": _safe_factorial,
         "bessel_j1": lambda x: sp.besselj(1, x),
-        "prime_pi": lambda x: sp.primepi(int(x)) if x.is_real and x.is_finite else sp.Integer(0),
-        "primepi": lambda x: sp.primepi(int(x)) if x.is_real and x.is_finite else sp.Integer(0), # Alias
-        "ith_prime": lambda x: sp.prime(int(x)) if x.is_real and x.is_finite and x > 0 else sp.Integer(0),
-        "prime": lambda x: sp.prime(int(x)) if x.is_real and x.is_finite and x > 0 else sp.Integer(0), # Alias
-        "moebius": lambda x: sp.mobius(int(x)) if hasattr(x, 'is_real') and x.is_real and x.is_finite and x > 0 else sp.Integer(0),
-        "omega": lambda x: sp.Integer(len(sp.primefactors(int(x)))) if hasattr(x, 'is_real') and x.is_real and x.is_finite and x > 0 else sp.Integer(0),
-        "big_omega": lambda x: sp.primeomega(int(x)) if hasattr(x, 'is_real') and x.is_real and x.is_finite and x > 0 else sp.Integer(0),
+        "prime_pi": sp.Function('prime_pi'),
+        "primepi": sp.Function('primepi'), # Alias
+        "ith_prime": sp.Function('ith_prime'),
+        "prime": sp.Function('prime'), # Alias
+        "moebius": sp.Function('moebius'),
+        "omega": sp.Function('omega'),
+        "big_omega": sp.Function('big_omega'),
+        "totient": sp.Function('totient'),
         "floor": sp.floor,
         "ceil": sp.ceiling,
         "trunc": lambda x: sp.sign(x) * sp.floor(sp.Abs(x)),  # Truncate towards zero
